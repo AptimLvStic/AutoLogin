@@ -1,0 +1,149 @@
+# AutoLogin
+
+AutoLogin 是一款面向 Windows 10/11 x64 的本地优先登录工作台。它把常用网站的登录入口、多个账号和独立浏览器会话集中到一个桌面应用中，通过 Windows 默认浏览器打开网站，并在可识别时自动填充、自动提交；遇到验证码、短信验证或二次验证时停止提交，交由用户人工完成。
+
+当前版本为 `0.2.0` MVP，不包含云同步、账号系统、遥测、自动更新、TOTP/2FA 自动化，也不会绕过任何第三方验证码或风控。
+
+## 功能
+
+- 创建本地加密保险库，主密码最低 10 位并显示强度。
+- 默认闲置 10 分钟自动锁定，可设置为 5、10、15 或 30 分钟。
+- 管理站点、多个账号、收藏、搜索、最近使用和账号详情。
+- 调用 Windows 默认的 Chromium 浏览器打开网站，不在 AutoLogin 内嵌网页；当前推荐 Google Chrome 或 Microsoft Edge。
+- 每个账号使用独立的浏览器配置目录，登录会话可跨启动复用。
+- 通用识别账号密码字段并自动填充，可配置是否自动提交。
+- 检测验证码或二次验证输入区域，自动停止提交并聚焦人工输入。
+- 录制多步骤登录流程，只保存字段选择器、点击和按键，不保存字段值。
+- 登录失败时提供切换浏览器、重新尝试、复制账号、复制密码和重新录制等兜底操作。
+- 来源白名单校验；跨来源跳转时暂停自动填充并要求用户确认。
+- 支持清除单个账号的网站会话，以及清除全部本地数据。
+
+## 安全设计
+
+- 主进程独占主密码、派生密钥和账号密码明文。
+- Argon2id 参数为 64 MiB 内存、3 次迭代、并行度 1，输出 256 位密钥。
+- 完整保险库使用 AES-256-GCM 加密，随机 16 字节盐和 12 字节 nonce。
+- 保险库采用临时文件、`fsync` 和原子替换写入，并保留一份加密 `.bak`。
+- 渲染器启用 `contextIsolation`、`sandbox` 和 CSP，禁用 Node.js。
+- IPC 使用固定白名单和 Zod 校验，并校验调用来源。
+- 自动填充代理运行在默认浏览器的隔离 CDP world 中，目标网页无法访问 Electron、Node.js 或 `window.autologin`。
+- 浏览器调试连接仅绑定 `127.0.0.1` 的随机端口，并且只在活动登录会话期间存在。
+- 仅允许 `http:` 和 `https:` 地址，禁止 `file:`、`data:` 和 `javascript:`。
+- 每次页面加载最多执行一次通用自动提交。
+- 日志不记录密码、Cookie、验证码或带查询参数的完整 URL。
+
+更完整的数据处理说明见 [PRIVACY.md](PRIVACY.md)。
+
+## 本地数据
+
+Windows 默认用户数据目录：
+
+```text
+%APPDATA%\AutoLogin
+```
+
+其中包含：
+
+- `vault.enc`：加密保险库。
+- `vault.enc.bak`：加密备份。
+- `session-index.json`：账号 ID 索引，不包含密码。
+- `BrowserProfiles/<accountId>/`：各账号的浏览器 Cookie、缓存和本地存储。
+
+网站会话由默认浏览器和 Windows 用户级机制保护，不使用保险库主密码额外加密。清除会话会删除对应账号的独立浏览器配置目录。
+
+NSIS 卸载程序默认保留上述用户数据。卸载前如需彻底删除，请先在应用设置中使用“清除全部本地数据”。
+
+## 开发环境
+
+- Windows 10 22H2 或 Windows 11 x64。
+- Node.js 22 或更新版本。
+- npm。
+
+安装依赖并启动开发环境：
+
+```powershell
+npm install
+npm run dev
+```
+
+类型检查与生产构建：
+
+```powershell
+npm run typecheck
+npm run build
+```
+
+## 测试
+
+单元测试：
+
+```powershell
+npm test
+```
+
+Electron E2E 使用本地测试站点，不访问公网：
+
+```powershell
+$env:AUTOLOGIN_E2E_NO_SANDBOX='1'
+npm run test:e2e
+```
+
+当前自动化覆盖：
+
+- 创建保险库、错误密码、锁定与解锁。
+- AES-GCM 篡改检测、主备同时损坏和加密备份恢复。
+- 修改主密码与自动锁定设置持久化。
+- 账号新增、登录、会话复用和会话清除。
+- 验证码人工接管。
+- 多步骤登录录制与回放。
+- 搜索、收藏、剪贴板复制。
+- 跨来源跳转暂停自动填充。
+- 目标页面不存在于 Electron 窗口列表中，确认没有内嵌打开网站。
+- 默认浏览器中的页面无法访问 Node.js 和 Electron API。
+- 锁定状态下清除全部本地数据。
+
+公开站点人工回归需要独立测试账号和目标站点清单，当前交付未包含这部分结果。标准表单填充兼容性不代表对所有网站作出保证；网站主动阻止自动化、要求浏览器扩展或受企业策略限制时可能无法自动填充。
+
+## 打包
+
+生成 NSIS x64 安装包：
+
+```powershell
+$env:ELECTRON_BUILDER_CACHE=(Resolve-Path 'work\electron-builder-cache').Path
+npm run package
+```
+
+输出目录为 `outputs/`。当前仓库没有 Authenticode 证书，因此只能交付未签名测试安装包。正式公开下载前应配置代码签名：
+
+```powershell
+$env:CSC_LINK='C:\secure\codesign.pfx'
+$env:CSC_KEY_PASSWORD='<证书密码>'
+npm run package
+```
+
+不要把证书、密码或私钥提交到仓库。
+
+## 已知限制
+
+- 不绕过验证码、短信验证、2FA 或网站风控。
+- 自动填充要求 Windows 默认浏览器属于 Chromium 系；Firefox 和 Internet Explorer 暂不支持。
+- 不承诺兼容所有登录页面，尤其是多因素、强反自动化或阻止调试连接的网站。
+- 首次公开版本不提供自动更新服务。
+- 网站 Cookie 不受主密码直接加密；忘记主密码时可通过“清除全部数据”移除会话。
+- 未签名的测试安装包可能触发 Windows SmartScreen 提示。
+
+## 目录
+
+```text
+src/main/        Electron 主进程、保险库、登录会话
+src/preload/     主窗口 IPC bridge 和页面自动填充代理源码
+src/renderer/    React 界面
+src/shared/      类型、Zod schema、URL 安全工具
+tests/unit/      Vitest 单元测试
+tests/e2e/       Playwright Electron E2E 与本地夹具
+resources/       应用图标
+```
+
+## 许可证
+
+当前项目标记为 `UNLICENSED`，仅用于本任务交付。对外发布前需补充正式许可证与品牌审查。

@@ -1,0 +1,14 @@
+node_modules/
+out/
+dist/
+outputs/*
+!outputs/.gitkeep
+work/
+test-results/
+playwright-report/
+*.tsbuildinfo
+.env
+.env.*
+!.env.example
+*.log
+.DS_Store

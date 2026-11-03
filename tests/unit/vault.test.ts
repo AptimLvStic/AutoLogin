@@ -156,7 +156,8 @@ describe('VaultManager', () => {
         protocol: 'http',
         host: '',
         port: 8080,
-        bypassList: 'localhost, 127.0.0.1, ::1'
+        bypassList: 'localhost, 127.0.0.1, ::1',
+        testUrl: 'https://api.github.com/zen'
       }
     })
   })

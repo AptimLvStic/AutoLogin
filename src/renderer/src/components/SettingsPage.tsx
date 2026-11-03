@@ -19,6 +19,7 @@ import {
   Palette,
   RefreshCw,
   RotateCcw,
+  Settings,
   ShieldCheck,
   SlidersHorizontal,
   Sun,
@@ -28,6 +29,7 @@ import {
 } from 'lucide-react'
 import {
   AUTO_LOCK_OPTIONS,
+  DEFAULT_PROXY_TEST_URL,
   INTERFACE_SCALE_MAX,
   INTERFACE_SCALE_MIN,
   INTERFACE_SCALE_STEP,
@@ -102,6 +104,7 @@ export function SettingsPage({
   const [proxySaving, setProxySaving] = useState(false)
   const [proxyTesting, setProxyTesting] = useState(false)
   const [proxyResult, setProxyResult] = useState<ProxyTestResult | null>(null)
+  const [testUrlOpen, setTestUrlOpen] = useState(false)
   const [backups, setBackups] = useState<BackupRecord[]>([])
   const [backupsLoading, setBackupsLoading] = useState(false)
   const [confirmBackup, setConfirmBackup] = useState<BackupRecord | null>(null)
@@ -113,6 +116,7 @@ export function SettingsPage({
   const [kdbxError, setKdbxError] = useState('')
   const [kdbxBusy, setKdbxBusy] = useState(false)
   const scaleSaveTimer = useRef<number | null>(null)
+  const proxyTestSettingsRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
     setAutoLock(settings.autoLockMinutes)
@@ -129,6 +133,26 @@ export function SettingsPage({
       if (scaleSaveTimer.current) window.clearTimeout(scaleSaveTimer.current)
     }
   }, [])
+
+  useEffect(() => {
+    if (!testUrlOpen) return
+    const closeOnOutsidePointer = (event: PointerEvent): void => {
+      if (!proxyTestSettingsRef.current?.contains(event.target as Node)) {
+        setTestUrlOpen(false)
+      }
+    }
+    const closeOnEscape = (event: KeyboardEvent): void => {
+      if (event.key === 'Escape') {
+        setTestUrlOpen(false)
+      }
+    }
+    document.addEventListener('pointerdown', closeOnOutsidePointer)
+    document.addEventListener('keydown', closeOnEscape)
+    return () => {
+      document.removeEventListener('pointerdown', closeOnOutsidePointer)
+      document.removeEventListener('keydown', closeOnEscape)
+    }
+  }, [testUrlOpen])
 
   useEffect(() => {
     let cancelled = false
@@ -421,6 +445,7 @@ export function SettingsPage({
     setProxySaving(true)
     try {
       await onSettingsChange({ proxy })
+      setTestUrlOpen(false)
       notify(
         'success',
         tr('网络代理配置已保存', 'Network proxy settings saved.', '網路代理設定已儲存')
@@ -440,6 +465,7 @@ export function SettingsPage({
   async function testProxyConnection(): Promise<void> {
     setProxyTesting(true)
     setProxyResult(null)
+    setTestUrlOpen(false)
     try {
       setProxyResult(await window.autologin.network.testProxy(proxy))
     } catch (error) {
@@ -709,9 +735,9 @@ export function SettingsPage({
                 <h4>{tr('重置默认配置', 'Reset defaults', '重設預設設定')}</h4>
                 <p>
                   {tr(
-                    '恢复 Magpie 亮色主题、简体中文、100% 比例、10 分钟锁定和直连网络。',
-                    'Restore the light Magpie theme, Simplified Chinese, 100% scale, 10-minute lock and direct networking.',
-                    '恢復 Magpie 亮色主題、簡體中文、100% 比例、10 分鐘鎖定和直連網路。'
+                    '恢复 defalut 亮色主题、简体中文、100% 比例、10 分钟锁定和直连网络。',
+                    'Restore the light defalut theme, Simplified Chinese, 100% scale, 10-minute lock and direct networking.',
+                    '恢復 defalut 亮色主題、簡體中文、100% 比例、10 分鐘鎖定和直連網路。'
                   )}
                 </p>
               </div>
@@ -795,9 +821,9 @@ export function SettingsPage({
                 icon={<Palette size={17} />}
                 title={tr('主题预设', 'Theme presets', '主題預設')}
                 description={tr(
-                  'Magpie 是默认的高留白主题，也可以选择其他预设或自定义配色。',
-                  'Magpie is the default spacious theme. You can also choose another preset or custom colors.',
-                  'Magpie 是預設的高留白主題，也可以選擇其他預設或自訂配色。'
+                  'defalut 是默认的高留白主题，也可以选择其他预设或自定义配色。',
+                  'defalut is the default spacious theme. You can also choose another preset or custom colors.',
+                  'defalut 是預設的高留白主題，也可以選擇其他預設或自訂配色。'
                 )}
               />
               <div
@@ -1056,6 +1082,63 @@ export function SettingsPage({
                       ? tr('测试中…', 'Testing…', '測試中…')
                       : tr('测试连接', 'Test connection', '測試連線')}
                   </button>
+                  <div className="proxy-test-settings" ref={proxyTestSettingsRef}>
+                    <button
+                      type="button"
+                      className={`icon-button icon-button--small proxy-test-settings__trigger${
+                        testUrlOpen ? ' is-active' : ''
+                      }`}
+                      onClick={() => setTestUrlOpen((value) => !value)}
+                      aria-label={tr('测试设置', 'Test settings', '測試設定')}
+                      aria-expanded={testUrlOpen}
+                      aria-haspopup="dialog"
+                    >
+                      <Settings size={15} />
+                    </button>
+                    {testUrlOpen && (
+                      <div
+                        className="proxy-test-popover"
+                        role="dialog"
+                        aria-label={tr('连接测试设置', 'Connection test settings', '連線測試設定')}
+                      >
+                        <div className="proxy-test-popover__header">
+                          <strong>{tr('连接测试设置', 'Connection test settings', '連線測試設定')}</strong>
+                          <small>
+                            {tr(
+                              '测试请求会使用当前选择的代理模式。',
+                              'The test request uses the selected proxy mode.',
+                              '測試請求會使用目前選擇的代理模式。'
+                            )}
+                          </small>
+                        </div>
+                        <label className="field">
+                          <span className="field__label">
+                            {tr('测试 URL', 'Test URL', '測試 URL')}
+                          </span>
+                          <input
+                            className="filter-control"
+                            type="url"
+                            value={proxy.testUrl}
+                            onChange={(event) => updateProxy('testUrl', event.target.value)}
+                            placeholder={DEFAULT_PROXY_TEST_URL}
+                            aria-label={tr('测试 URL', 'Test URL', '測試 URL')}
+                            spellCheck={false}
+                          />
+                        </label>
+                        <div className="proxy-test-popover__footer">
+                          <span>{tr('仅支持 http/https', 'HTTP/HTTPS only', '僅支援 HTTP/HTTPS')}</span>
+                          <button
+                            type="button"
+                            className="text-button"
+                            onClick={() => updateProxy('testUrl', DEFAULT_PROXY_TEST_URL)}
+                          >
+                            <RotateCcw size={13} />
+                            {tr('恢复默认', 'Reset', '恢復預設')}
+                          </button>
+                        </div>
+                      </div>
+                    )}
+                  </div>
                   <button
                     className="button button--primary"
                     onClick={() => void saveProxy()}
@@ -1595,8 +1678,11 @@ export function SettingsPage({
           width="520px"
         >
           <form className="kdbx-password-form" onSubmit={importKdbx}>
-            <div className="settings-location">
-              <code>{kdbxSelection.fileName}</code>
+            <div className="kdbx-file-summary">
+              <span className="kdbx-file-summary__icon">
+                <KeyRound size={15} />
+              </span>
+              <code title={kdbxSelection.fileName}>{kdbxSelection.fileName}</code>
               <span className="settings-location__badge">{formatBytes(kdbxSelection.size)}</span>
             </div>
             <p className="modal-description">
@@ -1616,7 +1702,7 @@ export function SettingsPage({
                   type="password"
                   value={kdbxPassword}
                   onChange={(event) => setKdbxPassword(event.target.value)}
-                  autoFocus
+                  data-autofocus
                   autoComplete="current-password"
                 />
               </span>
@@ -1761,7 +1847,7 @@ function platformLabel(platform: string): string {
 
 function themePresetName(preset: ThemePreset, language: string): string {
   const names: Record<ThemePreset, [string, string, string]> = {
-    magpie: ['Magpie', 'Magpie', 'Magpie'],
+    magpie: ['defalut', 'defalut', 'defalut'],
     warm: ['暖砂', 'Warm Sand', '暖砂'],
     sage: ['鼠尾草', 'Sage', '鼠尾草'],
     ocean: ['海盐', 'Sea Salt', '海鹽'],

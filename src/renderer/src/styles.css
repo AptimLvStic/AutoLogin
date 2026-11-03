@@ -5068,6 +5068,17 @@ p {
   }
 }
 
+@keyframes popover-in {
+  from {
+    opacity: 0;
+    transform: translateY(4px) scale(0.98);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
 @keyframes fade-up {
   from {
     opacity: 0;
@@ -6051,6 +6062,73 @@ p {
   opacity: 0.5;
 }
 
+.proxy-test-settings {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+
+.proxy-test-settings__trigger.is-active {
+  border-color: color-mix(in srgb, var(--accent) 30%, var(--line));
+  background: var(--accent-pale);
+  color: var(--accent);
+}
+
+.proxy-test-popover {
+  position: absolute;
+  right: 0;
+  bottom: calc(100% + 10px);
+  z-index: 40;
+  display: flex;
+  width: min(330px, calc(100vw - 48px));
+  flex-direction: column;
+  gap: 12px;
+  padding: 14px;
+  border: 1px solid var(--card-border);
+  border-radius: 12px;
+  background: var(--card);
+  box-shadow:
+    0 18px 48px rgba(31, 35, 40, 0.14),
+    0 2px 8px rgba(31, 35, 40, 0.06);
+  animation: popover-in 160ms ease both;
+}
+
+.proxy-test-popover__header {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.proxy-test-popover__header strong {
+  color: var(--ink);
+  font-size: 11px;
+  font-weight: 680;
+}
+
+.proxy-test-popover__header small,
+.proxy-test-popover__footer > span {
+  color: var(--muted);
+  font-size: 9px;
+  line-height: 1.5;
+}
+
+.proxy-test-popover__footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.proxy-test-popover .field {
+  gap: 5px;
+}
+
+.proxy-test-popover .filter-control {
+  min-height: 36px;
+  font-family: 'Manrope', 'Noto Sans SC', sans-serif;
+  font-size: 10px;
+}
+
 .proxy-test-result {
   display: flex;
   align-items: flex-start;
@@ -6718,6 +6796,7 @@ html[data-color-mode='dark'] .details-drawer {
 
 .settings-page--controlled .settings-control-row {
   min-height: 45px;
+  align-items: center;
   border-bottom: 1px solid var(--content-divider);
 }
 
@@ -6727,11 +6806,13 @@ html[data-color-mode='dark'] .details-drawer {
 
 .settings-control-row__label {
   display: inline-flex;
+  min-height: 40px;
   align-items: center;
   gap: 7px;
   color: var(--ink);
   font-size: 11px;
   font-weight: 620;
+  line-height: 1;
 }
 
 .settings-page--controlled .settings-footer {
@@ -6963,6 +7044,45 @@ html[data-color-mode='dark'] .details-drawer {
   flex-direction: column;
   gap: 13px;
   padding: 0 22px 22px;
+}
+
+.kdbx-file-summary {
+  display: flex;
+  max-width: 360px;
+  align-items: center;
+  justify-content: center;
+  gap: 9px;
+  align-self: center;
+  padding: 10px 12px;
+  border: 1px solid var(--card-border);
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--canvas) 30%, var(--card));
+}
+
+.kdbx-file-summary__icon {
+  display: inline-flex;
+  width: 26px;
+  height: 26px;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  border-radius: 7px;
+  background: var(--accent-pale);
+  color: var(--accent);
+}
+
+.kdbx-file-summary code {
+  min-width: 0;
+  max-width: 225px;
+  overflow: hidden;
+  color: var(--ink);
+  font-size: 10px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.kdbx-file-summary .settings-location__badge {
+  flex: 0 0 auto;
 }
 
 .kdbx-password-form .modal-description {

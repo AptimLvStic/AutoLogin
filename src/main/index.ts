@@ -1344,7 +1344,7 @@ async function testProxy(settings: ProxySettings): Promise<ProxyTestResult> {
     const startedAt = Date.now()
     try {
       await testSession.setProxy({ mode: 'system' })
-      const response = await testSession.fetch('https://api.github.com/zen', {
+      const response = await testSession.fetch(settings.testUrl, {
         headers: {
           Accept: 'text/plain',
           'User-Agent': `AutoLogin/${app.getVersion()}`
@@ -1394,7 +1394,7 @@ async function testProxy(settings: ProxySettings): Promise<ProxyTestResult> {
       proxyRules: `${settings.protocol}://${settings.host.trim()}:${settings.port}`,
       proxyBypassRules: settings.bypassList
     })
-    const response = await testSession.fetch('https://api.github.com/zen', {
+    const response = await testSession.fetch(settings.testUrl, {
       headers: {
         Accept: 'text/plain',
         'User-Agent': `AutoLogin/${app.getVersion()}`

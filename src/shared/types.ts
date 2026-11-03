@@ -19,6 +19,7 @@ export type ProxyProtocol = (typeof PROXY_PROTOCOLS)[number]
 
 export const PROXY_MODES = ['custom', 'system'] as const
 export type ProxyMode = (typeof PROXY_MODES)[number]
+export const DEFAULT_PROXY_TEST_URL = 'https://api.github.com/zen'
 
 export interface ProxySettings {
   mode: ProxyMode
@@ -27,6 +28,7 @@ export interface ProxySettings {
   host: string
   port: number
   bypassList: string
+  testUrl: string
 }
 
 export interface ProxyTestResult {

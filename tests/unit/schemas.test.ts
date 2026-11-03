@@ -7,6 +7,7 @@ import {
   siteInputSchema,
   storedAccountSchema
 } from '../../src/shared/schemas'
+import { DEFAULT_PROXY_SETTINGS } from '../../src/shared/theme'
 
 describe('shared input schemas', () => {
   it('accepts only http and https site URLs', () => {
@@ -59,7 +60,8 @@ describe('shared input schemas', () => {
         protocol: 'http',
         host: '',
         port: 8080,
-        bypassList: 'localhost, 127.0.0.1, ::1'
+        bypassList: 'localhost, 127.0.0.1, ::1',
+        testUrl: 'https://api.github.com/zen'
       }
     })
   })
@@ -78,6 +80,11 @@ describe('shared input schemas', () => {
       }).success
     ).toBe(true)
     expect(appSettingsPatchSchema.safeParse({ interfaceScale: 111 }).success).toBe(false)
+    expect(
+      appSettingsPatchSchema.safeParse({
+        proxy: { ...DEFAULT_PROXY_SETTINGS, testUrl: 'file:///tmp/proxy-test' }
+      }).success
+    ).toBe(false)
     expect(appSettingsPatchSchema.safeParse({}).success).toBe(false)
   })
 

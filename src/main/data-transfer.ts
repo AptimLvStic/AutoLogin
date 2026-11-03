@@ -52,7 +52,7 @@ let argon2Configured = false
 
 export async function parseCsvImport(path: string): Promise<ParsedImport> {
   const buffer = await readBoundedFile(path)
-  const text = buffer.toString('utf8')
+  const text = decodeCsvBuffer(buffer)
   let records: Record<string, string>[]
 
   try {
@@ -389,6 +389,32 @@ async function readBoundedFile(path: string): Promise<Buffer> {
     throw new Error(`文件过大：${basename(path)} 超过 50 MB`)
   }
   return buffer
+}
+
+function decodeCsvBuffer(buffer: Buffer): string {
+  if (buffer.length >= 3 && buffer[0] === 0xef && buffer[1] === 0xbb && buffer[2] === 0xbf) {
+    return new TextDecoder('utf-8').decode(buffer.subarray(3))
+  }
+  if (buffer.length >= 2 && buffer[0] === 0xff && buffer[1] === 0xfe) {
+    return buffer.subarray(2).toString('utf16le')
+  }
+  if (buffer.length >= 2 && buffer[0] === 0xfe && buffer[1] === 0xff) {
+    return decodeWithFallback('utf-16be', buffer.subarray(2)) ?? buffer.toString('utf8')
+  }
+
+  return (
+    decodeWithFallback('utf-8', buffer) ??
+    decodeWithFallback('gb18030', buffer) ??
+    buffer.toString('utf8')
+  )
+}
+
+function decodeWithFallback(encoding: string, buffer: Buffer): string | null {
+  try {
+    return new TextDecoder(encoding, { fatal: true }).decode(buffer)
+  } catch {
+    return null
+  }
 }
 
 function toArrayBuffer(buffer: Buffer): ArrayBuffer {

@@ -3,6 +3,7 @@ import {
   APP_LANGUAGES,
   AUTO_LOCK_OPTIONS,
   COLOR_MODES,
+  DEFAULT_PROXY_TEST_URL,
   INTERFACE_SCALE_MAX,
   INTERFACE_SCALE_MIN,
   PROXY_MODES,
@@ -152,7 +153,20 @@ export const proxySettingsSchema = z
     protocol: z.enum(PROXY_PROTOCOLS),
     host: z.string().trim().max(255),
     port: z.number().int().min(1).max(65535),
-    bypassList: z.string().trim().max(1000)
+    bypassList: z.string().trim().max(1000),
+    testUrl: z
+      .string()
+      .trim()
+      .max(2048)
+      .default(DEFAULT_PROXY_TEST_URL)
+      .refine((value) => {
+        try {
+          const url = new URL(value)
+          return url.protocol === 'http:' || url.protocol === 'https:'
+        } catch {
+          return false
+        }
+      }, '测试 URL 必须是有效的 http/https 地址')
   })
   .superRefine((value, context) => {
     if (value.mode === 'custom' && value.enabled && !value.host) {
@@ -166,7 +180,8 @@ const defaultProxySettings = {
   protocol: 'http' as const,
   host: '',
   port: 8080,
-  bypassList: 'localhost, 127.0.0.1, ::1'
+  bypassList: 'localhost, 127.0.0.1, ::1',
+  testUrl: DEFAULT_PROXY_TEST_URL
 }
 
 const defaultThemeColors = {

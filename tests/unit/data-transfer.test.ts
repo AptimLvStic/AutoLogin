@@ -98,6 +98,25 @@ describe('data transfer', () => {
     expect(second.result.warnings[0]).toContain('相同用户名')
   })
 
+  it('decodes GB18030 CSV files so Chinese site data is not garbled', async () => {
+    const directory = createDirectory()
+    const path = join(directory, 'gb18030.csv')
+    writeFileSync(
+      path,
+      Buffer.from(
+        '736974654e616d652c737461727455726c2c7369746547726f75702c757365726e616d652c70617373776f72642c6175746f5375626d69742c6661766f726974650d0ad6d0cec4d5beb5e32c68747470733a2f2f6578616d706c652e636f6d2f6c6f67696e2cb9a4d7f72c75736572406578616d706c652e636f6d2c7365637265742c747275652c66616c73650d0a',
+        'hex'
+      )
+    )
+
+    const parsed = await parseCsvImport(path)
+    expect(parsed.candidates[0]).toMatchObject({
+      siteName: '中文站点',
+      siteGroup: '工作',
+      username: 'user@example.com'
+    })
+  })
+
   it('imports KeePassXC entries from an Argon2d KDBX database', async () => {
     const directory = createDirectory()
     const path = join(directory, 'passwords.kdbx')

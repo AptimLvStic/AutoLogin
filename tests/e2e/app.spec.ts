@@ -378,6 +378,7 @@ test('persists dark mode, language, themes and interface scale with separate res
   const appearanceNav = page.locator('.sidebar-child-item').filter({ hasText: '外观主题' })
   await appearanceNav.click()
   await expect(settings.locator('.settings-page__header h2')).toHaveText('外观主题')
+  await expect(settings.locator('.theme-swatch').filter({ hasText: 'defalut' })).toBeVisible()
   await expect(settingsNav).toHaveClass(/is-active/)
   await expect(appearanceNav).toHaveClass(/is-active/)
 
@@ -483,13 +484,31 @@ test('persists dark mode, language, themes and interface scale with separate res
   await page.locator('.sidebar-child-item').filter({ hasText: '网络代理' }).click()
   await expect(settings.getByRole('heading', { name: '网络代理' })).toBeVisible()
   await expect(settings.getByRole('button', { name: '测试连接' })).toBeVisible()
+  await settings.getByRole('button', { name: '测试设置' }).click()
+  const testSettings = settings.getByRole('dialog', { name: '连接测试设置' })
+  await expect(testSettings).toBeVisible()
+  await testSettings.getByRole('textbox', { name: '测试 URL' }).fill(
+    'https://example.com/proxy-check'
+  )
+  await expect(
+    testSettings.getByRole('textbox', { name: '测试 URL' })
+  ).toHaveValue('https://example.com/proxy-check')
+  await settings.getByRole('button', { name: '测试设置' }).click()
+  await expect(testSettings).toHaveCount(0)
   await settings.getByRole('radio', { name: /跟随系统/ }).check()
   await expect(settings.getByRole('textbox', { name: '服务器' })).toBeDisabled()
   await expect(settings.getByRole('spinbutton', { name: '端口' })).toBeDisabled()
   await settings.getByRole('button', { name: '保存代理配置' }).click()
   await expect
     .poll(() => page.evaluate(() => window.autologin.settings.get()))
-    .toMatchObject({ proxy: { mode: 'system', protocol: 'http', port: 8080 } })
+    .toMatchObject({
+      proxy: {
+        mode: 'system',
+        protocol: 'http',
+        port: 8080,
+        testUrl: 'https://example.com/proxy-check'
+      }
+    })
 })
 
 test('supports grouped favorites, drawer editing and checkbox batch tabs in one browser', async () => {

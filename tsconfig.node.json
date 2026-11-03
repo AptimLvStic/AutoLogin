@@ -4,6 +4,7 @@
     "target": "ES2022",
     "module": "ESNext",
     "moduleResolution": "Bundler",
+    "jsx": "react-jsx",
     "allowImportingTsExtensions": false,
     "resolveJsonModule": true,
     "esModuleInterop": true,
@@ -32,6 +33,8 @@
     "src/main/**/*.ts",
     "src/preload/**/*.ts",
     "src/shared/**/*.ts",
+    "src/renderer/src/i18n.tsx",
+    "src/renderer/src/components/Modal.tsx",
     "tests/unit/**/*.ts"
   ]
 }

@@ -19,7 +19,8 @@ export const DEFAULT_PROXY_SETTINGS: ProxySettings = {
   protocol: 'http',
   host: '',
   port: 8080,
-  bypassList: 'localhost, 127.0.0.1, ::1'
+  bypassList: 'localhost, 127.0.0.1, ::1',
+  testUrl: 'https://api.github.com/zen'
 }
 
 export const DEFAULT_APP_SETTINGS: AppSettings = {
@@ -40,7 +41,7 @@ interface ThemePresetDefinition {
 
 export const THEME_PRESETS: Record<Exclude<ThemePreset, 'custom'>, ThemePresetDefinition> = {
   magpie: {
-    label: 'Magpie',
+    label: 'defalut',
     colors: {
       background: '#FFFFFF',
       surface: '#F7F8FA',

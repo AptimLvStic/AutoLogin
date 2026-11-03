@@ -20,19 +20,28 @@ export function Modal({
 }): React.JSX.Element {
   const { tr } = useI18n()
   const panelRef = useRef<HTMLDivElement>(null)
+  const onCloseRef = useRef(onClose)
   const titleId = useId()
+
+  useEffect(() => {
+    onCloseRef.current = onClose
+  }, [onClose])
 
   useEffect(() => {
     const previous = document.activeElement as HTMLElement | null
     const panel = panelRef.current
-    const focusable = panel?.querySelector<HTMLElement>(
-      'button, input, select, textarea, [tabindex]:not([tabindex="-1"])'
-    )
+    const focusable =
+      panel?.querySelector<HTMLElement>(
+        '[data-autofocus], input:not([disabled]), select:not([disabled]), textarea:not([disabled])'
+      ) ??
+      panel?.querySelector<HTMLElement>(
+        'button:not([disabled]), [tabindex]:not([tabindex="-1"])'
+      )
     focusable?.focus()
 
     const onKeyDown = (event: KeyboardEvent): void => {
       if (event.key === 'Escape') {
-        onClose()
+        onCloseRef.current()
       }
       if (event.key !== 'Tab' || !panel) {
         return
@@ -60,7 +69,7 @@ export function Modal({
       document.removeEventListener('keydown', onKeyDown)
       previous?.focus()
     }
-  }, [onClose])
+  }, [])
 
   return createPortal(
     <div className="modal-layer" role="presentation">

@@ -246,6 +246,7 @@ export function mergeImportedLogins(
       username: candidate.username,
       password: candidate.password,
       favorite: candidate.favorite,
+      loginStrategy: 'auto',
       createdAt: now,
       updatedAt: now
     }

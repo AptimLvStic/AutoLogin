@@ -199,6 +199,86 @@ test('uses the Windows default browser, reuses the session and clears it', async
     .toMatchObject({ found: true, pathname: '/home' })
 })
 
+test('fills one-click credentials after a delayed login form renders', async () => {
+  await createVault(page)
+  await addAccount(page, {
+    siteName: '延迟登录',
+    startUrl: `${server.baseUrl}/delayed-login`,
+    label: '延迟账号',
+    username: 'tester@example.test',
+    password: 'secret-password'
+  })
+
+  const previousBatchId = await currentBatchId(page)
+  await page.locator('.account-row').first().getByRole('button', { name: '登录' }).click()
+  await waitForNewBatch(page, previousBatchId, {
+    active: false,
+    success: 0,
+    failed: 1,
+    manual: 1
+  })
+
+  await expect
+    .poll(() => targetSnapshot(application, server.baseUrl), { timeout: 15000 })
+    .toMatchObject({
+      found: true,
+      pathname: '/delayed-login',
+      username: 'tester@example.test',
+      password: 'secret-password'
+    })
+})
+
+test('saves and tests manual selectors, then uses them for login', async () => {
+  await createVault(page)
+  await addAccount(page, {
+    siteName: '手动定位登录',
+    startUrl: `${server.baseUrl}/login`,
+    label: '手动账号',
+    username: 'tester@example.test',
+    password: 'secret-password'
+  })
+
+  await page.locator('.account-row').first().click()
+  const drawer = page.locator('.account-drawer')
+  await drawer.getByRole('radio', { name: /手动配置/ }).check()
+  const selectorRows = drawer.locator('.selector-config-row')
+  await expect(selectorRows).toHaveCount(3)
+  await selectorRows.nth(0).locator('input').fill('#username')
+  await selectorRows.nth(1).locator('input').fill('#password')
+  await selectorRows.nth(2).locator('input').fill('#login')
+
+  await selectorRows.nth(0).getByRole('button', { name: '测试' }).click()
+  await expect(selectorRows.nth(0)).toContainText('已找到可见的匹配元素', {
+    timeout: 20000
+  })
+  await drawer.getByRole('button', { name: '保存修改' }).click()
+
+  const stored = await page.evaluate(async () => {
+    const accounts = await window.autologin.accounts.list()
+    return accounts[0]
+  })
+  expect(stored).toMatchObject({
+    loginStrategy: 'manual',
+    manualSelectors: {
+      username: '#username',
+      password: '#password',
+      submit: '#login'
+    }
+  })
+
+  const previousBatchId = await currentBatchId(page)
+  await page.locator('.account-row').first().getByRole('button', { name: '登录' }).click()
+  await waitForNewBatch(page, previousBatchId, {
+    active: false,
+    success: 1,
+    failed: 0,
+    manual: 0
+  })
+  await expect
+    .poll(() => targetSnapshot(application, server.baseUrl), { timeout: 15000 })
+    .toMatchObject({ found: true, pathname: '/home' })
+})
+
 test('pauses on a captcha and resumes after manual verification', async () => {
   await createVault(page)
   await addAccount(page, {
@@ -393,6 +473,8 @@ test('persists dark mode, language, themes and interface scale with separate res
   await settingsNav.click()
 
   const settings = page.locator('.settings-page')
+  await expect(page.locator('.page-breadcrumb')).toBeVisible()
+  await expect(settings.locator('.settings-footer')).toHaveCount(0)
   const appearanceNav = page.locator('.sidebar-child-item').filter({ hasText: '外观主题' })
   await appearanceNav.click()
   await expect(settings.locator('.settings-page__header h2')).toHaveText('外观主题')
@@ -498,24 +580,26 @@ test('persists dark mode, language, themes and interface scale with separate res
   await expect(settings.locator('.settings-about-grid')).toContainText(`v${runtimeVersion}`)
   await settings.getByRole('button', { name: '检查更新' }).click()
   await expect(settings.locator('.settings-update-status')).toBeVisible({ timeout: 12000 })
+  const updateDialog = page.locator('.update-dialog')
+  if ((await updateDialog.count()) > 0) {
+    await updateDialog.getByRole('button', { name: '稍后提醒' }).click()
+    await expect(updateDialog).toHaveCount(0)
+  }
 
   await page.locator('.sidebar-child-item').filter({ hasText: '网络代理' }).click()
   await expect(settings.getByRole('heading', { name: '网络代理' })).toBeVisible()
   await expect(settings.getByRole('button', { name: '测试连接' })).toBeVisible()
-  await settings.getByRole('button', { name: '测试设置' }).click()
-  const testSettings = settings.getByRole('dialog', { name: '连接测试设置' })
-  await expect(testSettings).toBeVisible()
-  await testSettings.getByRole('textbox', { name: '测试 URL' }).fill(
+  await expect(settings.locator('.proxy-advanced-row')).toBeVisible()
+  await expect(settings.getByRole('button', { name: '测试设置' })).toHaveCount(0)
+  const testUrlInput = settings.getByRole('textbox', { name: '测试 URL' })
+  await testUrlInput.fill(
     'https://example.com/proxy-check'
   )
-  await expect(
-    testSettings.getByRole('textbox', { name: '测试 URL' })
-  ).toHaveValue('https://example.com/proxy-check')
-  await settings.getByRole('button', { name: '测试设置' }).click()
-  await expect(testSettings).toHaveCount(0)
+  await expect(testUrlInput).toHaveValue('https://example.com/proxy-check')
   await settings.getByRole('radio', { name: /跟随系统/ }).check()
   await expect(settings.getByRole('textbox', { name: '服务器' })).toBeDisabled()
   await expect(settings.getByRole('spinbutton', { name: '端口' })).toBeDisabled()
+  await expect(testUrlInput).toBeEnabled()
   await settings.getByRole('button', { name: '保存代理配置' }).click()
   await expect
     .poll(() => page.evaluate(() => window.autologin.settings.get()))
@@ -527,6 +611,24 @@ test('persists dark mode, language, themes and interface scale with separate res
         testUrl: 'https://example.com/proxy-check'
       }
     })
+})
+
+test('opens the settings submenu beside the collapsed sidebar', async () => {
+  await createVault(page)
+  await page.getByRole('button', { name: '隐藏菜单栏' }).click()
+  const settingsButton = page.locator('.sidebar-nav__item--settings')
+  await settingsButton.hover()
+
+  const popover = page.locator('.sidebar-settings-popover')
+  await expect(popover).toBeVisible()
+  await expect(popover.getByRole('menuitem')).toHaveCount(6)
+  await popover.getByRole('menuitem', { name: '网络代理' }).click()
+
+  await expect(
+    page.locator('.settings-page').getByRole('heading', { name: '网络代理' })
+  ).toBeVisible()
+  await expect(settingsButton).toHaveClass(/is-active/)
+  await expect(popover).toHaveCount(0)
 })
 
 test('supports grouped favorites, drawer editing and checkbox batch tabs in one browser', async () => {

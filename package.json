@@ -1,6 +1,6 @@
 {
   "name": "autologin",
-  "version": "0.5.0",
+  "version": "0.6.0",
   "description": "A calm, local-first login workspace for Windows.",
   "main": "./out/main/index.js",
   "author": "AutoLogin",
@@ -94,6 +94,7 @@
     "nsis": {
       "oneClick": false,
       "allowToChangeInstallationDirectory": true,
+      "include": "resources/installer.nsh",
       "createDesktopShortcut": true,
       "createStartMenuShortcut": true,
       "shortcutName": "AutoLogin",

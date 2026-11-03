@@ -3,6 +3,7 @@ import {
   delay,
   executeStep,
   fillGeneric,
+  fillInput,
   findChallengeField,
   focusChallenge,
   scoreChallenge,
@@ -18,6 +19,22 @@ type AgentCommand =
       password: string
       autoSubmit: boolean
       recording: boolean
+    }
+  | {
+      type: 'fill-manual'
+      username: string
+      password: string
+      autoSubmit: boolean
+      selectors: {
+        username?: string
+        password?: string
+        submit?: string
+      }
+    }
+  | {
+      type: 'test-selector'
+      field: 'username' | 'password' | 'submit'
+      selector: string
     }
   | { type: 'record-start' }
   | { type: 'record-stop' }
@@ -90,6 +107,97 @@ if (!window.__autologinAgent) {
           onChallengeDetected: () => sendEvent({ type: 'challenge-detected' })
         }
       )
+    }
+
+    if (command.type === 'fill-manual') {
+      const usernameInput = findInputBySelector(command.selectors.username, 'username')
+      const passwordInput = findInputBySelector(command.selectors.password, 'password')
+      const submitElement = findElementBySelector(command.selectors.submit)
+      let usernameFilled = false
+      let passwordFilled = false
+
+      if (usernameInput) {
+        fillInput(usernameInput, command.username)
+        usernameFilled = true
+      }
+      if (passwordInput) {
+        fillInput(passwordInput, command.password)
+        passwordFilled = true
+      }
+
+      const challenge = findChallengeField()
+      if (challenge) {
+        focusChallenge(challenge)
+        sendEvent({ type: 'challenge-detected' })
+        return {
+          formFound: Boolean(usernameInput || passwordInput || submitElement),
+          usernameFilled,
+          passwordFilled,
+          challengeDetected: true,
+          submitted: false,
+          confidence: usernameFilled && passwordFilled ? 'high' : 'low'
+        }
+      }
+
+      const submitted =
+        command.autoSubmit &&
+        usernameFilled &&
+        passwordFilled &&
+        submitElement instanceof HTMLElement
+      if (submitted && submitElement) {
+        await delay(120)
+        submitElement.focus()
+        submitElement.click()
+      }
+
+      return {
+        formFound: Boolean(usernameInput || passwordInput || submitElement),
+        usernameFilled,
+        passwordFilled,
+        challengeDetected: false,
+        submitted,
+        confidence:
+          usernameFilled && passwordFilled && submitElement
+            ? 'high'
+            : usernameFilled || passwordFilled
+              ? 'medium'
+              : 'low'
+      }
+    }
+
+    if (command.type === 'test-selector') {
+      let matches: Element[]
+      try {
+        matches = Array.from(document.querySelectorAll(command.selector))
+      } catch {
+        return {
+          found: false,
+          visible: false,
+          count: 0,
+          message: '样式定位器格式无效'
+        }
+      }
+      const visible = matches.filter(isVisibleElement)
+      const candidate = visible[0]
+      const typeMatches =
+        command.field === 'username'
+          ? candidate instanceof HTMLInputElement && candidate.type !== 'password'
+          : command.field === 'password'
+            ? candidate instanceof HTMLInputElement && candidate.type === 'password'
+            : candidate instanceof HTMLElement
+      return {
+        found: Boolean(candidate && typeMatches),
+        visible: visible.length > 0,
+        count: matches.length,
+        message:
+          matches.length === 0
+            ? '未找到匹配元素'
+            : !visible.length
+              ? '元素存在但当前不可见'
+              : !typeMatches
+                ? '元素类型与目标字段不匹配'
+                : '已找到可见的匹配元素'
+      }
     }
 
     if (command.type === 'run-step') {
@@ -176,6 +284,46 @@ if (!window.__autologinAgent) {
     }
     recordedKeys.add(key)
     sendEvent({ type: 'record-action', step })
+  }
+
+  function findElementBySelector(selector: string | undefined): HTMLElement | null {
+    if (!selector) return null
+    try {
+      const element = document.querySelector(selector)
+      return element instanceof HTMLElement && isVisibleElement(element) ? element : null
+    } catch {
+      return null
+    }
+  }
+
+  function findInputBySelector(
+    selector: string | undefined,
+    kind: 'username' | 'password'
+  ): HTMLInputElement | null {
+    const element = findElementBySelector(selector)
+    if (!(element instanceof HTMLInputElement)) {
+      return null
+    }
+    if (kind === 'password' && element.type !== 'password') {
+      return null
+    }
+    if (kind === 'username' && element.type === 'password') {
+      return null
+    }
+    return element
+  }
+
+  function isVisibleElement(element: Element): boolean {
+    if (!(element instanceof HTMLElement)) {
+      return false
+    }
+    const style = window.getComputedStyle(element)
+    return (
+      style.display !== 'none' &&
+      style.visibility !== 'hidden' &&
+      style.opacity !== '0' &&
+      element.getClientRects().length > 0
+    )
   }
 
   function attachActivityListeners(): void {

@@ -19,6 +19,22 @@ export type BrowserAgentCommand =
       autoSubmit: boolean
       recording: boolean
     }
+  | {
+      type: 'fill-manual'
+      username: string
+      password: string
+      autoSubmit: boolean
+      selectors: {
+        username?: string
+        password?: string
+        submit?: string
+      }
+    }
+  | {
+      type: 'test-selector'
+      field: 'username' | 'password' | 'submit'
+      selector: string
+    }
   | { type: 'record-start' }
   | { type: 'record-stop' }
   | { type: 'detect-challenge' }
@@ -422,6 +438,24 @@ export class ExternalBrowserPage {
       this.sessionId,
       15_000
     )
+  }
+
+  async waitForLoad(timeoutMilliseconds = 12_000): Promise<void> {
+    const deadline = Date.now() + timeoutMilliseconds
+    while (Date.now() < deadline) {
+      if (this.closed) {
+        throw new Error('默认浏览器页面已关闭')
+      }
+      if (
+        this.snapshot.url !== 'about:blank' &&
+        !this.snapshot.loading &&
+        this.agentContextId !== null
+      ) {
+        return
+      }
+      await delay(100)
+    }
+    throw new Error('等待页面加载完成超时')
   }
 
   async runAgentCommand(command: BrowserAgentCommand): Promise<unknown> {

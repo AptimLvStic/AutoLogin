@@ -37,6 +37,31 @@ export interface ProxyTestResult {
   latencyMs?: number
 }
 
+export const LOGIN_STRATEGIES = ['auto', 'manual'] as const
+export type LoginStrategy = (typeof LOGIN_STRATEGIES)[number]
+
+export interface ManualLoginSelectors {
+  username?: string
+  password?: string
+  submit?: string
+}
+
+export type SelectorTestField = keyof ManualLoginSelectors
+
+export interface SelectorTestInput {
+  accountId: string
+  field: SelectorTestField
+  selector: string
+  url?: string
+}
+
+export interface SelectorTestResult {
+  found: boolean
+  visible: boolean
+  count: number
+  message: string
+}
+
 export interface ThemeColors {
   background: string
   surface: string
@@ -170,6 +195,8 @@ export interface Account {
   label: string
   username: string
   favorite: boolean
+  loginStrategy: LoginStrategy
+  manualSelectors?: ManualLoginSelectors
   recipes?: AccountRecipe[]
   activeRecipeId?: string
   lastUsedAt?: string
@@ -225,6 +252,8 @@ export interface AccountCreateInput {
   username: string
   password: string
   favorite?: boolean
+  loginStrategy?: LoginStrategy
+  manualSelectors?: ManualLoginSelectors
 }
 
 export interface AccountUpdateInput {
@@ -233,6 +262,8 @@ export interface AccountUpdateInput {
   password?: string
   favorite?: boolean
   activeRecipeId?: string
+  loginStrategy?: LoginStrategy
+  manualSelectors?: ManualLoginSelectors
 }
 
 export interface LoginStartInput {
@@ -409,6 +440,7 @@ export interface AutologinApi {
     focusBrowser: () => Promise<void>
     finishRecording: () => Promise<RecipeDraftResult>
     cancelRecording: () => Promise<void>
+    testSelector: (input: SelectorTestInput) => Promise<SelectorTestResult>
     clearSession: (accountId: string) => Promise<void>
     getState: () => Promise<LoginViewState>
   }

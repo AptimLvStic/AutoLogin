@@ -32,6 +32,7 @@ function addDemoAccount(manager: VaultManager): void {
     username: 'tester@example.test',
     password: 'never-write-this-in-plaintext',
     favorite: true,
+    loginStrategy: 'auto',
     createdAt: now,
     updatedAt: now
   })

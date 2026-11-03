@@ -12,12 +12,21 @@ import {
   ListChecks,
   LoaderCircle,
   RefreshCw,
+  SlidersHorizontal,
   Star,
   Trash2,
   UserRound,
   X
 } from 'lucide-react'
-import type { AccountRecipe, AccountWithSite, Site } from '@shared/types'
+import type {
+  AccountRecipe,
+  AccountWithSite,
+  LoginStrategy,
+  ManualLoginSelectors,
+  SelectorTestField,
+  SelectorTestResult,
+  Site
+} from '@shared/types'
 import { useI18n } from '../i18n'
 import { ConfirmDialog, Modal } from './Modal'
 
@@ -72,6 +81,16 @@ export function AccountDrawer({
   const [confirmClear, setConfirmClear] = useState(false)
   const [recipes, setRecipes] = useState<AccountRecipe[]>(account?.recipes ?? [])
   const [activeRecipeId, setActiveRecipeId] = useState(account?.activeRecipeId)
+  const [loginStrategy, setLoginStrategy] = useState<LoginStrategy>(
+    account?.loginStrategy ?? 'auto'
+  )
+  const [manualSelectors, setManualSelectors] = useState<ManualLoginSelectors>(
+    account?.manualSelectors ?? {}
+  )
+  const [selectorTests, setSelectorTests] = useState<
+    Partial<Record<SelectorTestField, SelectorTestResult>>
+  >({})
+  const [selectorTesting, setSelectorTesting] = useState<SelectorTestField | null>(null)
   const [recipeDetails, setRecipeDetails] = useState<AccountRecipe | null>(null)
   const [confirmRecipeDelete, setConfirmRecipeDelete] = useState<AccountRecipe | null>(null)
   const [recipeBusy, setRecipeBusy] = useState(false)
@@ -157,6 +176,20 @@ export function AccountDrawer({
       setError(tr('请选择站点', 'Select a site.', '請選擇站點'))
       return
     }
+    if (
+      mode === 'edit' &&
+      loginStrategy === 'manual' &&
+      (!manualSelectors.username?.trim() || !manualSelectors.password?.trim())
+    ) {
+      setError(
+        tr(
+          '手动配置需要填写用户名和密码定位器',
+          'Enter username and password selectors for manual configuration.',
+          '手動設定需要填寫使用者名稱和密碼定位器'
+        )
+      )
+      return
+    }
 
     setBusy(true)
     try {
@@ -195,6 +228,8 @@ export function AccountDrawer({
           label: site.name,
           username: username.trim(),
           favorite,
+          loginStrategy,
+          manualSelectors,
           ...(password ? { password } : {})
         })
         onSaved(saved, tr('账号信息已更新', 'Account updated.', '帳號資料已更新'))
@@ -204,7 +239,9 @@ export function AccountDrawer({
           label: site.name,
           username: username.trim(),
           password,
-          favorite
+          favorite,
+          loginStrategy,
+          manualSelectors
         })
         onSaved(saved, tr('账号已加入保险库', 'Account added to the vault.', '帳號已加入保險庫'))
       }
@@ -344,6 +381,61 @@ export function AccountDrawer({
       return
     }
     onRecord()
+  }
+
+  function updateManualSelector(field: SelectorTestField, value: string): void {
+    setManualSelectors((current) => ({ ...current, [field]: value }))
+    setSelectorTests((current) => {
+      if (!current[field]) return current
+      const next = { ...current }
+      delete next[field]
+      return next
+    })
+  }
+
+  async function testManualSelector(field: SelectorTestField): Promise<void> {
+    if (!account) {
+      notify(
+        'info',
+        tr(
+          '请先保存账号，再测试页面定位器',
+          'Save the account before testing selectors.',
+          '請先儲存帳號，再測試頁面定位器'
+        )
+      )
+      return
+    }
+    const selector = manualSelectors[field]?.trim()
+    if (!selector) {
+      notify(
+        'info',
+        tr('请先填写定位器', 'Enter a selector first.', '請先填寫定位器')
+      )
+      return
+    }
+    setSelectorTesting(field)
+    try {
+      const result = await window.autologin.login.testSelector({
+        accountId: account.id,
+        field,
+        selector,
+        url: startUrl.trim() || undefined
+      })
+      setSelectorTests((current) => ({ ...current, [field]: result }))
+      notify(result.found ? 'success' : 'error', result.message)
+    } catch (reason) {
+      const message =
+        reason instanceof Error
+          ? reason.message
+          : tr('定位器测试失败', 'Element test failed.', '定位器測試失敗')
+      setSelectorTests((current) => ({
+        ...current,
+        [field]: { found: false, visible: false, count: 0, message }
+      }))
+      notify('error', message)
+    } finally {
+      setSelectorTesting(null)
+    }
   }
 
   return (
@@ -590,6 +682,57 @@ export function AccountDrawer({
 
             {account && (
               <>
+                <section
+                  className="account-login-strategy"
+                  aria-label={tr('登录方式', 'Login method', '登入方式')}
+                >
+                  <div className="proxy-mode-options account-strategy-options">
+                    <label
+                      className={`proxy-mode-option${loginStrategy === 'auto' ? ' is-active' : ''}`}
+                    >
+                      <input
+                        type="radio"
+                        name="login-strategy"
+                        value="auto"
+                        checked={loginStrategy === 'auto'}
+                        onChange={() => setLoginStrategy('auto')}
+                      />
+                      <span>
+                        <strong>{tr('自动录制', 'Automatic recording', '自動錄製')}</strong>
+                        <small>
+                          {tr(
+                            '优先回放录制流程，失败时自动识别表单',
+                            'Replay a recorded flow, then fall back to form detection',
+                            '優先回放錄製流程，失敗時自動辨識表單'
+                          )}
+                        </small>
+                      </span>
+                    </label>
+                    <label
+                      className={`proxy-mode-option${loginStrategy === 'manual' ? ' is-active' : ''}`}
+                    >
+                      <input
+                        type="radio"
+                        name="login-strategy"
+                        value="manual"
+                        checked={loginStrategy === 'manual'}
+                        onChange={() => setLoginStrategy('manual')}
+                      />
+                      <span>
+                        <strong>{tr('手动配置', 'Manual configuration', '手動設定')}</strong>
+                        <small>
+                          {tr(
+                            '使用精确的样式定位器匹配账号、密码和提交按钮',
+                            'Use exact selectors for credentials and submit',
+                            '使用精確的樣式定位器匹配帳號、密碼和提交按鈕'
+                          )}
+                        </small>
+                      </span>
+                    </label>
+                  </div>
+                </section>
+
+                {loginStrategy === 'auto' && (
                 <section className="drawer-recipes" aria-label={tr('录制流程', 'Recorded flows', '錄製流程')}>
                   <header className="drawer-recipes__header">
                     <div>
@@ -669,31 +812,112 @@ export function AccountDrawer({
                     </div>
                   )}
                 </section>
-                <div className="account-drawer__management">
-                  <button type="button" className="text-button" onClick={() => setConfirmClear(true)}>
-                    <RefreshCw size={14} />
-                    {tr('清除会话', 'Clear session', '清除工作階段')}
-                  </button>
-                  <button type="button" className="text-button text-button--danger" onClick={() => setConfirmDelete(true)}>
-                    <Trash2 size={14} />
-                    {tr('删除账号', 'Delete account', '刪除帳號')}
-                  </button>
-                </div>
+                )}
+
+                {loginStrategy === 'manual' && (
+                  <section
+                    className="drawer-recipes manual-selector-panel"
+                    aria-label={tr('手动登录配置', 'Manual login configuration', '手動登入設定')}
+                  >
+                    <header className="drawer-recipes__header">
+                      <div>
+                        <strong>{tr('元素定位器', 'Element selectors', '元素定位器')}</strong>
+                        <small>
+                          {tr(
+                            '仅保存定位规则，不保存输入内容',
+                            'Only selectors are stored',
+                            '僅儲存定位規則，不儲存輸入內容'
+                          )}
+                        </small>
+                      </div>
+                    </header>
+                    {(
+                      [
+                        ['username', tr('用户名', 'Username', '使用者名稱')],
+                        ['password', tr('密码', 'Password', '密碼')],
+                        ['submit', tr('提交按钮', 'Submit button', '提交按鈕')]
+                      ] as const
+                    ).map(([field, label]) => {
+                      const result = selectorTests[field]
+                      return (
+                        <label className="field selector-config-row" key={field}>
+                          <span className="field__label">{label}</span>
+                          <span className="selector-config-row__control">
+                            <span className="input-shell">
+                              <SlidersHorizontal size={15} />
+                              <input
+                                value={manualSelectors[field] ?? ''}
+                                onChange={(event) =>
+                                  updateManualSelector(field, event.target.value)
+                                }
+                                placeholder={selectorPlaceholder(field)}
+                                spellCheck={false}
+                                autoComplete="off"
+                              />
+                            </span>
+                            <button
+                              type="button"
+                              className="button button--ghost button--small"
+                              onClick={() => void testManualSelector(field)}
+                              disabled={selectorTesting !== null}
+                            >
+                              {selectorTesting === field ? (
+                                <LoaderCircle size={13} className="spin" />
+                              ) : (
+                                <RefreshCw size={13} />
+                              )}
+                              {tr('测试', 'Test', '測試')}
+                            </button>
+                          </span>
+                          {result && (
+                            <small
+                              className={`selector-config-row__result${
+                                result.found ? ' is-success' : ' is-error'
+                              }`}
+                            >
+                              {result.message}
+                            </small>
+                          )}
+                        </label>
+                      )
+                    })}
+                  </section>
+                )}
               </>
             )}
 
-            <div className="modal-actions account-drawer__actions">
-              <button type="button" className="button button--ghost" onClick={onClose}>
-                {tr('取消', 'Cancel', '取消')}
-              </button>
-              <button type="submit" className="button button--primary" disabled={busy}>
-                {busy
-                  ? tr('正在保存…', 'Saving…', '正在儲存…')
-                  : mode === 'edit'
-                    ? tr('保存修改', 'Save changes', '儲存變更')
-                    : tr('添加账号', 'Add account', '新增帳號')}
-                {!busy && <ArrowRight size={16} />}
-              </button>
+            <div className="account-drawer__footer">
+              <div className="account-drawer__management">
+                {account && (
+                  <>
+                    <button type="button" className="text-button" onClick={() => setConfirmClear(true)}>
+                      <RefreshCw size={14} />
+                      {tr('清除会话', 'Clear session', '清除工作階段')}
+                    </button>
+                    <button
+                      type="button"
+                      className="text-button text-button--danger"
+                      onClick={() => setConfirmDelete(true)}
+                    >
+                      <Trash2 size={14} />
+                      {tr('删除账号', 'Delete account', '刪除帳號')}
+                    </button>
+                  </>
+                )}
+              </div>
+              <div className="account-drawer__actions">
+                <button type="button" className="button button--ghost" onClick={onClose}>
+                  {tr('取消', 'Cancel', '取消')}
+                </button>
+                <button type="submit" className="button button--primary" disabled={busy}>
+                  {busy
+                    ? tr('正在保存…', 'Saving…', '正在儲存…')
+                    : mode === 'edit'
+                      ? tr('保存修改', 'Save changes', '儲存變更')
+                      : tr('添加账号', 'Add account', '新增帳號')}
+                  {!busy && <ArrowRight size={16} />}
+                </button>
+              </div>
             </div>
           </form>
         </aside>
@@ -796,6 +1020,12 @@ function safeHostname(value: string): string {
   } catch {
     return value
   }
+}
+
+function selectorPlaceholder(field: SelectorTestField): string {
+  if (field === 'username') return 'input[name="username"], #username'
+  if (field === 'password') return 'input[type="password"], #password'
+  return 'button[type="submit"], #login'
 }
 
 function recipeStepName(

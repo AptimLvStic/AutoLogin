@@ -1,6 +1,6 @@
 import { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, net, session, shell } from 'electron'
 import { existsSync, mkdirSync, rmSync, statSync, writeFileSync } from 'node:fs'
-import { basename, join, resolve } from 'node:path'
+import { basename, dirname, join, resolve } from 'node:path'
 import { randomUUID } from 'node:crypto'
 import type { IpcMainEvent, IpcMainInvokeEvent } from 'electron'
 import { autoUpdater } from 'electron-updater'
@@ -17,6 +17,7 @@ import {
   loginStartSchema,
   masterPasswordSchema,
   proxyTestInputSchema,
+  selectorTestInputSchema,
   siteInputSchema
 } from '@shared/schemas'
 import type {
@@ -38,6 +39,8 @@ import type {
   PasswordReveal,
   ProxySettings,
   ProxyTestResult,
+  SelectorTestInput,
+  SelectorTestResult,
   Site,
   SiteInput,
   UpdateCheckResult,
@@ -51,7 +54,12 @@ import {
   parseKdbxImport,
   type ParsedImport
 } from './data-transfer'
-import { migrateDataDirectory, readDataDirectory } from './data-location'
+import {
+  migrateDataDirectory,
+  pathIsInside,
+  readDataDirectory,
+  recoverDataDirectoryFromInstall
+} from './data-location'
 import {
   deleteLoginLogs,
   failureLogPath,
@@ -59,6 +67,11 @@ import {
   readLoginLogs
 } from './login-batch'
 import { clearManagedSessionDirectories, LoginSessionManager } from './login-session'
+import {
+  assertChromiumBrowser,
+  discoverDefaultBrowser
+} from './browser-discovery'
+import { ExternalBrowserHost } from './external-browser'
 import {
   discoverManagedBrowserProfileIds,
   discoverManagedPartitionIds,
@@ -116,6 +129,11 @@ app.whenReady().then(() => {
   })
   configDirectory = app.getPath('userData')
   dataDirectory = readDataDirectory(configDirectory)
+  dataDirectory = recoverDataDirectoryFromInstall(
+    configDirectory,
+    dataDirectory,
+    dirname(app.getPath('exe'))
+  )
   initializeDataStores()
   try {
     backupManager.createFromVault(vault.path)
@@ -496,6 +514,14 @@ function registerIpc(): void {
   ipcMain.handle('login:cancel-recording', (event) => {
     assertTrustedSender(event)
     loginManager?.cancelRecording()
+  })
+  ipcMain.handle('login:test-selector', async (event, payload: unknown): Promise<SelectorTestResult> => {
+    assertTrustedSender(event)
+    const parsed = selectorTestInputSchema.safeParse(payload)
+    if (!parsed.success) {
+      throw new Error(firstIssue(parsed.error))
+    }
+    return testSelector(parsed.data)
   })
   ipcMain.handle('login:clear-session', async (event, accountId: unknown) => {
     assertTrustedSender(event)
@@ -888,12 +914,21 @@ function createAccount(input: {
   username: string
   password: string
   favorite?: boolean
+  loginStrategy?: 'auto' | 'manual'
+  manualSelectors?: {
+    username?: string
+    password?: string
+    submit?: string
+  }
 }): AccountWithSite {
   const data = vault.requireData()
   const site = data.sites.find((entry) => entry.id === input.siteId)
   if (!site) {
     throw new Error('站点不存在')
   }
+  const loginStrategy = input.loginStrategy ?? 'auto'
+  const manualSelectors = normalizeManualSelectors(input.manualSelectors)
+  assertManualSelectors(loginStrategy, manualSelectors)
   const now = new Date().toISOString()
   data.accounts.push({
     id: randomUUID(),
@@ -902,12 +937,98 @@ function createAccount(input: {
     username: input.username.trim(),
     password: input.password,
     favorite: input.favorite ?? false,
+    loginStrategy,
+    manualSelectors,
     createdAt: now,
     updatedAt: now
   })
   vault.save()
   sessionIndex.add(data.accounts[data.accounts.length - 1]!.id)
   return toPublicAccount(data.accounts[data.accounts.length - 1]!, site)
+}
+
+function normalizeManualSelectors(input: {
+  username?: string
+  password?: string
+  submit?: string
+} | undefined): {
+  username?: string
+  password?: string
+  submit?: string
+} | undefined {
+  if (!input) return undefined
+  const normalized = {
+    username: input.username?.trim() || undefined,
+    password: input.password?.trim() || undefined,
+    submit: input.submit?.trim() || undefined
+  }
+  return Object.values(normalized).some(Boolean) ? normalized : undefined
+}
+
+async function testSelector(input: SelectorTestInput): Promise<SelectorTestResult> {
+  const data = vault.requireData()
+  const account = data.accounts.find((entry) => entry.id === input.accountId)
+  const site = account
+    ? data.sites.find((entry) => entry.id === account.siteId)
+    : undefined
+  if (!account || !site) {
+    throw new Error('账号或站点不存在')
+  }
+
+  const browser = discoverDefaultBrowser(
+    allowDevelopmentOverrides ? process.env.AUTOLOGIN_BROWSER_EXECUTABLE : undefined
+  )
+  assertChromiumBrowser(browser)
+  const testDirectory = join(dataDirectory, 'selector-tests', randomUUID())
+  mkdirSync(testDirectory, { recursive: true })
+  let host: ExternalBrowserHost | null = null
+  try {
+    host = await ExternalBrowserHost.launch({
+      browser,
+      profileDirectory: testDirectory,
+      headless: true,
+      proxy: vault.getSettings().proxy
+    })
+    const page = await host.createPage({
+      onEvent: () => undefined,
+      onClosed: () => undefined
+    })
+    await page.navigate(normalizeUrl(input.url?.trim() || site.startUrl))
+    await page.waitForLoad()
+    const result = await page.runAgentCommand({
+      type: 'test-selector',
+      field: input.field,
+      selector: input.selector
+    })
+    if (!result || typeof result !== 'object') {
+      throw new Error('页面未返回元素测试结果')
+    }
+    const record = result as Partial<SelectorTestResult>
+    return {
+      found: Boolean(record.found),
+      visible: Boolean(record.visible),
+      count: typeof record.count === 'number' ? record.count : 0,
+      message:
+        typeof record.message === 'string' && record.message
+          ? record.message
+          : record.found
+            ? '已找到匹配元素'
+            : '未找到匹配元素'
+    }
+  } finally {
+    await host?.close().catch(() => undefined)
+    rmSync(testDirectory, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 })
+  }
+}
+
+function assertManualSelectors(
+  strategy: 'auto' | 'manual',
+  selectors: { username?: string; password?: string } | undefined
+): void {
+  if (strategy !== 'manual') return
+  if (!selectors?.username || !selectors.password) {
+    throw new Error('手动配置需要填写用户名和密码的样式定位器')
+  }
 }
 
 function updateAccount(
@@ -918,6 +1039,12 @@ function updateAccount(
     password?: string
     favorite?: boolean
     activeRecipeId?: string
+    loginStrategy?: 'auto' | 'manual'
+    manualSelectors?: {
+      username?: string
+      password?: string
+      submit?: string
+    }
   }
 ): AccountWithSite {
   const data = vault.requireData()
@@ -933,6 +1060,13 @@ function updateAccount(
   if (patch.username !== undefined) account.username = patch.username.trim()
   if (patch.password !== undefined) account.password = patch.password
   if (patch.favorite !== undefined) account.favorite = patch.favorite
+  if (patch.loginStrategy !== undefined) account.loginStrategy = patch.loginStrategy
+  if (patch.manualSelectors !== undefined) {
+    account.manualSelectors = normalizeManualSelectors({
+      ...account.manualSelectors,
+      ...patch.manualSelectors
+    })
+  }
   if (patch.activeRecipeId !== undefined) {
     if (
       patch.activeRecipeId &&
@@ -942,6 +1076,7 @@ function updateAccount(
     }
     account.activeRecipeId = patch.activeRecipeId || undefined
   }
+  assertManualSelectors(account.loginStrategy, account.manualSelectors)
   account.updatedAt = new Date().toISOString()
   vault.save()
   return toPublicAccount(account, site)
@@ -966,6 +1101,8 @@ function toPublicAccount(
     label: account.label,
     username: account.username,
     favorite: account.favorite,
+    loginStrategy: account.loginStrategy ?? 'auto',
+    manualSelectors: structuredClone(account.manualSelectors),
     recipes: structuredClone(account.recipes ?? []),
     activeRecipeId: account.activeRecipeId,
     lastUsedAt: account.lastUsedAt,
@@ -1103,6 +1240,9 @@ async function chooseDataLocation(): Promise<DataLocationInfo | null> {
   const target = resolve(selected)
   if (sameDirectory(target, dataDirectory)) {
     return dataLocationInfo()
+  }
+  if (pathIsInside(dirname(app.getPath('exe')), target)) {
+    throw new Error('数据目录不能位于 AutoLogin 安装目录内，以免升级时丢失')
   }
 
   await closeLoginManagers()

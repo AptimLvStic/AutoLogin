@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import {
   ArchiveRestore,
   Check,
+  ChevronRight,
   Database,
   Download,
   ExternalLink,
@@ -19,7 +20,6 @@ import {
   Palette,
   RefreshCw,
   RotateCcw,
-  Settings,
   ShieldCheck,
   SlidersHorizontal,
   Sun,
@@ -104,7 +104,6 @@ export function SettingsPage({
   const [proxySaving, setProxySaving] = useState(false)
   const [proxyTesting, setProxyTesting] = useState(false)
   const [proxyResult, setProxyResult] = useState<ProxyTestResult | null>(null)
-  const [testUrlOpen, setTestUrlOpen] = useState(false)
   const [backups, setBackups] = useState<BackupRecord[]>([])
   const [backupsLoading, setBackupsLoading] = useState(false)
   const [confirmBackup, setConfirmBackup] = useState<BackupRecord | null>(null)
@@ -116,7 +115,6 @@ export function SettingsPage({
   const [kdbxError, setKdbxError] = useState('')
   const [kdbxBusy, setKdbxBusy] = useState(false)
   const scaleSaveTimer = useRef<number | null>(null)
-  const proxyTestSettingsRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
     setAutoLock(settings.autoLockMinutes)
@@ -133,26 +131,6 @@ export function SettingsPage({
       if (scaleSaveTimer.current) window.clearTimeout(scaleSaveTimer.current)
     }
   }, [])
-
-  useEffect(() => {
-    if (!testUrlOpen) return
-    const closeOnOutsidePointer = (event: PointerEvent): void => {
-      if (!proxyTestSettingsRef.current?.contains(event.target as Node)) {
-        setTestUrlOpen(false)
-      }
-    }
-    const closeOnEscape = (event: KeyboardEvent): void => {
-      if (event.key === 'Escape') {
-        setTestUrlOpen(false)
-      }
-    }
-    document.addEventListener('pointerdown', closeOnOutsidePointer)
-    document.addEventListener('keydown', closeOnEscape)
-    return () => {
-      document.removeEventListener('pointerdown', closeOnOutsidePointer)
-      document.removeEventListener('keydown', closeOnEscape)
-    }
-  }, [testUrlOpen])
 
   useEffect(() => {
     let cancelled = false
@@ -445,7 +423,6 @@ export function SettingsPage({
     setProxySaving(true)
     try {
       await onSettingsChange({ proxy })
-      setTestUrlOpen(false)
       notify(
         'success',
         tr('网络代理配置已保存', 'Network proxy settings saved.', '網路代理設定已儲存')
@@ -465,7 +442,6 @@ export function SettingsPage({
   async function testProxyConnection(): Promise<void> {
     setProxyTesting(true)
     setProxyResult(null)
-    setTestUrlOpen(false)
     try {
       setProxyResult(await window.autologin.network.testProxy(proxy))
     } catch (error) {
@@ -654,9 +630,11 @@ export function SettingsPage({
     <>
       <section className="page-section settings-page settings-page--controlled">
         <header className="settings-page__header">
-          <span className="eyebrow">{settingsModuleEyebrow(module)}</span>
+          <nav className="page-breadcrumb" aria-label={tr('面包屑', 'Breadcrumb', '麵包屑')}>
+            <span>{tr('偏好设置', 'Preferences', '偏好設定')}</span>
+            <ChevronRight size={12} />
           <h2>{title}</h2>
-          <p>{settingsModuleDescription(module, tr)}</p>
+          </nav>
         </header>
 
         {module === 'general' && (
@@ -1053,6 +1031,40 @@ export function SettingsPage({
                 </label>
               </div>
 
+              <div className="proxy-advanced-row">
+                <label className="field">
+                  <span className="field__label">
+                    {tr('高级配置 · 测试 URL', 'Advanced · Test URL', '進階設定 · 測試 URL')}
+                  </span>
+                  <span className="proxy-advanced-row__control">
+                    <input
+                      className="filter-control"
+                      type="url"
+                      value={proxy.testUrl}
+                      onChange={(event) => updateProxy('testUrl', event.target.value)}
+                      placeholder={DEFAULT_PROXY_TEST_URL}
+                      aria-label={tr('测试 URL', 'Test URL', '測試 URL')}
+                      spellCheck={false}
+                    />
+                    <button
+                      type="button"
+                      className="text-button"
+                      onClick={() => updateProxy('testUrl', DEFAULT_PROXY_TEST_URL)}
+                    >
+                      <RotateCcw size={13} />
+                      {tr('恢复默认', 'Reset', '恢復預設')}
+                    </button>
+                  </span>
+                </label>
+                <span className="settings-hint">
+                  {tr(
+                    '此地址仅用于连通性测试，不受上方代理模式影响。',
+                    'This URL is only used for connectivity tests and is independent of proxy mode.',
+                    '此網址僅用於連線測試，不受上方代理模式影響。'
+                  )}
+                </span>
+              </div>
+
               <div className="settings-inline-actions">
                 <span className="settings-hint">
                   {proxy.mode === 'system'
@@ -1082,63 +1094,6 @@ export function SettingsPage({
                       ? tr('测试中…', 'Testing…', '測試中…')
                       : tr('测试连接', 'Test connection', '測試連線')}
                   </button>
-                  <div className="proxy-test-settings" ref={proxyTestSettingsRef}>
-                    <button
-                      type="button"
-                      className={`icon-button icon-button--small proxy-test-settings__trigger${
-                        testUrlOpen ? ' is-active' : ''
-                      }`}
-                      onClick={() => setTestUrlOpen((value) => !value)}
-                      aria-label={tr('测试设置', 'Test settings', '測試設定')}
-                      aria-expanded={testUrlOpen}
-                      aria-haspopup="dialog"
-                    >
-                      <Settings size={15} />
-                    </button>
-                    {testUrlOpen && (
-                      <div
-                        className="proxy-test-popover"
-                        role="dialog"
-                        aria-label={tr('连接测试设置', 'Connection test settings', '連線測試設定')}
-                      >
-                        <div className="proxy-test-popover__header">
-                          <strong>{tr('连接测试设置', 'Connection test settings', '連線測試設定')}</strong>
-                          <small>
-                            {tr(
-                              '测试请求会使用当前选择的代理模式。',
-                              'The test request uses the selected proxy mode.',
-                              '測試請求會使用目前選擇的代理模式。'
-                            )}
-                          </small>
-                        </div>
-                        <label className="field">
-                          <span className="field__label">
-                            {tr('测试 URL', 'Test URL', '測試 URL')}
-                          </span>
-                          <input
-                            className="filter-control"
-                            type="url"
-                            value={proxy.testUrl}
-                            onChange={(event) => updateProxy('testUrl', event.target.value)}
-                            placeholder={DEFAULT_PROXY_TEST_URL}
-                            aria-label={tr('测试 URL', 'Test URL', '測試 URL')}
-                            spellCheck={false}
-                          />
-                        </label>
-                        <div className="proxy-test-popover__footer">
-                          <span>{tr('仅支持 http/https', 'HTTP/HTTPS only', '僅支援 HTTP/HTTPS')}</span>
-                          <button
-                            type="button"
-                            className="text-button"
-                            onClick={() => updateProxy('testUrl', DEFAULT_PROXY_TEST_URL)}
-                          >
-                            <RotateCcw size={13} />
-                            {tr('恢复默认', 'Reset', '恢復預設')}
-                          </button>
-                        </div>
-                      </div>
-                    )}
-                  </div>
                   <button
                     className="button button--primary"
                     onClick={() => void saveProxy()}
@@ -1626,12 +1581,6 @@ export function SettingsPage({
           </SettingsPanel>
         )}
 
-        <footer className="settings-footer">
-          <span>AutoLogin v{appVersion}</span>
-          <span>
-            <Check size={13} /> {tr('本地优先', 'Local-first', '本機優先')}
-          </span>
-        </footer>
       </section>
 
       {clearOpen && (
@@ -1793,49 +1742,6 @@ function settingsModuleTitle(
     about: tr('关于与更新', 'About & updates', '關於與更新')
   }
   return titles[module]
-}
-
-function settingsModuleDescription(
-  module: SettingsModule,
-  tr: (zhCN: string, en: string, zhTW: string) => string
-): string {
-  const descriptions: Record<SettingsModule, string> = {
-    general: tr(
-      '控制自动锁定、界面比例和全局默认配置。',
-      'Control auto-lock, interface scale and global defaults.',
-      '控制自動鎖定、介面比例和全域預設設定。'
-    ),
-    appearance: tr(
-      '在亮暗模式之间切换，并选择语言和主题配色。',
-      'Switch between light and dark modes, languages and theme colors.',
-      '在亮暗模式之間切換，並選擇語言和主題配色。'
-    ),
-    network: tr(
-      '配置跟随系统或自定义网络代理。',
-      'Configure system or custom network proxying.',
-      '設定跟隨系統或自訂網路代理。'
-    ),
-    security: tr(
-      '维护主密码和本机数据安全。',
-      'Maintain your master password and local data safety.',
-      '維護主密碼和本機資料安全。'
-    ),
-    data: tr(
-      '导入、导出、备份和恢复本地账号数据。',
-      'Import, export, back up and restore local account data.',
-      '匯入、匯出、備份和還原本機帳號資料。'
-    ),
-    about: tr(
-      '查看软件信息并检查 GitHub 发布版本。',
-      'View app information and check GitHub releases.',
-      '查看軟體資訊並檢查 GitHub 發佈版本。'
-    )
-  }
-  return descriptions[module]
-}
-
-function settingsModuleEyebrow(module: SettingsModule): string {
-  return `SETTINGS / ${module.toUpperCase()}`
 }
 
 function platformLabel(platform: string): string {

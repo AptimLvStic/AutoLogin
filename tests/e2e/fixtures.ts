@@ -67,6 +67,31 @@ async function handleRequest(
     return
   }
 
+  if (url.pathname === '/delayed-login') {
+    sendHtml(
+      response,
+      200,
+      `<!doctype html>
+      <html lang="zh-CN">
+        <head><meta charset="utf-8"><title>Delayed Login</title></head>
+        <body>
+          <main id="app">正在加载登录表单…</main>
+          <script>
+            setTimeout(() => {
+              document.querySelector('#app').innerHTML = \`
+                <form>
+                  <input id="username" name="username" autocomplete="username" />
+                  <input id="password" name="password" type="password" autocomplete="current-password" />
+                  <button id="login" type="button">登录</button>
+                </form>\`;
+            }, 2400);
+          </script>
+        </body>
+      </html>`
+    )
+    return
+  }
+
   if (url.pathname === '/home') {
     if (!loggedIn) {
       response.writeHead(302, { Location: '/login' })

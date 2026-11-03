@@ -67,6 +67,7 @@ const api: AutologinApi = {
     focusBrowser: () => invoke('login:focus-browser'),
     finishRecording: () => invoke('login:finish-recording'),
     cancelRecording: () => invoke('login:cancel-recording'),
+    testSelector: (input) => invoke('login:test-selector', input),
     clearSession: (accountId) => invoke('login:clear-session', accountId),
     getState: () => invoke('login:get-state')
   },

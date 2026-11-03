@@ -77,6 +77,7 @@ export class LoginSessionManager {
   private hadSubmission = false
   private challengeSeen = false
   private genericFallbackTried = false
+  private autoFillRetries = 0
   private recordingSteps: RecipeStep[] = []
   private recordingOrigins = new Set<string>()
   private recordingChallengeDetected = false
@@ -129,6 +130,7 @@ export class LoginSessionManager {
     this.hadSubmission = false
     this.challengeSeen = false
     this.genericFallbackTried = false
+    this.autoFillRetries = 0
     this.recordingSteps = []
     this.recordingOrigins = new Set([safeOrigin(site.startUrl)].filter(Boolean))
     this.recordingChallengeDetected = false
@@ -241,6 +243,7 @@ export class LoginSessionManager {
     this.handledGeneration = -1
     this.stepIndex = 0
     this.genericFallbackTried = false
+    this.autoFillRetries = 0
     await this.runCurrentPage()
   }
 
@@ -399,6 +402,7 @@ export class LoginSessionManager {
       this.navigationPending = true
       this.pageGeneration += 1
       this.handledGeneration = -1
+      this.autoFillRetries = 0
       this.clearPageTimer()
       this.clearSubmissionTimer()
       this.recordOrigin(event.url)
@@ -557,6 +561,11 @@ export class LoginSessionManager {
       return
     }
 
+    if (this.account.loginStrategy === 'manual') {
+      await this.fillManual()
+      return
+    }
+
     if (recipe && recipe.steps.length > 0) {
       const completed = await this.runRecipe()
       if (completed) {
@@ -564,12 +573,20 @@ export class LoginSessionManager {
       }
     }
 
-    await this.fillGeneric(this.site.autoSubmit, false)
+    const fillResult = await this.fillGeneric(this.site.autoSubmit, false)
+    if (fillResult && !fillResult.formFound && this.autoFillRetries < 2) {
+      this.autoFillRetries += 1
+      this.handledGeneration = -1
+      this.schedulePageRun(900)
+    }
   }
 
-  private async fillGeneric(autoSubmit: boolean, recording: boolean): Promise<void> {
+  private async fillGeneric(
+    autoSubmit: boolean,
+    recording: boolean
+  ): Promise<FillResult | null> {
     if (!this.account || !this.browser) {
-      return
+      return null
     }
     this.emit({
       status: 'filling',
@@ -598,6 +615,62 @@ export class LoginSessionManager {
           this.emit({ status: 'submitting', message: '已提交登录，正在等待页面响应' })
           this.startSubmissionWatch()
         }
+        return null
+      }
+      const result = requireFillResult(
+        outcome.kind === 'result' ? outcome.result : null
+      )
+      this.handleFillResult(result)
+      return result
+    } catch {
+      this.emit({
+        status: 'needs_action',
+        message: '未能完成自动填充，可重试或录制登录流程'
+      })
+      return null
+    }
+  }
+
+  private async fillManual(): Promise<void> {
+    if (!this.account || !this.browser) {
+      return
+    }
+    const selectors = this.account.manualSelectors
+    if (!selectors?.username || !selectors.password) {
+      this.emit({
+        status: 'needs_action',
+        message: '手动配置缺少用户名或密码定位器，请先编辑账号'
+      })
+      return
+    }
+
+    this.emit({
+      status: 'filling',
+      message: '正在使用手动配置定位登录字段'
+    })
+    const beforeUrl = this.browser.getSnapshot().url
+    const beforeGeneration = this.pageGeneration
+    try {
+      const commandPromise = this.runAgentCommand({
+        type: 'fill-manual',
+        username: this.account.username,
+        password: this.account.password,
+        autoSubmit: this.site?.autoSubmit ?? false,
+        selectors
+      })
+      const outcome = await Promise.race([
+        commandPromise.then((result) => ({ kind: 'result' as const, result })),
+        this.waitForNavigationChange(beforeUrl, beforeGeneration, 8_000).then(
+          (navigated) => ({ kind: 'navigation' as const, navigated })
+        )
+      ])
+      if (outcome.kind === 'navigation' && outcome.navigated) {
+        void commandPromise.catch(() => undefined)
+        if (this.site?.autoSubmit) {
+          this.hadSubmission = true
+          this.emit({ status: 'submitting', message: '已提交登录，正在等待页面响应' })
+          this.startSubmissionWatch()
+        }
         return
       }
       this.handleFillResult(
@@ -606,7 +679,7 @@ export class LoginSessionManager {
     } catch {
       this.emit({
         status: 'needs_action',
-        message: '未能完成自动填充，可重试或录制登录流程'
+        message: '手动配置未能定位完整表单，请编辑账号并测试定位器'
       })
     }
   }

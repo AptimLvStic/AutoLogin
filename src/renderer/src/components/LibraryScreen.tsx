@@ -73,6 +73,11 @@ export function LibraryScreen({
   const [groupFilter, setGroupFilter] = useState<string | null>(null)
   const [settingsExpanded, setSettingsExpanded] = useState(false)
   const [settingsModule, setSettingsModule] = useState<SettingsModule>('general')
+  const [collapsedSettingsOpen, setCollapsedSettingsOpen] = useState(false)
+  const [collapsedSettingsPosition, setCollapsedSettingsPosition] = useState({
+    top: 120,
+    left: 78
+  })
   const [sidebarCollapsed, setSidebarCollapsed] = useState(
     () => window.localStorage.getItem('autologin.sidebar.collapsed') === '1'
   )
@@ -82,6 +87,9 @@ export function LibraryScreen({
   const [drawer, setDrawer] = useState<DrawerState | null>(null)
   const searchRef = useRef<HTMLInputElement>(null)
   const selectAllRef = useRef<HTMLInputElement>(null)
+  const settingsButtonRef = useRef<HTMLButtonElement>(null)
+  const settingsPopoverRef = useRef<HTMLDivElement>(null)
+  const collapsedSettingsCloseTimer = useRef<number | null>(null)
 
   const groups = useMemo<GroupSummary[]>(() => {
     const grouped = new Map<string, GroupSummary>()
@@ -226,6 +234,41 @@ export function LibraryScreen({
   }, [view])
 
   useEffect(() => {
+    if (!collapsedSettingsOpen) return
+    const closeOnPointer = (event: PointerEvent): void => {
+      const target = event.target as Node
+      if (
+        settingsButtonRef.current?.contains(target) ||
+        settingsPopoverRef.current?.contains(target)
+      ) {
+        return
+      }
+      setCollapsedSettingsOpen(false)
+    }
+    const closeOnEscape = (event: KeyboardEvent): void => {
+      if (event.key === 'Escape') setCollapsedSettingsOpen(false)
+    }
+    document.addEventListener('pointerdown', closeOnPointer)
+    document.addEventListener('keydown', closeOnEscape)
+    return () => {
+      document.removeEventListener('pointerdown', closeOnPointer)
+      document.removeEventListener('keydown', closeOnEscape)
+    }
+  }, [collapsedSettingsOpen])
+
+  useEffect(() => {
+    if (!sidebarCollapsed) setCollapsedSettingsOpen(false)
+  }, [sidebarCollapsed])
+
+  useEffect(() => {
+    return () => {
+      if (collapsedSettingsCloseTimer.current) {
+        window.clearTimeout(collapsedSettingsCloseTimer.current)
+      }
+    }
+  }, [])
+
+  useEffect(() => {
     const onKeyDown = (event: KeyboardEvent): void => {
       if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'k') {
         if (view !== 'accounts' && view !== 'favorites') return
@@ -267,12 +310,49 @@ export function LibraryScreen({
   }
 
   function toggleSettings(): void {
+    if (sidebarCollapsed) {
+      openCollapsedSettings()
+      return
+    }
     if (view !== 'settings') {
       setView('settings')
       setSettingsExpanded(true)
       return
     }
     setSettingsExpanded((value) => !value)
+  }
+
+  function openCollapsedSettings(): void {
+    if (!sidebarCollapsed) return
+    if (collapsedSettingsCloseTimer.current) {
+      window.clearTimeout(collapsedSettingsCloseTimer.current)
+      collapsedSettingsCloseTimer.current = null
+    }
+    const rect = settingsButtonRef.current?.getBoundingClientRect()
+    if (rect) {
+      setCollapsedSettingsPosition({
+        top: Math.max(52, Math.min(rect.top, window.innerHeight - 316)),
+        left: rect.right + 10
+      })
+    }
+    setCollapsedSettingsOpen(true)
+  }
+
+  function scheduleCollapsedSettingsClose(): void {
+    if (collapsedSettingsCloseTimer.current) {
+      window.clearTimeout(collapsedSettingsCloseTimer.current)
+    }
+    collapsedSettingsCloseTimer.current = window.setTimeout(() => {
+      setCollapsedSettingsOpen(false)
+      collapsedSettingsCloseTimer.current = null
+    }, 140)
+  }
+
+  function keepCollapsedSettingsOpen(): void {
+    if (collapsedSettingsCloseTimer.current) {
+      window.clearTimeout(collapsedSettingsCloseTimer.current)
+      collapsedSettingsCloseTimer.current = null
+    }
   }
 
   function toggleSidebar(): void {
@@ -289,6 +369,7 @@ export function LibraryScreen({
     setSettingsExpanded(true)
     setSearch('')
     setSelectedIds(new Set())
+    setCollapsedSettingsOpen(false)
   }
 
   async function toggleAccountFavorite(account: AccountWithSite): Promise<void> {
@@ -376,19 +457,6 @@ export function LibraryScreen({
     view === 'favorites'
       ? tr('收藏', 'Favorites', '收藏')
       : currentGroup?.name ?? tr('全部账号', 'All accounts', '全部帳號')
-  const headerDescription =
-    view === 'favorites'
-      ? tr(
-          `${favoriteAccounts.length} 个收藏账号，支持账号与分组收藏`,
-          `${favoriteAccounts.length} favorite account${favoriteAccounts.length === 1 ? '' : 's'}, by account or group`,
-          `${favoriteAccounts.length} 個收藏帳號，支援帳號與分組收藏`
-        )
-      : tr(
-          `${filteredAccounts.length} 个账号，${groups.length} 个分组`,
-          `${filteredAccounts.length} account${filteredAccounts.length === 1 ? '' : 's'} in ${groups.length} group${groups.length === 1 ? '' : 's'}`,
-          `${filteredAccounts.length} 個帳號，${groups.length} 個分組`
-        )
-
   return (
     <div className={`app-shell${sidebarCollapsed ? ' is-sidebar-collapsed' : ''}`}>
       <aside className={`sidebar${sidebarCollapsed ? ' is-collapsed' : ''}`}>
@@ -455,11 +523,16 @@ export function LibraryScreen({
           <section className="sidebar-section sidebar-section--preferences">
             <span className="sidebar-label">{tr('偏好设置', 'Preferences', '偏好設定')}</span>
             <button
+              ref={settingsButtonRef}
               className={`sidebar-nav__item sidebar-nav__item--expandable sidebar-nav__item--settings${
                 view === 'settings' ? ' is-active' : ''
               }`}
               onClick={toggleSettings}
-              aria-expanded={settingsExpanded}
+              onMouseEnter={openCollapsedSettings}
+              onMouseLeave={scheduleCollapsedSettingsClose}
+              onFocus={openCollapsedSettings}
+              aria-expanded={sidebarCollapsed ? collapsedSettingsOpen : settingsExpanded}
+              aria-haspopup={sidebarCollapsed ? 'menu' : undefined}
               aria-label={tr('设置', 'Settings', '設定')}
               title={tr('设置', 'Settings', '設定')}
             >
@@ -518,6 +591,47 @@ export function LibraryScreen({
             </div>
           </section>
         </nav>
+
+        {sidebarCollapsed && collapsedSettingsOpen && (
+          <div
+            ref={settingsPopoverRef}
+            className="sidebar-settings-popover"
+            role="menu"
+            aria-label={tr('设置菜单', 'Settings menu', '設定選單')}
+            style={{
+              top: collapsedSettingsPosition.top,
+              left: collapsedSettingsPosition.left
+            }}
+            onMouseEnter={keepCollapsedSettingsOpen}
+            onMouseLeave={scheduleCollapsedSettingsClose}
+          >
+            <span className="sidebar-settings-popover__label">
+              {tr('设置', 'Settings', '設定')}
+            </span>
+            {(
+              [
+                ['general', tr('通用设置', 'General', '一般設定')],
+                ['appearance', tr('外观主题', 'Appearance', '外觀主題')],
+                ['network', tr('网络代理', 'Network proxy', '網路代理')],
+                ['security', tr('安全与隐私', 'Security & privacy', '安全性與隱私')],
+                ['data', tr('数据与备份', 'Data & backups', '資料與備份')],
+                ['about', tr('关于与更新', 'About & updates', '關於與更新')]
+              ] as const
+            ).map(([module, label]) => (
+              <button
+                type="button"
+                role="menuitem"
+                key={module}
+                className={`sidebar-settings-popover__item${
+                  view === 'settings' && settingsModule === module ? ' is-active' : ''
+                }`}
+                onClick={() => chooseSettingsModule(module)}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+        )}
 
         <div className="sidebar-bottom">
           <div
@@ -611,14 +725,18 @@ export function LibraryScreen({
                 </aside>
               )}
               <div className="library-view-main">
-              <header className="library-header">
-                <div>
-                  <span className="eyebrow">
-                    {view === 'favorites' ? 'CURATED LOGIN ENTRIES' : 'LOCAL LOGIN WORKSPACE'}
-                  </span>
+              <header className="library-header page-breadcrumb-bar">
+                <nav className="page-breadcrumb" aria-label={tr('面包屑', 'Breadcrumb', '麵包屑')}>
+                  <span>{tr('工作台', 'Workspace', '工作台')}</span>
+                  <ChevronRight size={12} />
+                  {view !== 'favorites' && (
+                    <>
+                      <span>{tr('账号', 'Accounts', '帳號')}</span>
+                      <ChevronRight size={12} />
+                    </>
+                  )}
                   <h1>{headerTitle}</h1>
-                  <p>{headerDescription}</p>
-                </div>
+                </nav>
                 <div className="library-header__actions">
                   {batchState && batchState.total > 0 && (
                     <button

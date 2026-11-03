@@ -5,6 +5,7 @@ import {
   readFileSync,
   renameSync,
   rmSync,
+  statSync,
   writeFileSync
 } from 'node:fs'
 import { dirname, isAbsolute, join, parse, relative, resolve } from 'node:path'
@@ -115,6 +116,57 @@ export function migrateDataDirectory(
   return target
 }
 
+export function recoverDataDirectoryFromInstall(
+  configDirectory: string,
+  currentDirectory: string,
+  installDirectory: string
+): string {
+  const current = resolve(currentDirectory)
+  const install = resolve(installDirectory)
+  const stable = join(resolve(configDirectory), 'Data')
+  const currentIsInstalled = isNested(install, current) || samePath(install, current)
+
+  if (!currentIsInstalled) {
+    return current
+  }
+
+  if (hasVault(stable)) {
+    const currentFreshness = vaultFreshness(current)
+    const stableFreshness = vaultFreshness(stable)
+    if (currentFreshness > 0 && currentFreshness > stableFreshness + 1_000) {
+      const recovered = nextRecoveryDirectory(configDirectory)
+      try {
+        migrateDataDirectory(configDirectory, current, recovered)
+        return recovered
+      } catch {
+        return current
+      }
+    }
+    writeDataDirectory(configDirectory, stable)
+    return stable
+  }
+
+  const source = hasVault(current) ? current : hasVault(install) ? install : ''
+  if (!source) {
+    return current
+  }
+
+  const target = hasManagedData(stable) ? nextRecoveryDirectory(configDirectory) : stable
+  try {
+    migrateDataDirectory(configDirectory, source, target)
+    return target
+  } catch {
+    return source
+  }
+}
+
+export function pathIsInside(parentDirectory: string, childDirectory: string): boolean {
+  return (
+    isNested(resolve(parentDirectory), resolve(childDirectory)) ||
+    samePath(parentDirectory, childDirectory)
+  )
+}
+
 function samePath(left: string, right: string): boolean {
   return resolve(left).toLowerCase() === resolve(right).toLowerCase()
 }
@@ -122,4 +174,31 @@ function samePath(left: string, right: string): boolean {
 function isNested(parent: string, child: string): boolean {
   const path = relative(resolve(parent), resolve(child))
   return path !== '' && !path.startsWith('..') && !isAbsolute(path)
+}
+
+function hasVault(directory: string): boolean {
+  return existsSync(join(resolve(directory), 'vault.enc'))
+}
+
+function hasManagedData(directory: string): boolean {
+  return MANAGED_DATA_ENTRIES.some((entry) => existsSync(join(resolve(directory), entry)))
+}
+
+function vaultFreshness(directory: string): number {
+  try {
+    return statSync(join(resolve(directory), 'vault.enc')).mtimeMs
+  } catch {
+    return 0
+  }
+}
+
+function nextRecoveryDirectory(configDirectory: string): string {
+  const stamp = new Date().toISOString().replace(/[-:.TZ]/g, '').slice(0, 14)
+  let candidate = join(resolve(configDirectory), `Data-recovered-${stamp}`)
+  let sequence = 2
+  while (hasManagedData(candidate)) {
+    candidate = join(resolve(configDirectory), `Data-recovered-${stamp}-${sequence}`)
+    sequence += 1
+  }
+  return candidate
 }

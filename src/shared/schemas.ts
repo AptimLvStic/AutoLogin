@@ -6,6 +6,7 @@ import {
   DEFAULT_PROXY_TEST_URL,
   INTERFACE_SCALE_MAX,
   INTERFACE_SCALE_MIN,
+  LOGIN_STRATEGIES,
   PROXY_MODES,
   PROXY_PROTOCOLS,
   THEME_PRESETS
@@ -105,6 +106,21 @@ export const accountRecipeSchema = z.object({
   recipe: loginRecipeSchema
 })
 
+const selectorInputSchema = z
+  .string()
+  .trim()
+  .min(1, '请输入 CSS Selector')
+  .max(500, 'CSS Selector 不能超过 500 个字符')
+  .refine((value) => !/[\u0000-\u001f\u007f]/.test(value), 'CSS Selector 包含无效字符')
+
+export const manualLoginSelectorsSchema = z
+  .object({
+    username: selectorInputSchema.optional(),
+    password: selectorInputSchema.optional(),
+    submit: selectorInputSchema.optional()
+  })
+  .strict()
+
 export const storedAccountSchema = z.object({
   id: idSchema,
   siteId: idSchema,
@@ -112,6 +128,8 @@ export const storedAccountSchema = z.object({
   username: z.string().max(320),
   password: z.string().max(2048),
   favorite: z.boolean(),
+  loginStrategy: z.enum(LOGIN_STRATEGIES).default('auto'),
+  manualSelectors: manualLoginSelectorsSchema.optional(),
   recipes: z.array(accountRecipeSchema).max(3).default([]),
   activeRecipeId: idSchema.optional(),
   lastUsedAt: z.string().optional(),
@@ -240,7 +258,9 @@ export const accountCreateInputSchema = z.object({
   label: z.string().trim().min(1, '请输入账号名称').max(80),
   username: z.string().trim().min(1, '请输入用户名').max(320),
   password: z.string().min(1, '请输入密码').max(2048),
-  favorite: z.boolean().optional()
+  favorite: z.boolean().optional(),
+  loginStrategy: z.enum(LOGIN_STRATEGIES).optional(),
+  manualSelectors: manualLoginSelectorsSchema.optional()
 })
 
 export const accountUpdateInputSchema = z.object({
@@ -248,7 +268,9 @@ export const accountUpdateInputSchema = z.object({
   username: z.string().trim().min(1).max(320).optional(),
   password: z.string().min(1).max(2048).optional(),
   favorite: z.boolean().optional(),
-  activeRecipeId: idSchema.optional()
+  activeRecipeId: idSchema.optional(),
+  loginStrategy: z.enum(LOGIN_STRATEGIES).optional(),
+  manualSelectors: manualLoginSelectorsSchema.optional()
 })
 
 export const loginStartSchema = z.object({
@@ -257,6 +279,15 @@ export const loginStartSchema = z.object({
 })
 
 export const loginBatchStartSchema = z.array(idSchema).min(1).max(100)
+
+export const selectorTestInputSchema = z
+  .object({
+    accountId: idSchema,
+    field: z.enum(['username', 'password', 'submit']),
+    selector: selectorInputSchema,
+    url: httpUrl.optional()
+  })
+  .strict()
 
 export const favoriteGroupInputSchema = z.object({
   groupName: groupNameSchema,

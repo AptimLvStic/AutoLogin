@@ -226,17 +226,11 @@ export function LoginLogsPage({
   return (
     <>
       <section className="page-section logs-page">
-        <div className="page-section__intro">
-          <span className="eyebrow">LOCAL LOGIN HISTORY</span>
+        <nav className="page-breadcrumb" aria-label={tr('面包屑', 'Breadcrumb', '麵包屑')}>
+          <span>{tr('工作台', 'Workspace', '工作台')}</span>
+          <ChevronRight size={12} />
           <h2>{tr('登录日志', 'Login history', '登入日誌')}</h2>
-          <p>
-            {tr(
-              '记录成功、失败、超时和待人工处理结果。日志不包含密码、Cookie、验证码或完整 URL。',
-              'Successful, failed, timed-out and manual results are recorded without passwords, cookies, verification codes or full URLs.',
-              '記錄成功、失敗、逾時和待人工處理結果。日誌不包含密碼、Cookie、驗證碼或完整網址。'
-            )}
-          </p>
-        </div>
+        </nav>
 
         <div className="log-filters">
           <label className="field">

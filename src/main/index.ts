@@ -8,6 +8,7 @@ import {
   accountUpdateInputSchema,
   appSettingsPatchSchema,
   changePasswordSchema,
+  favoriteGroupInputSchema,
   loginBatchStartSchema,
   loginStartSchema,
   masterPasswordSchema,
@@ -18,7 +19,7 @@ import type {
   AboutInfo,
   AppSettings,
   DataLocationInfo,
-  FailureLogEntry,
+  LoginLogEntry,
   LoginMode,
   LoginBatchState,
   LoginViewState,
@@ -29,7 +30,7 @@ import type {
   VaultStatus
 } from '@shared/types'
 import { migrateDataDirectory, readDataDirectory } from './data-location'
-import { failureLogPath, LoginBatchManager, readFailureLogs } from './login-batch'
+import { failureLogPath, LoginBatchManager, readLoginLogs } from './login-batch'
 import { clearManagedSessionDirectories, LoginSessionManager } from './login-session'
 import {
   discoverManagedBrowserProfileIds,
@@ -278,6 +279,27 @@ function registerIpc(): void {
     vault.save()
   })
 
+  ipcMain.handle('groups:list-favorites', (event) => {
+    assertTrustedSender(event)
+    return [...vault.requireData().favoriteGroups]
+  })
+  ipcMain.handle('groups:set-favorite', (event, payload: unknown) => {
+    assertTrustedSender(event)
+    const parsed = favoriteGroupInputSchema.safeParse(payload)
+    if (!parsed.success) {
+      throw new Error(firstIssue(parsed.error))
+    }
+    const data = vault.requireData()
+    const groupName = parsed.data.groupName.trim()
+    if (parsed.data.favorite) {
+      data.favoriteGroups = [...new Set([...data.favoriteGroups, groupName])]
+    } else {
+      data.favoriteGroups = data.favoriteGroups.filter((entry) => entry !== groupName)
+    }
+    vault.save()
+    return [...data.favoriteGroups]
+  })
+
   ipcMain.handle('accounts:list', (event) => {
     assertTrustedSender(event)
     return listAccounts()
@@ -499,9 +521,13 @@ function registerIpc(): void {
       throw new Error(`无法打开失败日志：${error}`)
     }
   })
-  ipcMain.handle('app:list-failure-logs', (event): FailureLogEntry[] => {
+  ipcMain.handle('app:list-login-logs', (event): LoginLogEntry[] => {
     assertTrustedSender(event)
-    return readFailureLogs(dataDirectory)
+    return readLoginLogs(dataDirectory, 1000)
+  })
+  ipcMain.handle('app:list-failure-logs', (event): LoginLogEntry[] => {
+    assertTrustedSender(event)
+    return readLoginLogs(dataDirectory, 1000)
   })
   ipcMain.handle('app:restart', async (event) => {
     assertTrustedSender(event)

@@ -4,6 +4,12 @@ export type AutoLockMinutes = (typeof AUTO_LOCK_OPTIONS)[number]
 export const THEME_PRESETS = ['warm', 'sage', 'ocean', 'rose'] as const
 export type ThemePreset = (typeof THEME_PRESETS)[number] | 'custom'
 
+export const COLOR_MODES = ['light', 'dark'] as const
+export type ColorMode = (typeof COLOR_MODES)[number]
+
+export const APP_LANGUAGES = ['zh-CN', 'en', 'zh-TW'] as const
+export type AppLanguage = (typeof APP_LANGUAGES)[number]
+
 export const INTERFACE_SCALE_MIN = 80
 export const INTERFACE_SCALE_MAX = 125
 export const INTERFACE_SCALE_STEP = 5
@@ -29,6 +35,8 @@ export type LoginMode = 'login' | 'record'
 
 export interface AppSettings {
   autoLockMinutes: AutoLockMinutes
+  colorMode: ColorMode
+  language: AppLanguage
   themePreset: ThemePreset
   customTheme: ThemeColors
   interfaceScale: number
@@ -36,15 +44,18 @@ export interface AppSettings {
 
 export type AppSettingsPatch = Partial<AppSettings>
 
-export interface FailureLogEntry {
+export interface LoginLogEntry {
   timestamp: string
   batchId: string
   accountId: string
   accountLabel: string
   siteName: string
-  status: 'error' | 'timeout' | 'manual'
+  groupName: string
+  status: 'success' | 'error' | 'timeout' | 'manual'
   reason: string
 }
+
+export type FailureLogEntry = LoginLogEntry
 
 export interface VaultStatus {
   initialized: boolean
@@ -132,6 +143,7 @@ export interface VaultData {
   schemaVersion: 1
   sites: Site[]
   accounts: StoredAccount[]
+  favoriteGroups: string[]
   settings: AppSettings
 }
 
@@ -194,6 +206,7 @@ export interface LoginBatchItem {
   accountId: string
   accountLabel: string
   siteName: string
+  groupName: string
   status: LoginBatchItemStatus
   message: string
   startedAt?: string
@@ -260,6 +273,10 @@ export interface AutologinApi {
     save: (input: SiteInput) => Promise<Site>
     delete: (siteId: string) => Promise<void>
   }
+  groups: {
+    listFavorites: () => Promise<string[]>
+    setFavorite: (groupName: string, favorite: boolean) => Promise<string[]>
+  }
   accounts: {
     list: () => Promise<AccountWithSite[]>
     create: (input: AccountCreateInput) => Promise<AccountWithSite>
@@ -296,7 +313,8 @@ export interface AutologinApi {
     chooseDataLocation: () => Promise<DataLocationInfo | null>
     openDataLocation: () => Promise<void>
     openFailureLog: () => Promise<void>
-    listFailureLogs: () => Promise<FailureLogEntry[]>
+    listLoginLogs: () => Promise<LoginLogEntry[]>
+    listFailureLogs: () => Promise<LoginLogEntry[]>
     restart: () => Promise<void>
     reportActivity: () => void
     clearAllData: () => Promise<void>

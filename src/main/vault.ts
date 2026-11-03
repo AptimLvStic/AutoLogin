@@ -108,8 +108,11 @@ export class VaultManager {
       schemaVersion: 1,
       sites: [],
       accounts: [],
+      favoriteGroups: [],
       settings: {
         autoLockMinutes: 10,
+        colorMode: 'light',
+        language: 'zh-CN',
         themePreset: 'warm',
         customTheme: {
           background: '#F4F1EA',
@@ -118,7 +121,7 @@ export class VaultManager {
           accent: '#0E7567'
         },
         interfaceScale: 100
-      },
+      }
     }
 
     const salt = randomBytes(SALT_LENGTH)

@@ -1,6 +1,8 @@
 import { z } from 'zod'
 import {
+  APP_LANGUAGES,
   AUTO_LOCK_OPTIONS,
+  COLOR_MODES,
   INTERFACE_SCALE_MAX,
   INTERFACE_SCALE_MIN,
   THEME_PRESETS
@@ -33,6 +35,8 @@ const originSchema = z
   }, '来源地址无效')
 
 const idSchema = z.string().regex(/^[a-zA-Z0-9_-]{1,128}$/, '标识格式无效')
+
+const groupNameSchema = z.string().trim().min(1).max(40)
 
 export const selectorSpecSchema = z.object({
   candidates: z.array(z.string().min(1)).min(1).max(8),
@@ -121,6 +125,8 @@ const autoLockMinutesSchema = z.union([
 ])
 
 const themePresetSchema = z.enum([...THEME_PRESETS, 'custom'])
+const colorModeSchema = z.enum(COLOR_MODES)
+const languageSchema = z.enum(APP_LANGUAGES)
 
 const interfaceScaleSchema = z
   .number()
@@ -138,6 +144,8 @@ const defaultThemeColors = {
 
 export const appSettingsSchema = z.object({
   autoLockMinutes: autoLockMinutesSchema.default(10),
+  colorMode: colorModeSchema.default('light'),
+  language: languageSchema.default('zh-CN'),
   themePreset: themePresetSchema.default('warm'),
   customTheme: themeColorsSchema.default(defaultThemeColors),
   interfaceScale: interfaceScaleSchema.default(100)
@@ -146,6 +154,8 @@ export const appSettingsSchema = z.object({
 export const appSettingsPatchSchema = z
   .object({
     autoLockMinutes: autoLockMinutesSchema.optional(),
+    colorMode: colorModeSchema.optional(),
+    language: languageSchema.optional(),
     themePreset: themePresetSchema.optional(),
     customTheme: themeColorsSchema.optional(),
     interfaceScale: interfaceScaleSchema.optional()
@@ -159,6 +169,7 @@ export const vaultDataSchema = z.object({
   schemaVersion: z.literal(1),
   sites: z.array(siteSchema),
   accounts: z.array(storedAccountSchema),
+  favoriteGroups: z.array(groupNameSchema).default([]),
   settings: appSettingsSchema
 })
 
@@ -194,6 +205,11 @@ export const loginStartSchema = z.object({
 })
 
 export const loginBatchStartSchema = z.array(idSchema).min(1).max(100)
+
+export const favoriteGroupInputSchema = z.object({
+  groupName: groupNameSchema,
+  favorite: z.boolean()
+})
 
 export const changePasswordSchema = z.object({
   currentPassword: z.string().min(1),

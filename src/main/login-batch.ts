@@ -7,7 +7,7 @@ import type {
   LoginBatchState,
   LoginStatus,
   LoginViewState,
-  FailureLogEntry
+  LoginLogEntry
 } from '@shared/types'
 import {
   clearManagedSessionDirectories,
@@ -30,7 +30,7 @@ export class LoginBatchManager {
   private state: LoginBatchState | null = null
   private readonly managers = new Map<string, LoginSessionManager>()
   private readonly timers = new Map<string, NodeJS.Timeout>()
-  private readonly loggedFailures = new Set<string>()
+  private readonly loggedResults = new Set<string>()
   private host: ExternalBrowserHost | null = null
   private browserInfo: DefaultBrowser | null = null
   private queue: string[] = []
@@ -77,7 +77,7 @@ export class LoginBatchManager {
     })
 
     const startedAt = new Date().toISOString()
-    this.loggedFailures.clear()
+    this.loggedResults.clear()
     this.queue = accounts.map(({ account }) => account.id)
     this.running = 0
     this.state = {
@@ -93,6 +93,7 @@ export class LoginBatchManager {
         accountId: account.id,
         accountLabel: account.label,
         siteName: site.name,
+        groupName: site.group?.trim() || '未分组',
         status: 'queued',
         message: '等待打开'
       }))
@@ -194,11 +195,13 @@ export class LoginBatchManager {
 
     if (state.status === 'authenticated') {
       this.clearTimer(accountId)
+      const safeReason = sanitizeLoginReason(state.message || '登录成功', '登录成功')
       this.updateItem(accountId, {
         status: 'success',
-        message: state.message || '登录成功',
+        message: safeReason,
         completedAt: new Date().toISOString()
       })
+      this.writeLoginLog(item, safeReason, 'success')
       return
     }
 
@@ -248,13 +251,14 @@ export class LoginBatchManager {
       return
     }
     this.clearTimer(accountId)
-    const safeReason = sanitizeFailureReason(reason)
+    const status = reason.includes('30 秒') ? 'timeout' : 'error'
+    const safeReason = sanitizeLoginReason(reason, status === 'timeout' ? '登录超时' : '登录失败')
     this.updateItem(accountId, {
       status: 'failed',
       message: safeReason,
       completedAt: new Date().toISOString()
     })
-    this.writeFailureLog(item, safeReason, reason.includes('30 秒') ? 'timeout' : 'error')
+    this.writeLoginLog(item, safeReason, status)
   }
 
   private markManual(accountId: string, reason: string): void {
@@ -263,32 +267,33 @@ export class LoginBatchManager {
       return
     }
     this.clearTimer(accountId)
-    const safeReason = sanitizeFailureReason(reason)
+    const safeReason = sanitizeLoginReason(reason, '需要人工处理')
     this.updateItem(accountId, {
       status: 'manual',
       message: safeReason,
       completedAt: new Date().toISOString()
     })
-    this.writeFailureLog(item, safeReason, 'manual')
+    this.writeLoginLog(item, safeReason, 'manual')
   }
 
-  private writeFailureLog(
+  private writeLoginLog(
     item: LoginBatchItem,
     reason: string,
-    status: FailureLogEntry['status']
+    status: LoginLogEntry['status']
   ): void {
     const key = `${this.state?.batchId ?? ''}:${item.accountId}`
-    if (this.loggedFailures.has(key)) {
+    if (this.loggedResults.has(key)) {
       return
     }
-    this.loggedFailures.add(key)
+    this.loggedResults.add(key)
 
-    const entry: FailureLogEntry = {
+    const entry: LoginLogEntry = {
       timestamp: new Date().toISOString(),
       batchId: this.state?.batchId ?? '',
       accountId: item.accountId,
       accountLabel: item.accountLabel,
       siteName: item.siteName,
+      groupName: item.groupName,
       status,
       reason
     }
@@ -301,7 +306,7 @@ export class LoginBatchManager {
       }
       appendFileSync(path, `${JSON.stringify(entry)}\n`, { encoding: 'utf8', mode: 0o600 })
     } catch {
-      // Failure logging must never turn a login failure into an app crash.
+      // Login logging must never turn a login result into an app crash.
     }
   }
 
@@ -366,7 +371,7 @@ export function failureLogPath(userDataPath: string): string {
   return join(userDataPath, 'logs', 'login-failures.jsonl')
 }
 
-export function readFailureLogs(userDataPath: string, limit = 200): FailureLogEntry[] {
+export function readLoginLogs(userDataPath: string, limit = 1000): LoginLogEntry[] {
   const path = failureLogPath(userDataPath)
   let content = ''
   try {
@@ -375,18 +380,18 @@ export function readFailureLogs(userDataPath: string, limit = 200): FailureLogEn
     return []
   }
 
-  const entries: FailureLogEntry[] = []
+  const entries: LoginLogEntry[] = []
   for (const line of content.split(/\r?\n/)) {
     if (!line.trim()) continue
     try {
-      const value = JSON.parse(line) as Partial<FailureLogEntry>
+      const value = JSON.parse(line) as Partial<LoginLogEntry>
       if (
         typeof value.timestamp !== 'string' ||
         typeof value.batchId !== 'string' ||
         typeof value.accountId !== 'string' ||
         typeof value.accountLabel !== 'string' ||
         typeof value.siteName !== 'string' ||
-        !['error', 'timeout', 'manual'].includes(value.status ?? '') ||
+        !['success', 'error', 'timeout', 'manual'].includes(value.status ?? '') ||
         typeof value.reason !== 'string'
       ) {
         continue
@@ -397,14 +402,25 @@ export function readFailureLogs(userDataPath: string, limit = 200): FailureLogEn
         accountId: value.accountId.slice(0, 128),
         accountLabel: value.accountLabel.slice(0, 80),
         siteName: value.siteName.slice(0, 80),
-        status: value.status as FailureLogEntry['status'],
-        reason: sanitizeFailureReason(value.reason)
+        groupName:
+          typeof value.groupName === 'string' && value.groupName.trim()
+            ? value.groupName.trim().slice(0, 40)
+            : '未分组',
+        status: value.status as LoginLogEntry['status'],
+        reason: sanitizeLoginReason(
+          value.reason,
+          value.status === 'success' ? '登录成功' : '登录失败'
+        )
       })
     } catch {
       // A malformed line must not hide the remaining valid records.
     }
   }
-  return entries.slice(-Math.max(1, Math.min(limit, 500))).reverse()
+  return entries.slice(-Math.max(1, Math.min(limit, 1000))).reverse()
+}
+
+export function readFailureLogs(userDataPath: string, limit = 200): LoginLogEntry[] {
+  return readLoginLogs(userDataPath, limit).filter((entry) => entry.status !== 'success')
 }
 
 function mapRunningStatus(status: LoginStatus): LoginBatchItemStatus | null {
@@ -424,12 +440,12 @@ function isPendingStatus(status: LoginBatchItemStatus): boolean {
   return ['queued', 'opening', 'filling', 'submitting'].includes(status)
 }
 
-function sanitizeFailureReason(value: string): string {
+function sanitizeLoginReason(value: string, fallback: string): string {
   return value
     .replace(/https?:\/\/[^\s]+/gi, '[地址已隐藏]')
     .replace(/[\r\n]+/g, ' ')
     .trim()
-    .slice(0, 300) || '登录失败'
+    .slice(0, 300) || fallback
 }
 
 function existsAndIsLarge(path: string): boolean {

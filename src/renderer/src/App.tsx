@@ -1,13 +1,14 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { LoaderCircle, LockKeyhole } from 'lucide-react'
 import type { AccountWithSite, AppSettings, LoginBatchState, Site } from '@shared/types'
-import { DEFAULT_THEME_COLORS, THEME_PRESETS } from '@shared/theme'
+import { DEFAULT_APP_SETTINGS, resolveThemeColors } from '@shared/theme'
 import { SetupScreen, UnlockScreen } from './components/AuthScreens'
 import { BrandMark } from './components/Brand'
 import { LibraryScreen } from './components/LibraryScreen'
 import { LoginWorkspace } from './components/LoginWorkspace'
 import { ConfirmDialog } from './components/Modal'
 import { Toast, type ToastKind, type ToastState } from './components/Toast'
+import { I18nProvider, translate } from './i18n'
 
 type AuthState = 'boot' | 'setup' | 'unlock' | 'ready'
 
@@ -17,10 +18,8 @@ interface LoginTarget {
 }
 
 const DEFAULT_SETTINGS: AppSettings = {
-  autoLockMinutes: 10,
-  themePreset: 'warm',
-  customTheme: DEFAULT_THEME_COLORS,
-  interfaceScale: 100
+  ...DEFAULT_APP_SETTINGS,
+  customTheme: { ...DEFAULT_APP_SETTINGS.customTheme }
 }
 
 export default function App(): React.JSX.Element {
@@ -28,13 +27,15 @@ export default function App(): React.JSX.Element {
   const [accounts, setAccounts] = useState<AccountWithSite[]>([])
   const [sites, setSites] = useState<Site[]>([])
   const [settings, setSettings] = useState<AppSettings>(DEFAULT_SETTINGS)
-  const [appVersion, setAppVersion] = useState('0.2.2')
+  const [appVersion, setAppVersion] = useState('0.2.3')
   const [loginTarget, setLoginTarget] = useState<LoginTarget | null>(null)
   const [batchState, setBatchState] = useState<LoginBatchState | null>(null)
   const [toast, setToast] = useState<ToastState | null>(null)
   const [resetOpen, setResetOpen] = useState(false)
   const [resetBusy, setResetBusy] = useState(false)
   const toastTimer = useRef<number | null>(null)
+  const tr = (zhCN: string, en: string, zhTW: string): string =>
+    translate(settings.language, zhCN, en, zhTW)
 
   const notify = useCallback((kind: ToastKind, message: string): void => {
     if (toastTimer.current) {
@@ -98,29 +99,34 @@ export default function App(): React.JSX.Element {
   }, [])
 
   useEffect(() => {
-    const colors =
-      settings.themePreset === 'custom'
-        ? settings.customTheme
-        : THEME_PRESETS[settings.themePreset].colors
+    const colors = resolveThemeColors(
+      settings.themePreset,
+      settings.colorMode,
+      settings.customTheme
+    )
     const root = document.documentElement.style
+    const raisedTarget = settings.colorMode === 'dark' ? colors.text : 'white'
     root.setProperty('--canvas', colors.background)
     root.setProperty('--surface', colors.surface)
     root.setProperty('--ink', colors.text)
     root.setProperty('--accent', colors.accent)
     root.setProperty('--canvas-deep', `color-mix(in srgb, ${colors.background} 88%, ${colors.text})`)
-    root.setProperty('--surface-raised', `color-mix(in srgb, ${colors.surface} 94%, white)`)
+    root.setProperty('--surface-raised', `color-mix(in srgb, ${colors.surface} 94%, ${raisedTarget})`)
     root.setProperty('--ink-soft', `color-mix(in srgb, ${colors.text} 82%, ${colors.background})`)
     root.setProperty('--muted', `color-mix(in srgb, ${colors.text} 66%, ${colors.background})`)
     root.setProperty('--muted-light', `color-mix(in srgb, ${colors.text} 58%, ${colors.background})`)
     root.setProperty('--line', `color-mix(in srgb, ${colors.text} 14%, ${colors.background})`)
     root.setProperty('--line-strong', `color-mix(in srgb, ${colors.text} 25%, ${colors.background})`)
-    root.setProperty('--accent-strong', `color-mix(in srgb, ${colors.accent} 82%, black)`)
+    root.setProperty('--accent-strong', `color-mix(in srgb, ${colors.accent} 82%, ${settings.colorMode === 'dark' ? 'white' : 'black'})`)
     root.setProperty('--accent-soft', `color-mix(in srgb, ${colors.accent} 16%, ${colors.surface})`)
     root.setProperty('--accent-pale', `color-mix(in srgb, ${colors.accent} 8%, ${colors.surface})`)
-    root.setProperty('--ink-panel', `color-mix(in srgb, ${colors.text} 82%, ${colors.accent})`)
-    root.setProperty('--ink-panel-deep', `color-mix(in srgb, ${colors.text} 90%, black)`)
+    root.setProperty('--ink-panel', settings.colorMode === 'dark' ? '#13211D' : `color-mix(in srgb, ${colors.text} 82%, ${colors.accent})`)
+    root.setProperty('--ink-panel-deep', settings.colorMode === 'dark' ? '#0C1411' : `color-mix(in srgb, ${colors.text} 90%, black)`)
     root.setProperty('--focus-ring', `color-mix(in srgb, ${colors.accent} 72%, transparent)`)
-  }, [settings.customTheme, settings.themePreset])
+    document.documentElement.dataset.colorMode = settings.colorMode
+    document.documentElement.style.colorScheme = settings.colorMode
+    document.documentElement.lang = settings.language
+  }, [settings.colorMode, settings.customTheme, settings.language, settings.themePreset])
 
   useEffect(() => {
     let lastReport = 0
@@ -154,7 +160,10 @@ export default function App(): React.JSX.Element {
     await loadData()
     setBatchState(await window.autologin.login.getBatchState())
     setAuthState('ready')
-    notify('success', '保险库已创建')
+    notify(
+      'success',
+      translate(settings.language, '保险库已创建', 'Vault created', '保險庫已建立')
+    )
   }
 
   async function unlockVault(password: string): Promise<void> {
@@ -184,9 +193,22 @@ export default function App(): React.JSX.Element {
       setBatchState(null)
       setResetOpen(false)
       setAuthState('setup')
-      notify('success', '本地数据已清除，可以重新创建保险库')
+      notify(
+        'success',
+        translate(
+          settings.language,
+          '本地数据已清除，可以重新创建保险库',
+          'Local data cleared. You can create a new vault.',
+          '本機資料已清除，可以重新建立保險庫'
+        )
+      )
     } catch (error) {
-      notify('error', error instanceof Error ? error.message : '清除数据失败')
+      notify(
+        'error',
+        error instanceof Error
+          ? error.message
+          : translate(settings.language, '清除数据失败', 'Failed to clear data', '清除資料失敗')
+      )
     } finally {
       setResetBusy(false)
     }
@@ -200,22 +222,36 @@ export default function App(): React.JSX.Element {
     try {
       const next = await window.autologin.login.startBatch(accountIds)
       setBatchState(next)
-      notify('info', `正在默认浏览器中打开 ${next.total} 个账号`)
+      notify(
+        'info',
+        translate(
+          settings.language,
+          `正在默认浏览器中打开 ${next.total} 个账号`,
+          `Opening ${next.total} account${next.total === 1 ? '' : 's'} in your default browser`,
+          `正在預設瀏覽器中開啟 ${next.total} 個帳號`
+        )
+      )
       return true
     } catch (error) {
-      notify('error', error instanceof Error ? error.message : '批量打开失败')
+      notify(
+        'error',
+        error instanceof Error
+          ? error.message
+          : translate(settings.language, '批量打开失败', 'Batch open failed', '批次開啟失敗')
+      )
       return false
     }
   }
 
   return (
+    <I18nProvider language={settings.language}>
     <>
       {authState === 'boot' && (
         <main className="boot-screen">
           <BrandMark />
           <div className="boot-screen__loader">
             <LoaderCircle size={20} className="spin" />
-            <span>正在准备本地保险库</span>
+            <span>{tr('正在准备本地保险库', 'Preparing your local vault', '正在準備本機保險庫')}</span>
           </div>
         </main>
       )}
@@ -279,5 +315,6 @@ export default function App(): React.JSX.Element {
         </div>
       )}
     </>
+    </I18nProvider>
   )
 }

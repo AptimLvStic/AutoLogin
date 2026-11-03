@@ -113,6 +113,8 @@ describe('VaultManager', () => {
     expect(manager.getSettings()).toEqual(
       expect.objectContaining({
         autoLockMinutes: 15,
+        colorMode: 'light',
+        language: 'zh-CN',
         themePreset: 'warm',
         interfaceScale: 100
       })
@@ -138,6 +140,8 @@ describe('VaultManager', () => {
     await manager.unlock('correct horse battery staple')
     expect(manager.getSettings()).toEqual({
       autoLockMinutes: 30,
+      colorMode: 'light',
+      language: 'zh-CN',
       themePreset: 'custom',
       interfaceScale: 115,
       customTheme: {

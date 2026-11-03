@@ -37,6 +37,11 @@ const api: AutologinApi = {
     save: (input: SiteInput) => invoke('sites:save', input),
     delete: (siteId) => invoke('sites:delete', siteId)
   },
+  groups: {
+    listFavorites: () => invoke('groups:list-favorites'),
+    setFavorite: (groupName, favorite) =>
+      invoke('groups:set-favorite', { groupName, favorite })
+  },
   accounts: {
     list: () => invoke('accounts:list'),
     create: (input: AccountCreateInput) => invoke('accounts:create', input),
@@ -74,6 +79,7 @@ const api: AutologinApi = {
     chooseDataLocation: () => invoke('app:choose-data-location'),
     openDataLocation: () => invoke('app:open-data-location'),
     openFailureLog: () => invoke('app:open-failure-log'),
+    listLoginLogs: () => invoke('app:list-login-logs'),
     listFailureLogs: () => invoke('app:list-failure-logs'),
     restart: () => invoke('app:restart'),
     reportActivity: () => ipcRenderer.send('app:activity'),

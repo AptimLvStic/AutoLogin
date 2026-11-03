@@ -1,5 +1,6 @@
 import { useEffect, useId, useRef } from 'react'
 import { X } from 'lucide-react'
+import { useI18n } from '../i18n'
 
 export function Modal({
   title,
@@ -16,6 +17,7 @@ export function Modal({
   width?: string
   className?: string
 }): React.JSX.Element {
+  const { tr } = useI18n()
   const panelRef = useRef<HTMLDivElement>(null)
   const titleId = useId()
 
@@ -61,9 +63,13 @@ export function Modal({
 
   return (
     <div className="modal-layer" role="presentation">
-      <button className="modal-backdrop" aria-label="关闭" onClick={onClose} />
+      <button
+        className="modal-backdrop"
+        aria-label={tr('关闭', 'Close', '關閉')}
+        onClick={onClose}
+      />
       <div
-        className={`modal-panel ${className}`}
+        className={'modal-panel ' + className}
         style={{ '--modal-width': width } as React.CSSProperties}
         role="dialog"
         aria-modal="true"
@@ -75,7 +81,11 @@ export function Modal({
             {eyebrow && <span className="eyebrow">{eyebrow}</span>}
             <h2 id={titleId}>{title}</h2>
           </div>
-          <button className="icon-button" onClick={onClose} aria-label="关闭">
+          <button
+            className="icon-button"
+            onClick={onClose}
+            aria-label={tr('关闭', 'Close', '關閉')}
+          >
             <X size={18} />
           </button>
         </header>
@@ -88,7 +98,7 @@ export function Modal({
 export function ConfirmDialog({
   title,
   description,
-  confirmLabel = '确认',
+  confirmLabel,
   danger = false,
   onConfirm,
   onClose,
@@ -102,19 +112,21 @@ export function ConfirmDialog({
   onClose: () => void
   busy?: boolean
 }): React.JSX.Element {
+  const { tr } = useI18n()
+  const label = confirmLabel ?? tr('确认', 'Confirm', '確認')
   return (
     <Modal title={title} onClose={onClose} width="440px" className="confirm-dialog">
       <p className="modal-description">{description}</p>
       <div className="modal-actions">
         <button className="button button--ghost" onClick={onClose} disabled={busy}>
-          取消
+          {tr('取消', 'Cancel', '取消')}
         </button>
         <button
-          className={`button ${danger ? 'button--danger' : 'button--primary'}`}
+          className={'button ' + (danger ? 'button--danger' : 'button--primary')}
           onClick={onConfirm}
           disabled={busy}
         >
-          {busy ? '处理中…' : confirmLabel}
+          {busy ? tr('处理中…', 'Working…', '處理中…') : label}
         </button>
       </div>
     </Modal>

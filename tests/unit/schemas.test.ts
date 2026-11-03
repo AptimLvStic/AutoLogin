@@ -42,6 +42,8 @@ describe('shared input schemas', () => {
     const parsed = appSettingsSchema.parse({ autoLockMinutes: 15 })
     expect(parsed).toEqual({
       autoLockMinutes: 15,
+      colorMode: 'light',
+      language: 'zh-CN',
       themePreset: 'warm',
       customTheme: {
         background: '#F4F1EA',

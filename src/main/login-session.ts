@@ -17,7 +17,8 @@ import {
   type DefaultBrowser
 } from './browser-discovery'
 import {
-  ExternalBrowser,
+  ExternalBrowserHost,
+  type ExternalBrowserPage,
   type BrowserAgentCommand,
   type ExternalBrowserEvent
 } from './external-browser'
@@ -60,7 +61,8 @@ const EMPTY_STATE: LoginViewState = {
 }
 
 export class LoginSessionManager {
-  private browser: ExternalBrowser | null = null
+  private host: ExternalBrowserHost | null = null
+  private browser: ExternalBrowserPage | null = null
   private browserInfo: DefaultBrowser | null = null
   private state: LoginViewState = { ...EMPTY_STATE }
   private account: StoredAccount | null = null
@@ -87,7 +89,8 @@ export class LoginSessionManager {
     private readonly userDataPath: string,
     private readonly browserExecutableOverride: string | undefined,
     private readonly headlessBrowser: boolean,
-    private readonly onState: (state: LoginViewState) => void
+    private readonly onState: (state: LoginViewState) => void,
+    private readonly sharedHost: ExternalBrowserHost | null = null
   ) {}
 
   getState(): LoginViewState {
@@ -153,23 +156,54 @@ export class LoginSessionManager {
       this.browserInfo = browserInfo
       this.emit({ browserName: browserInfo.name })
 
-      const browser = await ExternalBrowser.launch({
-        browser: browserInfo,
-        profileDirectory: browserProfileDirectory(this.userDataPath, account.id),
-        headless: this.headlessBrowser,
-        onEvent: (event) => this.handleBrowserEvent(browser, event),
-        onClosed: () => this.handleBrowserClosed(browser)
-      })
+      const host =
+        this.sharedHost ??
+        (await ExternalBrowserHost.launch({
+          browser: browserInfo,
+          profileDirectory: browserProfileDirectory(this.userDataPath, account.id),
+          headless: this.headlessBrowser
+        }))
+      this.host = host
       if (token !== this.sessionToken || this.destroyed) {
-        await browser.close()
+        if (!this.sharedHost) {
+          await host.close()
+        }
         return this.getState()
       }
-      this.browser = browser
-      await browser.navigate(site.startUrl)
+
+      let page: ExternalBrowserPage | null = null
+      page = await host.createPage({
+        onEvent: (event) => {
+          if (page) {
+            this.handleBrowserEvent(page, event)
+          }
+        },
+        onClosed: () => {
+          if (page) {
+            this.handleBrowserClosed(page)
+          }
+        }
+      })
+      if (token !== this.sessionToken || this.destroyed) {
+        await page.close()
+        if (!this.sharedHost) {
+          await host.close()
+        }
+        return this.getState()
+      }
+      this.browser = page
+      await page.navigate(site.startUrl)
       return this.getState()
     } catch (error) {
       if (token === this.sessionToken) {
+        const page = this.browser
+        const host = this.host
         this.browser = null
+        this.host = null
+        await page?.close().catch(() => undefined)
+        if (!this.sharedHost) {
+          await host?.close().catch(() => undefined)
+        }
         this.emit({
           status: 'error',
           message: error instanceof Error ? error.message : '无法启动默认浏览器',
@@ -298,7 +332,9 @@ export class LoginSessionManager {
     this.clearPageTimer()
     this.clearSubmissionTimer()
     const browser = this.browser
+    const host = this.host
     this.browser = null
+    this.host = null
     this.browserInfo = null
     this.account = null
     this.site = null
@@ -307,11 +343,14 @@ export class LoginSessionManager {
     this.state = { ...EMPTY_STATE }
     this.onState(this.getState())
     if (browser) {
-      await browser.close()
+      await browser.close().catch(() => undefined)
+    }
+    if (!this.sharedHost && host) {
+      await host.close().catch(() => undefined)
     }
   }
 
-  private handleBrowserEvent(browser: ExternalBrowser, event: ExternalBrowserEvent): void {
+  private handleBrowserEvent(browser: ExternalBrowserPage, event: ExternalBrowserEvent): void {
     if (this.browser !== browser || this.destroyed) {
       return
     }
@@ -377,11 +416,14 @@ export class LoginSessionManager {
     }
   }
 
-  private handleBrowserClosed(browser: ExternalBrowser): void {
+  private handleBrowserClosed(browser: ExternalBrowserPage): void {
     if (this.browser !== browser || this.destroyed) {
       return
     }
     this.browser = null
+    if (!this.sharedHost) {
+      this.host = null
+    }
     this.clearPageTimer()
     this.clearSubmissionTimer()
     this.emit({
@@ -488,15 +530,34 @@ export class LoginSessionManager {
       status: 'filling',
       message: recording ? '正在录制登录流程' : '正在识别账号密码字段'
     })
+    const beforeUrl = this.browser.getSnapshot().url
+    const beforeGeneration = this.pageGeneration
     try {
-      const result = await this.runAgentCommand({
+      const commandPromise = this.runAgentCommand({
         type: 'fill-generic',
         username: this.account.username,
         password: this.account.password,
         autoSubmit,
         recording
       })
-      this.handleFillResult(requireFillResult(result))
+      const outcome = await Promise.race([
+        commandPromise.then((result) => ({ kind: 'result' as const, result })),
+        this.waitForNavigationChange(beforeUrl, beforeGeneration, 8_000).then(
+          (navigated) => ({ kind: 'navigation' as const, navigated })
+        )
+      ])
+      if (outcome.kind === 'navigation' && outcome.navigated) {
+        void commandPromise.catch(() => undefined)
+        if (autoSubmit) {
+          this.hadSubmission = true
+          this.emit({ status: 'submitting', message: '已提交登录，正在等待页面响应' })
+          this.startSubmissionWatch()
+        }
+        return
+      }
+      this.handleFillResult(
+        requireFillResult(outcome.kind === 'result' ? outcome.result : null)
+      )
     } catch {
       this.emit({
         status: 'needs_action',

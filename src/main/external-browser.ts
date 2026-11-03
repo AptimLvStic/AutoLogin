@@ -41,10 +41,13 @@ export interface ExternalBrowserSnapshot {
   loading: boolean
 }
 
-interface ExternalBrowserOptions {
+export interface ExternalBrowserHostOptions {
   browser: DefaultBrowser
   profileDirectory: string
   headless: boolean
+}
+
+interface ExternalBrowserPageOptions {
   onEvent: (event: ExternalBrowserEvent) => void
   onClosed: () => void
 }
@@ -95,37 +98,36 @@ interface ContextWaiter {
   timer: NodeJS.Timeout
 }
 
-export class ExternalBrowser {
+/**
+ * Owns one Chromium process. A host can expose several page controllers, so
+ * batch login can put every account in a tab of the same browser window.
+ */
+export class ExternalBrowserHost {
   private client: CdpClient | null = null
-  private sessionId = ''
-  private targetId = ''
-  private mainFrameId = ''
-  private agentContextId: number | null = null
-  private contextWaiters: ContextWaiter[] = []
-  private navigationEpoch = 0
-  private snapshot: ExternalBrowserSnapshot = { url: 'about:blank', title: '', loading: true }
+  private readonly pages = new Map<string, ExternalBrowserPage>()
+  private readonly targetToPage = new Map<string, ExternalBrowserPage>()
+  private createPageChain: Promise<void> = Promise.resolve()
+  private initialTargetId = ''
   private closed = false
   private closing = false
   private closeNotified = false
 
   private constructor(
     private readonly child: ChildProcess,
-    private readonly options: ExternalBrowserOptions,
+    private readonly options: ExternalBrowserHostOptions,
     private readonly portFile: string
   ) {
     child.once('exit', () => {
       this.closed = true
-      this.rejectContextWaiters(new Error('默认浏览器已关闭'))
-      this.notifyClosed()
+      this.notifyPagesClosed('默认浏览器已关闭')
     })
     child.once('error', () => {
       this.closed = true
-      this.rejectContextWaiters(new Error('默认浏览器启动失败'))
-      this.notifyClosed()
+      this.notifyPagesClosed('默认浏览器启动失败')
     })
   }
 
-  static async launch(options: ExternalBrowserOptions): Promise<ExternalBrowser> {
+  static async launch(options: ExternalBrowserHostOptions): Promise<ExternalBrowserHost> {
     mkdirSync(options.profileDirectory, { recursive: true })
     const portFile = join(options.profileDirectory, DEBUG_PORT_FILE)
     rmSync(portFile, { force: true })
@@ -137,6 +139,9 @@ export class ExternalBrowser {
       '--no-first-run',
       '--no-default-browser-check',
       '--disable-background-mode',
+      '--disable-background-timer-throttling',
+      '--disable-backgrounding-occluded-windows',
+      '--disable-renderer-backgrounding',
       ...(options.headless ? ['--headless=new', '--disable-gpu'] : []),
       '--new-window',
       'about:blank'
@@ -145,71 +150,49 @@ export class ExternalBrowser {
       stdio: 'ignore',
       windowsHide: false
     })
-    const browser = new ExternalBrowser(child, options, portFile)
+    const host = new ExternalBrowserHost(child, options, portFile)
     try {
-      await browser.connect()
-      return browser
+      await host.connect()
+      return host
     } catch (error) {
-      await browser.close()
+      await host.close()
       throw error
     }
   }
 
-  getSnapshot(): ExternalBrowserSnapshot {
-    return { ...this.snapshot }
-  }
-
-  async navigate(url: string): Promise<void> {
-    if (!isHttpUrl(url)) {
-      throw new Error('只能打开 http 或 https 地址')
-    }
-    await this.requireClient().send(
-      'Page.navigate',
-      { url },
-      this.requireSessionId(),
-      15_000
-    )
-  }
-
-  async runAgentCommand(command: BrowserAgentCommand): Promise<unknown> {
-    const expression = `window.__autologinAgent.handleCommand(${JSON.stringify(command)})`
-    for (let attempt = 0; attempt < 2; attempt += 1) {
-      const contextId = await this.waitForAgentContext()
+  async createPage(options: ExternalBrowserPageOptions): Promise<ExternalBrowserPage> {
+    let release: () => void = () => undefined
+    const previous = this.createPageChain
+    this.createPageChain = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    await previous
+    try {
+      const client = this.requireClient()
+      const targetId = await this.acquireTarget()
+      const attached = await client.send<AttachTargetResult>(
+        'Target.attachToTarget',
+        { targetId, flatten: true }
+      )
+      const page = new ExternalBrowserPage(
+        this,
+        client,
+        targetId,
+        attached.sessionId,
+        options
+      )
+      this.pages.set(attached.sessionId, page)
+      this.targetToPage.set(targetId, page)
       try {
-        await this.ensureAgentInstalled(contextId)
-        const response = await this.requireClient().send<RuntimeEvaluateResult>(
-          'Runtime.evaluate',
-          {
-            expression,
-            contextId,
-            awaitPromise: true,
-            returnByValue: true,
-            userGesture: true
-          },
-          this.requireSessionId(),
-          8_000
-        )
-        if (response.exceptionDetails) {
-          throw new Error(
-            response.exceptionDetails.exception?.description ||
-              response.exceptionDetails.text ||
-              '页面脚本执行失败'
-          )
-        }
-        return response.result?.value ?? null
+        await page.initialize()
+        return page
       } catch (error) {
-        if (attempt === 0 && !this.closed) {
-          this.agentContextId = null
-          continue
-        }
+        await page.close()
         throw error
       }
+    } finally {
+      release()
     }
-    return null
-  }
-
-  async focus(): Promise<void> {
-    await this.requireClient().send('Page.bringToFront', {}, this.requireSessionId())
   }
 
   async close(): Promise<void> {
@@ -219,7 +202,11 @@ export class ExternalBrowser {
     this.closing = true
     const client = this.client
     this.client = null
-    this.rejectContextWaiters(new Error('登录会话已关闭'))
+    for (const page of [...this.pages.values()]) {
+      page.handleHostClosed('登录会话已关闭')
+    }
+    this.pages.clear()
+    this.targetToPage.clear()
 
     if (client) {
       try {
@@ -234,7 +221,27 @@ export class ExternalBrowser {
       await killProcessTree(this.child.pid)
     }
     this.closed = true
-    this.notifyClosed()
+    this.notifyCloseOnce()
+  }
+
+  async closePage(page: ExternalBrowserPage): Promise<void> {
+    this.detachPage(page)
+    const client = this.client
+    if (!client || this.closed) {
+      return
+    }
+    try {
+      await client.send('Target.closeTarget', { targetId: page.targetId }, undefined, 2_000)
+    } catch {
+      // The tab may already have been closed by the user.
+    }
+  }
+
+  private detachPage(page: ExternalBrowserPage): void {
+    this.pages.delete(page.sessionId)
+    if (this.targetToPage.get(page.targetId) === page) {
+      this.targetToPage.delete(page.targetId)
+    }
   }
 
   private async connect(): Promise<void> {
@@ -245,53 +252,71 @@ export class ExternalBrowser {
       () => {
         if (!this.closing) {
           this.closed = true
-          this.rejectContextWaiters(new Error('默认浏览器调试连接已关闭'))
-          this.notifyClosed()
+          this.notifyPagesClosed('默认浏览器调试连接已关闭')
+          this.notifyCloseOnce()
         }
       }
     )
+    await this.requireClient().send('Target.setDiscoverTargets', { discover: true })
+  }
 
-    this.targetId = await this.findPageTarget()
-    const attached = await this.requireClient().send<AttachTargetResult>(
-      'Target.attachToTarget',
-      { targetId: this.targetId, flatten: true }
-    )
-    this.sessionId = attached.sessionId
-
-    await this.requireClient().send('Page.enable', {}, this.sessionId)
-    const frameTree = await this.requireClient().send<FrameTreeResult>(
-      'Page.getFrameTree',
-      {},
-      this.sessionId
-    )
-    this.mainFrameId = frameTree.frameTree.frame.id
-    this.snapshot.url = frameTree.frameTree.frame.url || 'about:blank'
-
-    await this.requireClient().send('Runtime.enable', {}, this.sessionId)
-    try {
-      await this.requireClient().send(
-        'Runtime.addBinding',
-        { name: AGENT_BINDING, executionContextName: AGENT_WORLD },
-        this.sessionId
+  private async acquireTarget(): Promise<string> {
+    const client = this.requireClient()
+    if (!this.initialTargetId) {
+      const response = await client.send<{ targetInfos?: TargetInfo[] }>('Target.getTargets')
+      const availablePages = (response.targetInfos ?? []).filter(
+        (target) => target.type === 'page' && !this.targetToPage.has(target.targetId)
       )
-    } catch {
-      await this.requireClient().send(
-        'Runtime.addBinding',
-        { name: AGENT_BINDING },
-        this.sessionId
-      )
+      const target =
+        availablePages.find((entry) => entry.url === 'about:blank') ?? availablePages[0]
+      if (target) {
+        this.initialTargetId = target.targetId
+        return target.targetId
+      }
     }
-    await this.requireClient().send(
-      'Page.addScriptToEvaluateOnNewDocument',
-      {
-        source: pageAgentSource,
-        worldName: AGENT_WORLD,
-        runImmediately: true
-      },
-      this.sessionId
-    )
 
-    await this.waitForAgentContext(5_000).catch(() => null)
+    const created = await client.send<{ targetId: string }>('Target.createTarget', {
+      url: 'about:blank',
+      newWindow: false,
+      background: true
+    })
+    return created.targetId
+  }
+
+  private handleCdpEvent(
+    method: string,
+    params: Record<string, unknown>,
+    sessionId?: string
+  ): void {
+    if (sessionId) {
+      this.pages.get(sessionId)?.handleCdpEvent(method, params, sessionId)
+      return
+    }
+
+    if (method === 'Target.targetDestroyed' && typeof params.targetId === 'string') {
+      this.targetToPage.get(params.targetId)?.handleTargetClosed()
+      return
+    }
+    if (method === 'Target.detachedFromTarget' && typeof params.sessionId === 'string') {
+      this.pages.get(params.sessionId)?.handleTargetClosed()
+      return
+    }
+    if (method === 'Target.targetCrashed' && typeof params.targetId === 'string') {
+      this.targetToPage.get(params.targetId)?.handleTargetClosed()
+    }
+  }
+
+  private notifyPagesClosed(message: string): void {
+    for (const page of [...this.pages.values()]) {
+      page.handleHostClosed(message)
+    }
+  }
+
+  private notifyCloseOnce(): void {
+    if (this.closeNotified) {
+      return
+    }
+    this.closeNotified = true
   }
 
   private async waitForDebugPort(): Promise<string> {
@@ -323,30 +348,139 @@ export class ExternalBrowser {
     throw new Error('启动默认浏览器超时，请确认浏览器已正确安装')
   }
 
-  private async findPageTarget(): Promise<string> {
-    const deadline = Date.now() + 5_000
-    while (Date.now() < deadline) {
-      const response = await this.requireClient().send<{ targetInfos?: TargetInfo[] }>(
-        'Target.getTargets'
-      )
-      const pages = (response.targetInfos ?? []).filter((target) => target.type === 'page')
-      const blank = pages.find((target) => target.url === 'about:blank')
-      if (blank) {
-        return blank.targetId
-      }
-      if (pages[0]) {
-        return pages[0].targetId
-      }
-      await delay(100)
+  private requireClient(): CdpClient {
+    if (!this.client || this.closed) {
+      throw new Error('默认浏览器未连接')
     }
-    const created = await this.requireClient().send<{ targetId: string }>(
-      'Target.createTarget',
-      { url: 'about:blank' }
+    return this.client
+  }
+}
+
+export class ExternalBrowserPage {
+  private mainFrameId = ''
+  private agentContextId: number | null = null
+  private contextWaiters: ContextWaiter[] = []
+  private navigationEpoch = 0
+  private snapshot: ExternalBrowserSnapshot = { url: 'about:blank', title: '', loading: true }
+  private closed = false
+  private closing = false
+  private closeNotified = false
+
+  constructor(
+    private readonly host: ExternalBrowserHost,
+    private readonly client: CdpClient,
+    public readonly targetId: string,
+    public readonly sessionId: string,
+    private readonly options: ExternalBrowserPageOptions
+  ) {}
+
+  async initialize(): Promise<void> {
+    await this.client.send('Page.enable', {}, this.sessionId)
+    const frameTree = await this.client.send<FrameTreeResult>(
+      'Page.getFrameTree',
+      {},
+      this.sessionId
     )
-    return created.targetId
+    this.mainFrameId = frameTree.frameTree.frame.id
+    this.snapshot.url = frameTree.frameTree.frame.url || 'about:blank'
+
+    await this.client.send('Runtime.enable', {}, this.sessionId)
+    try {
+      await this.client.send(
+        'Runtime.addBinding',
+        { name: AGENT_BINDING, executionContextName: AGENT_WORLD },
+        this.sessionId
+      )
+    } catch {
+      await this.client.send('Runtime.addBinding', { name: AGENT_BINDING }, this.sessionId)
+    }
+    await this.client.send(
+      'Page.addScriptToEvaluateOnNewDocument',
+      {
+        source: pageAgentSource,
+        worldName: AGENT_WORLD,
+        runImmediately: true
+      },
+      this.sessionId
+    )
+    await this.waitForAgentContext(5_000).catch(() => null)
   }
 
-  private handleCdpEvent(
+  getSnapshot(): ExternalBrowserSnapshot {
+    return { ...this.snapshot }
+  }
+
+  async navigate(url: string): Promise<void> {
+    if (!isHttpUrl(url)) {
+      throw new Error('只能打开 http 或 https 地址')
+    }
+    await this.requireClient().send(
+      'Page.navigate',
+      { url },
+      this.sessionId,
+      15_000
+    )
+  }
+
+  async runAgentCommand(command: BrowserAgentCommand): Promise<unknown> {
+    const expression = `window.__autologinAgent.handleCommand(${JSON.stringify(command)})`
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      const contextId = await this.waitForAgentContext()
+      try {
+        await this.ensureAgentInstalled(contextId)
+        const response = await this.requireClient().send<RuntimeEvaluateResult>(
+          'Runtime.evaluate',
+          {
+            expression,
+            contextId,
+            awaitPromise: true,
+            returnByValue: true,
+            userGesture: true
+          },
+          this.sessionId,
+          8_000
+        )
+        if (response.exceptionDetails) {
+          throw new Error(
+            response.exceptionDetails.exception?.description ||
+              response.exceptionDetails.text ||
+              '页面脚本执行失败'
+          )
+        }
+        return response.result?.value ?? null
+      } catch (error) {
+        if (attempt === 0 && !this.closed) {
+          this.agentContextId = null
+          continue
+        }
+        throw error
+      }
+    }
+    return null
+  }
+
+  async focus(): Promise<void> {
+    await this.requireClient().send('Page.bringToFront', {}, this.sessionId)
+  }
+
+  async close(): Promise<void> {
+    if (this.closing) {
+      return
+    }
+    this.closing = true
+    await this.host.closePage(this)
+    this.markClosed('登录会话已关闭')
+  }
+
+  handleTargetClosed(): void {
+    this.markClosed('默认浏览器标签页已关闭')
+  }
+
+  handleHostClosed(message: string): void {
+    this.markClosed(message)
+  }
+
+  handleCdpEvent(
     method: string,
     params: Record<string, unknown>,
     sessionId?: string
@@ -473,7 +607,7 @@ export class ExternalBrowser {
         contextId,
         returnByValue: true
       },
-      this.requireSessionId(),
+      this.sessionId,
       4_000
     )
     if (response.exceptionDetails) {
@@ -495,7 +629,7 @@ export class ExternalBrowser {
         contextId,
         returnByValue: true
       },
-      this.requireSessionId(),
+      this.sessionId,
       3_000
     )
     if (response.result?.value === 'function') {
@@ -504,7 +638,7 @@ export class ExternalBrowser {
     await this.requireClient().send(
       'Runtime.evaluate',
       { expression: pageAgentSource, contextId, returnByValue: true },
-      this.requireSessionId(),
+      this.sessionId,
       3_000
     )
   }
@@ -554,7 +688,12 @@ export class ExternalBrowser {
     }
   }
 
-  private notifyClosed(): void {
+  private markClosed(message: string): void {
+    if (this.closed) {
+      return
+    }
+    this.closed = true
+    this.rejectContextWaiters(new Error(message))
     if (this.closeNotified) {
       return
     }
@@ -567,17 +706,10 @@ export class ExternalBrowser {
   }
 
   private requireClient(): CdpClient {
-    if (!this.client || this.closed) {
-      throw new Error('默认浏览器未连接')
+    if (this.closed || this.closing) {
+      throw new Error('默认浏览器页面已关闭')
     }
     return this.client
-  }
-
-  private requireSessionId(): string {
-    if (!this.sessionId) {
-      throw new Error('默认浏览器页面尚未就绪')
-    }
-    return this.sessionId
   }
 }
 

@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { LoaderCircle, LockKeyhole } from 'lucide-react'
 import type { AccountWithSite, AppSettings, LoginBatchState, Site } from '@shared/types'
+import { DEFAULT_THEME_COLORS, THEME_PRESETS } from '@shared/theme'
 import { SetupScreen, UnlockScreen } from './components/AuthScreens'
 import { BrandMark } from './components/Brand'
 import { LibraryScreen } from './components/LibraryScreen'
@@ -15,14 +16,19 @@ interface LoginTarget {
   mode: 'record'
 }
 
-const DEFAULT_SETTINGS: AppSettings = { autoLockMinutes: 10 }
+const DEFAULT_SETTINGS: AppSettings = {
+  autoLockMinutes: 10,
+  themePreset: 'warm',
+  customTheme: DEFAULT_THEME_COLORS,
+  interfaceScale: 100
+}
 
 export default function App(): React.JSX.Element {
   const [authState, setAuthState] = useState<AuthState>('boot')
   const [accounts, setAccounts] = useState<AccountWithSite[]>([])
   const [sites, setSites] = useState<Site[]>([])
   const [settings, setSettings] = useState<AppSettings>(DEFAULT_SETTINGS)
-  const [appVersion, setAppVersion] = useState('0.2.1')
+  const [appVersion, setAppVersion] = useState('0.2.2')
   const [loginTarget, setLoginTarget] = useState<LoginTarget | null>(null)
   const [batchState, setBatchState] = useState<LoginBatchState | null>(null)
   const [toast, setToast] = useState<ToastState | null>(null)
@@ -55,7 +61,7 @@ export default function App(): React.JSX.Element {
       .then(([status, version]) => {
         if (cancelled) return
         setAppVersion(version)
-        setSettings({ autoLockMinutes: status.autoLockMinutes })
+        setSettings((current) => ({ ...current, autoLockMinutes: status.autoLockMinutes }))
         setAuthState(status.initialized ? 'unlock' : 'setup')
       })
       .catch(() => {
@@ -92,6 +98,31 @@ export default function App(): React.JSX.Element {
   }, [])
 
   useEffect(() => {
+    const colors =
+      settings.themePreset === 'custom'
+        ? settings.customTheme
+        : THEME_PRESETS[settings.themePreset].colors
+    const root = document.documentElement.style
+    root.setProperty('--canvas', colors.background)
+    root.setProperty('--surface', colors.surface)
+    root.setProperty('--ink', colors.text)
+    root.setProperty('--accent', colors.accent)
+    root.setProperty('--canvas-deep', `color-mix(in srgb, ${colors.background} 88%, ${colors.text})`)
+    root.setProperty('--surface-raised', `color-mix(in srgb, ${colors.surface} 94%, white)`)
+    root.setProperty('--ink-soft', `color-mix(in srgb, ${colors.text} 82%, ${colors.background})`)
+    root.setProperty('--muted', `color-mix(in srgb, ${colors.text} 66%, ${colors.background})`)
+    root.setProperty('--muted-light', `color-mix(in srgb, ${colors.text} 58%, ${colors.background})`)
+    root.setProperty('--line', `color-mix(in srgb, ${colors.text} 14%, ${colors.background})`)
+    root.setProperty('--line-strong', `color-mix(in srgb, ${colors.text} 25%, ${colors.background})`)
+    root.setProperty('--accent-strong', `color-mix(in srgb, ${colors.accent} 82%, black)`)
+    root.setProperty('--accent-soft', `color-mix(in srgb, ${colors.accent} 16%, ${colors.surface})`)
+    root.setProperty('--accent-pale', `color-mix(in srgb, ${colors.accent} 8%, ${colors.surface})`)
+    root.setProperty('--ink-panel', `color-mix(in srgb, ${colors.text} 82%, ${colors.accent})`)
+    root.setProperty('--ink-panel-deep', `color-mix(in srgb, ${colors.text} 90%, black)`)
+    root.setProperty('--focus-ring', `color-mix(in srgb, ${colors.accent} 72%, transparent)`)
+  }, [settings.customTheme, settings.themePreset])
+
+  useEffect(() => {
     let lastReport = 0
     const reportActivity = (): void => {
       const now = Date.now()
@@ -119,7 +150,7 @@ export default function App(): React.JSX.Element {
 
   async function createVault(password: string): Promise<void> {
     const status = await window.autologin.vault.create(password)
-    setSettings({ autoLockMinutes: status.autoLockMinutes })
+    setSettings((current) => ({ ...current, autoLockMinutes: status.autoLockMinutes }))
     await loadData()
     setBatchState(await window.autologin.login.getBatchState())
     setAuthState('ready')
@@ -128,7 +159,7 @@ export default function App(): React.JSX.Element {
 
   async function unlockVault(password: string): Promise<void> {
     const status = await window.autologin.vault.unlock(password)
-    setSettings({ autoLockMinutes: status.autoLockMinutes })
+    setSettings((current) => ({ ...current, autoLockMinutes: status.autoLockMinutes }))
     await loadData()
     setBatchState(await window.autologin.login.getBatchState())
     setAuthState('ready')

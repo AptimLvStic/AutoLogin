@@ -3,6 +3,7 @@ import type {
   AccountCreateInput,
   AccountUpdateInput,
   AppSettings,
+  AppSettingsPatch,
   AutologinApi,
   LoginBatchState,
   LoginStartInput,
@@ -61,7 +62,7 @@ const api: AutologinApi = {
   },
   settings: {
     get: () => invoke('settings:get'),
-    update: (settings: AppSettings) => invoke('settings:update', settings)
+    update: (settings: AppSettingsPatch) => invoke('settings:update', settings)
   },
   app: {
     getVersion: () => invoke('app:get-version'),
@@ -73,6 +74,7 @@ const api: AutologinApi = {
     chooseDataLocation: () => invoke('app:choose-data-location'),
     openDataLocation: () => invoke('app:open-data-location'),
     openFailureLog: () => invoke('app:open-failure-log'),
+    listFailureLogs: () => invoke('app:list-failure-logs'),
     restart: () => invoke('app:restart'),
     reportActivity: () => ipcRenderer.send('app:activity'),
     clearAllData: () => invoke('app:clear-all-data'),

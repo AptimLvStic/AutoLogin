@@ -1,4 +1,4 @@
-import { appendFileSync, mkdirSync, rmSync, statSync } from 'node:fs'
+import { appendFileSync, mkdirSync, readFileSync, rmSync, statSync } from 'node:fs'
 import { join } from 'node:path'
 import { randomUUID } from 'node:crypto'
 import type {
@@ -6,33 +6,33 @@ import type {
   LoginBatchItemStatus,
   LoginBatchState,
   LoginStatus,
-  LoginViewState
+  LoginViewState,
+  FailureLogEntry
 } from '@shared/types'
 import {
   clearManagedSessionDirectories,
   LoginSessionManager
 } from './login-session'
+import {
+  assertChromiumBrowser,
+  discoverDefaultBrowser,
+  type DefaultBrowser
+} from './browser-discovery'
+import { ExternalBrowserHost } from './external-browser'
+import { browserProfileDirectory } from './session-index'
 import { VaultManager } from './vault'
 
-const MAX_CONCURRENT_BROWSERS = 3
+const MAX_CONCURRENT_TABS = 3
 const LOGIN_TIMEOUT_MS = 30_000
 const MAX_FAILURE_LOG_BYTES = 2 * 1024 * 1024
-
-interface FailureLogEntry {
-  timestamp: string
-  batchId: string
-  accountId: string
-  accountLabel: string
-  siteName: string
-  status: 'error' | 'timeout' | 'manual'
-  reason: string
-}
 
 export class LoginBatchManager {
   private state: LoginBatchState | null = null
   private readonly managers = new Map<string, LoginSessionManager>()
   private readonly timers = new Map<string, NodeJS.Timeout>()
   private readonly loggedFailures = new Set<string>()
+  private host: ExternalBrowserHost | null = null
+  private browserInfo: DefaultBrowser | null = null
   private queue: string[] = []
   private running = 0
   private disposed = false
@@ -65,9 +65,16 @@ export class LoginBatchManager {
       return { account, site }
     })
 
-    for (const { account } of accounts) {
-      await this.closeAccount(account.id)
-    }
+    await this.closeRuntime()
+    this.disposed = false
+    const browserInfo = discoverDefaultBrowser(this.browserExecutableOverride)
+    assertChromiumBrowser(browserInfo)
+    this.browserInfo = browserInfo
+    this.host = await ExternalBrowserHost.launch({
+      browser: browserInfo,
+      profileDirectory: browserProfileDirectory(this.userDataPath, 'batch'),
+      headless: this.headlessBrowser
+    })
 
     const startedAt = new Date().toISOString()
     this.loggedFailures.clear()
@@ -96,7 +103,8 @@ export class LoginBatchManager {
   }
 
   async clearSession(accountId: string): Promise<void> {
-    await this.closeAccount(accountId)
+    await this.closeRuntime()
+    clearManagedSessionDirectories(this.userDataPath, 'batch')
     clearManagedSessionDirectories(this.userDataPath, accountId)
   }
 
@@ -111,15 +119,7 @@ export class LoginBatchManager {
 
   async close(): Promise<void> {
     this.disposed = true
-    this.queue = []
-    this.running = 0
-    for (const timer of this.timers.values()) {
-      clearTimeout(timer)
-    }
-    this.timers.clear()
-    const managers = [...this.managers.values()]
-    this.managers.clear()
-    await Promise.allSettled(managers.map((manager) => manager.close()))
+    await this.closeRuntime()
     if (this.state?.active) {
       this.state = {
         ...this.state,
@@ -135,7 +135,7 @@ export class LoginBatchManager {
     if (this.disposed || !this.state?.active) {
       return
     }
-    while (this.running < MAX_CONCURRENT_BROWSERS && this.queue.length > 0) {
+    while (this.running < MAX_CONCURRENT_TABS && this.queue.length > 0) {
       const accountId = this.queue.shift()
       if (!accountId) {
         break
@@ -161,12 +161,18 @@ export class LoginBatchManager {
     })
     this.armTimeout(accountId)
 
+    if (!this.host || !this.browserInfo) {
+      this.markFailed(accountId, '共享默认浏览器尚未准备好')
+      return
+    }
+
     const manager = new LoginSessionManager(
       this.vault,
       this.userDataPath,
       this.browserExecutableOverride,
       this.headlessBrowser,
-      (next) => this.handleLoginState(accountId, next)
+      (next) => this.handleLoginState(accountId, next),
+      this.host
     )
     this.managers.set(accountId, manager)
 
@@ -336,10 +342,69 @@ export class LoginBatchManager {
   private findItem(accountId: string): LoginBatchItem | undefined {
     return this.state?.items.find((item) => item.accountId === accountId)
   }
+
+  private async closeRuntime(): Promise<void> {
+    this.queue = []
+    this.running = 0
+    for (const timer of this.timers.values()) {
+      clearTimeout(timer)
+    }
+    this.timers.clear()
+    const managers = [...this.managers.values()]
+    this.managers.clear()
+    await Promise.allSettled(managers.map((manager) => manager.close()))
+    const host = this.host
+    this.host = null
+    this.browserInfo = null
+    if (host) {
+      await host.close().catch(() => undefined)
+    }
+  }
 }
 
 export function failureLogPath(userDataPath: string): string {
   return join(userDataPath, 'logs', 'login-failures.jsonl')
+}
+
+export function readFailureLogs(userDataPath: string, limit = 200): FailureLogEntry[] {
+  const path = failureLogPath(userDataPath)
+  let content = ''
+  try {
+    content = readFileSync(path, 'utf8')
+  } catch {
+    return []
+  }
+
+  const entries: FailureLogEntry[] = []
+  for (const line of content.split(/\r?\n/)) {
+    if (!line.trim()) continue
+    try {
+      const value = JSON.parse(line) as Partial<FailureLogEntry>
+      if (
+        typeof value.timestamp !== 'string' ||
+        typeof value.batchId !== 'string' ||
+        typeof value.accountId !== 'string' ||
+        typeof value.accountLabel !== 'string' ||
+        typeof value.siteName !== 'string' ||
+        !['error', 'timeout', 'manual'].includes(value.status ?? '') ||
+        typeof value.reason !== 'string'
+      ) {
+        continue
+      }
+      entries.push({
+        timestamp: value.timestamp,
+        batchId: value.batchId.slice(0, 128),
+        accountId: value.accountId.slice(0, 128),
+        accountLabel: value.accountLabel.slice(0, 80),
+        siteName: value.siteName.slice(0, 80),
+        status: value.status as FailureLogEntry['status'],
+        reason: sanitizeFailureReason(value.reason)
+      })
+    } catch {
+      // A malformed line must not hide the remaining valid records.
+    }
+  }
+  return entries.slice(-Math.max(1, Math.min(limit, 500))).reverse()
 }
 
 function mapRunningStatus(status: LoginStatus): LoginBatchItemStatus | null {

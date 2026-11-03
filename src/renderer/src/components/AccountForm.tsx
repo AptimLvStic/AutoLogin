@@ -197,24 +197,10 @@ export function AccountForm({
       title={mode === 'edit' ? '编辑账号' : '添加登录账号'}
       eyebrow={mode === 'edit' ? 'ACCOUNT DETAILS' : 'NEW CREDENTIAL'}
       onClose={onClose}
-      width="760px"
+      width="820px"
       className="account-form-modal"
     >
-      <div className="form-sheet">
-        <aside className="form-sheet__aside">
-          <div className="form-index">{mode === 'edit' ? '02' : '01'}</div>
-          <h3>{mode === 'edit' ? '保持入口清晰' : '从一个站点开始'}</h3>
-          <p>
-            {mode === 'edit'
-              ? '修改名称或凭据不会影响已保存的网站会话。'
-              : 'AutoLogin 会为每个账号创建独立浏览器会话，互不干扰。'}
-          </p>
-          <div className="form-aside-note">
-            <Check size={15} />
-            <span>密码只保存在本地加密保险库</span>
-          </div>
-        </aside>
-        <form className="form-sheet__form" onSubmit={submit}>
+      <form className="account-form" onSubmit={submit}>
           {!account && (
             <div className="segmented-control" aria-label="站点来源">
               <button
@@ -235,16 +221,29 @@ export function AccountForm({
             </div>
           )}
 
-          {siteMode === 'existing' ? (
-            <div className="field-row field-row--single">
-              <label className="field">
+          <div className="account-form__grid">
+            {siteMode === 'existing' ? (
+              account ? (
+                <div className="account-site-summary account-form__span-2">
+                  <span className="monogram monogram--small">
+                    {selectedSite?.name.slice(0, 1).toUpperCase() ?? '?'}
+                  </span>
+                  <span>
+                    <strong>{selectedSite?.name ?? '站点信息不可用'}</strong>
+                    <small>
+                      {selectedSite ? safeHostname(selectedSite.startUrl) : '请重新选择站点'}
+                    </small>
+                  </span>
+                  <em>固定站点</em>
+                </div>
+              ) : (
+              <label className="field account-form__span-2">
                 <span className="field__label">选择站点</span>
                 <div className="site-picker" ref={sitePickerRef}>
                   <button
                     type="button"
                     className={`site-picker__trigger${sitePickerOpen ? ' is-open' : ''}`}
                     onClick={() => setSitePickerOpen((open) => !open)}
-                    disabled={Boolean(account)}
                     aria-haspopup="listbox"
                     aria-expanded={sitePickerOpen}
                   >
@@ -257,7 +256,7 @@ export function AccountForm({
                     </span>
                     <ChevronDown size={16} className={sitePickerOpen ? 'is-open' : ''} />
                   </button>
-                  {sitePickerOpen && !account && (
+                  {sitePickerOpen && (
                     <div className="site-picker__menu" role="listbox" aria-label="选择站点">
                       {sites.map((site) => (
                         <button
@@ -284,47 +283,36 @@ export function AccountForm({
                   )}
                 </div>
               </label>
-              {selectedSite && (
-                <div className="site-preview">
-                  <span className="monogram monogram--small">
-                    {selectedSite.name.slice(0, 1).toUpperCase()}
+              )
+            ) : (
+              <>
+                <label className="field">
+                  <span className="field__label">站点名称</span>
+                  <span className="input-shell">
+                    <Globe2 size={17} />
+                    <input
+                      value={siteName}
+                      onChange={(event) => setSiteName(event.target.value)}
+                      placeholder="例如：工作台"
+                      autoFocus
+                    />
                   </span>
-                  <div>
-                    <strong>{selectedSite.name}</strong>
-                    <span>{safeHostname(selectedSite.startUrl)}</span>
-                  </div>
-                </div>
-              )}
-            </div>
-          ) : (
-            <div className="field-row">
-              <label className="field">
-                <span className="field__label">站点名称</span>
-                <span className="input-shell">
-                  <Globe2 size={17} />
-                  <input
-                    value={siteName}
-                    onChange={(event) => setSiteName(event.target.value)}
-                    placeholder="例如：工作台"
-                    autoFocus
-                  />
-                </span>
-              </label>
-              <label className="field">
-                <span className="field__label">登录地址</span>
-                <span className="input-shell">
-                  <span className="protocol-mark">URL</span>
-                  <input
-                    value={startUrl}
-                    onChange={(event) => setStartUrl(event.target.value)}
-                    onBlur={deriveSiteName}
-                    placeholder="https://example.com/login"
-                    spellCheck={false}
-                  />
-                </span>
-              </label>
-            </div>
-          )}
+                </label>
+                <label className="field">
+                  <span className="field__label">登录地址</span>
+                  <span className="input-shell">
+                    <span className="protocol-mark">URL</span>
+                    <input
+                      value={startUrl}
+                      onChange={(event) => setStartUrl(event.target.value)}
+                      onBlur={deriveSiteName}
+                      placeholder="https://example.com/login"
+                      spellCheck={false}
+                    />
+                  </span>
+                </label>
+              </>
+            )}
 
           <label className="field">
             <span className="field__label">站点分组（可选）</span>
@@ -339,7 +327,6 @@ export function AccountForm({
             </span>
           </label>
 
-          <div className="field-row">
             <label className="field">
               <span className="field__label">账号名称</span>
               <span className="input-shell">
@@ -364,9 +351,8 @@ export function AccountForm({
                 />
               </span>
             </label>
-          </div>
 
-          <label className="field">
+            <label className="field">
             <span className="field__label">
               登录密码
               {mode === 'edit' && <small>留空则保持不变</small>}
@@ -389,33 +375,34 @@ export function AccountForm({
                 {showPassword ? <EyeOff size={17} /> : <Eye size={17} />}
               </button>
             </span>
-          </label>
+            </label>
 
-          <div className="form-options">
-            <label className="switch-row">
-              <span>
-                <strong>自动提交</strong>
-                <small>检测到验证码时会自动暂停</small>
-              </span>
-              <input
-                type="checkbox"
-                checked={autoSubmit}
-                onChange={(event) => setAutoSubmit(event.target.checked)}
-              />
-              <span className="switch" aria-hidden="true" />
-            </label>
-            <label className="switch-row">
-              <span>
-                <strong>加入收藏</strong>
-                <small>在侧栏快速访问</small>
-              </span>
-              <input
-                type="checkbox"
-                checked={favorite}
-                onChange={(event) => setFavorite(event.target.checked)}
-              />
-              <span className="switch" aria-hidden="true" />
-            </label>
+            <div className="form-options account-form__span-2">
+              <label className="switch-row">
+                <span>
+                  <strong>自动提交</strong>
+                  <small>检测到验证码时会自动暂停</small>
+                </span>
+                <input
+                  type="checkbox"
+                  checked={autoSubmit}
+                  onChange={(event) => setAutoSubmit(event.target.checked)}
+                />
+                <span className="switch" aria-hidden="true" />
+              </label>
+              <label className="switch-row">
+                <span>
+                  <strong>加入收藏</strong>
+                  <small>在侧栏快速访问</small>
+                </span>
+                <input
+                  type="checkbox"
+                  checked={favorite}
+                  onChange={(event) => setFavorite(event.target.checked)}
+                />
+                <span className="switch" aria-hidden="true" />
+              </label>
+            </div>
           </div>
 
           {error && <p className="form-error">{error}</p>}
@@ -428,8 +415,7 @@ export function AccountForm({
               {!busy && <ArrowRight size={16} />}
             </button>
           </div>
-        </form>
-      </div>
+      </form>
     </Modal>
   )
 }

@@ -110,7 +110,43 @@ describe('VaultManager', () => {
 
     const status = await manager.unlock('correct horse battery staple')
     expect(status.autoLockMinutes).toBe(15)
-    expect(manager.getSettings()).toEqual({ autoLockMinutes: 15 })
+    expect(manager.getSettings()).toEqual(
+      expect.objectContaining({
+        autoLockMinutes: 15,
+        themePreset: 'warm',
+        interfaceScale: 100
+      })
+    )
+  })
+
+  it('merges theme and scale updates without overwriting unrelated settings', async () => {
+    const { manager } = createManager()
+    await manager.create('correct horse battery staple')
+
+    manager.updateSettings({ autoLockMinutes: 30 })
+    manager.updateSettings({ themePreset: 'custom', interfaceScale: 115 })
+    manager.updateSettings({
+      customTheme: {
+        background: '#EEF2F3',
+        surface: '#F8FAFA',
+        text: '#17262B',
+        accent: '#176B7A'
+      }
+    })
+    manager.lock()
+
+    await manager.unlock('correct horse battery staple')
+    expect(manager.getSettings()).toEqual({
+      autoLockMinutes: 30,
+      themePreset: 'custom',
+      interfaceScale: 115,
+      customTheme: {
+        background: '#EEF2F3',
+        surface: '#F8FAFA',
+        text: '#17262B',
+        accent: '#176B7A'
+      }
+    })
   })
 
   it('re-encrypts with a new master password', async () => {

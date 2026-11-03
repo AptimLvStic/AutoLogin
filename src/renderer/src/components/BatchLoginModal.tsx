@@ -95,7 +95,10 @@ export function BatchLoginModal({
         <div className="batch-picker__intro">
           <div>
             <h3>选择要打开的站点</h3>
-            <p>每个站点下的账号会在独立浏览器会话中并行打开，最多同时处理 3 个。</p>
+            <p>所选账号会在同一浏览器窗口中按标签页并行打开，最多同时处理 3 个。</p>
+            <p className="batch-picker__hint">
+              同一站点的多个账号共享该窗口的 Cookie，请避免同时登录不同账号。
+            </p>
           </div>
           <div className="batch-picker__quick-actions">
             <button

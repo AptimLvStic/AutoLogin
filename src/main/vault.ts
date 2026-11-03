@@ -15,7 +15,13 @@ import { randomBytes } from 'node:crypto'
 import { createCipheriv, createDecipheriv } from 'node:crypto'
 import { argon2id } from 'hash-wasm'
 import { vaultDataSchema } from '@shared/schemas'
-import type { AppSettings, AutoLockMinutes, VaultData, VaultStatus } from '@shared/types'
+import type {
+  AppSettings,
+  AppSettingsPatch,
+  AutoLockMinutes,
+  VaultData,
+  VaultStatus
+} from '@shared/types'
 
 const KDF_MEMORY_KIB = 64 * 1024
 const KDF_ITERATIONS = 3
@@ -102,7 +108,17 @@ export class VaultManager {
       schemaVersion: 1,
       sites: [],
       accounts: [],
-      settings: { autoLockMinutes: 10 },
+      settings: {
+        autoLockMinutes: 10,
+        themePreset: 'warm',
+        customTheme: {
+          background: '#F4F1EA',
+          surface: '#FBF9F4',
+          text: '#1C2521',
+          accent: '#0E7567'
+        },
+        interfaceScale: 100
+      },
     }
 
     const salt = randomBytes(SALT_LENGTH)
@@ -175,13 +191,13 @@ export class VaultManager {
   }
 
   getSettings(): AppSettings {
-    return { ...this.requireData().settings }
+    return structuredClone(this.requireData().settings)
   }
 
-  updateSettings(settings: AppSettings): AppSettings {
+  updateSettings(patch: AppSettingsPatch): AppSettings {
     const data = this.requireData()
-    data.settings = { ...settings }
-    this.autoLockMinutes = settings.autoLockMinutes
+    data.settings = { ...data.settings, ...patch }
+    this.autoLockMinutes = data.settings.autoLockMinutes
     this.save()
     this.scheduleLock()
     return { ...data.settings }

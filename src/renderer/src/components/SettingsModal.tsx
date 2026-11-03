@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import {
   Check,
   Download,
@@ -8,19 +8,27 @@ import {
   KeyRound,
   LoaderCircle,
   LockKeyhole,
+  Palette,
   RefreshCw,
+  RotateCcw,
   ShieldCheck,
   Trash2,
   TriangleAlert
 } from 'lucide-react'
 import {
   AUTO_LOCK_OPTIONS,
+  INTERFACE_SCALE_MAX,
+  INTERFACE_SCALE_MIN,
+  INTERFACE_SCALE_STEP,
   type AboutInfo,
   type AppSettings,
+  type AppSettingsPatch,
   type AutoLockMinutes,
   type DataLocationInfo,
+  type ThemeColors,
   type UpdateCheckResult
 } from '@shared/types'
+import { DEFAULT_THEME_COLORS, THEME_PRESETS } from '@shared/theme'
 import { Modal, ConfirmDialog } from './Modal'
 import { PasswordStrength } from './PasswordStrength'
 
@@ -29,13 +37,15 @@ export function SettingsModal({
   appVersion,
   onClose,
   onSettingsChange,
+  onOpenFailureLogs,
   onClearAllData,
   notify
 }: {
   settings: AppSettings
   appVersion: string
   onClose: () => void
-  onSettingsChange: (settings: AppSettings) => Promise<void>
+  onSettingsChange: (patch: AppSettingsPatch) => Promise<void>
+  onOpenFailureLogs: () => void
   onClearAllData: () => Promise<void>
   notify: (kind: 'success' | 'error' | 'info', message: string) => void
 }): React.JSX.Element {
@@ -51,10 +61,26 @@ export function SettingsModal({
   const [locationBusy, setLocationBusy] = useState(false)
   const [updateResult, setUpdateResult] = useState<UpdateCheckResult | null>(null)
   const [checkingUpdates, setCheckingUpdates] = useState(false)
+  const [customTheme, setCustomTheme] = useState<ThemeColors>(settings.customTheme)
+  const [interfaceScale, setInterfaceScale] = useState(settings.interfaceScale)
+  const scaleSaveTimer = useRef<number | null>(null)
 
   useEffect(() => {
     setAutoLock(settings.autoLockMinutes)
   }, [settings.autoLockMinutes])
+
+  useEffect(() => {
+    setCustomTheme(settings.customTheme)
+    setInterfaceScale(settings.interfaceScale)
+  }, [settings.customTheme, settings.interfaceScale])
+
+  useEffect(() => {
+    return () => {
+      if (scaleSaveTimer.current) {
+        window.clearTimeout(scaleSaveTimer.current)
+      }
+    }
+  }, [])
 
   useEffect(() => {
     let cancelled = false
@@ -81,12 +107,62 @@ export function SettingsModal({
   async function changeAutoLock(value: AutoLockMinutes): Promise<void> {
     setAutoLock(value)
     try {
-      await onSettingsChange({ ...settings, autoLockMinutes: value })
+      await onSettingsChange({ autoLockMinutes: value })
       notify('success', `自动锁定已设为 ${value} 分钟`)
     } catch (error) {
       setAutoLock(settings.autoLockMinutes)
       notify('error', error instanceof Error ? error.message : '设置保存失败')
     }
+  }
+
+  async function saveAppearance(patch: AppSettingsPatch, message: string): Promise<void> {
+    try {
+      await onSettingsChange(patch)
+      notify('success', message)
+    } catch (error) {
+      notify('error', error instanceof Error ? error.message : '外观设置保存失败')
+    }
+  }
+
+  function scheduleScaleSave(value: number): void {
+    setInterfaceScale(value)
+    if (scaleSaveTimer.current) {
+      window.clearTimeout(scaleSaveTimer.current)
+    }
+    scaleSaveTimer.current = window.setTimeout(() => {
+      void saveAppearance({ interfaceScale: value }, `界面比例已设为 ${value}%`)
+    }, 260)
+  }
+
+  function updateCustomColor(key: keyof ThemeColors, value: string): void {
+    setCustomTheme((current) => ({ ...current, [key]: value.toUpperCase() }))
+  }
+
+  async function applyCustomTheme(): Promise<void> {
+    await saveAppearance(
+      { themePreset: 'custom', customTheme },
+      '自定义主题已应用'
+    )
+  }
+
+  async function resetTheme(): Promise<void> {
+    setCustomTheme(DEFAULT_THEME_COLORS)
+    await saveAppearance(
+      {
+        themePreset: 'warm',
+        customTheme: DEFAULT_THEME_COLORS
+      },
+      '主题配色已恢复默认'
+    )
+  }
+
+  async function resetScale(): Promise<void> {
+    if (scaleSaveTimer.current) {
+      window.clearTimeout(scaleSaveTimer.current)
+      scaleSaveTimer.current = null
+    }
+    setInterfaceScale(100)
+    await saveAppearance({ interfaceScale: 100 }, '界面比例已恢复默认')
   }
 
   async function submitPassword(event: React.FormEvent): Promise<void> {
@@ -165,6 +241,120 @@ export function SettingsModal({
         className="settings-modal"
       >
         <div className="settings-stack">
+          <section className="settings-section">
+            <div className="settings-section__heading">
+              <span className="settings-icon">
+                <Palette size={18} />
+              </span>
+              <div>
+                <h3>主题配色</h3>
+                <p>选择预设，或使用四项颜色创建自己的主题。</p>
+              </div>
+            </div>
+            <div className="theme-preset-grid" role="group" aria-label="主题预设">
+              {(Object.entries(THEME_PRESETS) as Array<
+                [keyof typeof THEME_PRESETS, (typeof THEME_PRESETS)[keyof typeof THEME_PRESETS]]
+              >).map(([key, preset]) => (
+                <button
+                  key={key}
+                  type="button"
+                  className={`theme-swatch${settings.themePreset === key ? ' is-active' : ''}`}
+                  onClick={() => void saveAppearance({ themePreset: key }, `已切换为${preset.label}主题`)}
+                >
+                  <span
+                    className="theme-swatch__preview"
+                    style={{
+                      background: preset.colors.background,
+                      color: preset.colors.text,
+                      borderColor: preset.colors.accent
+                    }}
+                  >
+                    <i style={{ background: preset.colors.accent }} />
+                    <b />
+                    <em />
+                  </span>
+                  <span>{preset.label}</span>
+                  {settings.themePreset === key && <Check size={14} />}
+                </button>
+              ))}
+            </div>
+
+            <div
+              className={`custom-theme-editor${
+                settings.themePreset === 'custom' ? ' is-active' : ''
+              }`}
+            >
+              {(
+                [
+                  ['background', '背景'],
+                  ['surface', '面板'],
+                  ['text', '文字'],
+                  ['accent', '强调色']
+                ] as Array<[keyof ThemeColors, string]>
+              ).map(([key, label]) => (
+                <label className="theme-color-field" key={key}>
+                  <span>{label}</span>
+                  <span className="theme-color-field__control">
+                    <input
+                      type="color"
+                      value={customTheme[key]}
+                      onChange={(event) => updateCustomColor(key, event.target.value)}
+                      aria-label={`${label}颜色`}
+                    />
+                    <code>{customTheme[key]}</code>
+                  </span>
+                </label>
+              ))}
+              <button
+                type="button"
+                className="button button--soft custom-theme-editor__apply"
+                onClick={() => void applyCustomTheme()}
+              >
+                应用自定义配色
+              </button>
+            </div>
+            <div className="settings-inline-actions">
+              <span className="settings-hint">
+                自定义颜色仅保存在本地保险库中
+              </span>
+              <button className="text-button" onClick={() => void resetTheme()}>
+                <RotateCcw size={14} />
+                恢复默认主题
+              </button>
+            </div>
+          </section>
+
+          <section className="settings-section">
+            <div className="settings-section__heading">
+              <span className="settings-icon">
+                <RefreshCw size={18} />
+              </span>
+              <div>
+                <h3>界面比例</h3>
+                <p>按当前窗口调整界面缩放，默认 100%。</p>
+              </div>
+            </div>
+            <div className="scale-control">
+              <input
+                type="range"
+                min={INTERFACE_SCALE_MIN}
+                max={INTERFACE_SCALE_MAX}
+                step={INTERFACE_SCALE_STEP}
+                value={interfaceScale}
+                onChange={(event) => scheduleScaleSave(Number(event.target.value))}
+                aria-label="界面比例"
+              />
+              <strong>{interfaceScale}%</strong>
+            </div>
+            <div className="settings-inline-actions settings-inline-actions--between">
+              <span className="settings-hint">可在 80% 至 125% 之间调整</span>
+              <button className="text-button" onClick={() => void resetScale()}>
+                <RotateCcw size={14} />
+                恢复默认比例
+              </button>
+            </div>
+          </section>
+
           <section className="settings-section">
             <div className="settings-section__heading">
               <span className="settings-icon">
@@ -395,9 +585,9 @@ export function SettingsModal({
             </div>
             <button
               className="text-button text-button--inline"
-              onClick={() => void window.autologin.app.openFailureLog()}
+              onClick={onOpenFailureLogs}
             >
-              打开失败日志
+              查看失败日志
             </button>
           </section>
 

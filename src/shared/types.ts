@@ -1,6 +1,20 @@
 export const AUTO_LOCK_OPTIONS = [5, 10, 15, 30] as const
 export type AutoLockMinutes = (typeof AUTO_LOCK_OPTIONS)[number]
 
+export const THEME_PRESETS = ['warm', 'sage', 'ocean', 'rose'] as const
+export type ThemePreset = (typeof THEME_PRESETS)[number] | 'custom'
+
+export const INTERFACE_SCALE_MIN = 80
+export const INTERFACE_SCALE_MAX = 125
+export const INTERFACE_SCALE_STEP = 5
+
+export interface ThemeColors {
+  background: string
+  surface: string
+  text: string
+  accent: string
+}
+
 export type LoginStatus =
   | 'idle'
   | 'opening'
@@ -15,6 +29,21 @@ export type LoginMode = 'login' | 'record'
 
 export interface AppSettings {
   autoLockMinutes: AutoLockMinutes
+  themePreset: ThemePreset
+  customTheme: ThemeColors
+  interfaceScale: number
+}
+
+export type AppSettingsPatch = Partial<AppSettings>
+
+export interface FailureLogEntry {
+  timestamp: string
+  batchId: string
+  accountId: string
+  accountLabel: string
+  siteName: string
+  status: 'error' | 'timeout' | 'manual'
+  reason: string
 }
 
 export interface VaultStatus {
@@ -255,7 +284,7 @@ export interface AutologinApi {
   }
   settings: {
     get: () => Promise<AppSettings>
-    update: (settings: AppSettings) => Promise<AppSettings>
+    update: (settings: AppSettingsPatch) => Promise<AppSettings>
   }
   app: {
     getVersion: () => Promise<string>
@@ -267,6 +296,7 @@ export interface AutologinApi {
     chooseDataLocation: () => Promise<DataLocationInfo | null>
     openDataLocation: () => Promise<void>
     openFailureLog: () => Promise<void>
+    listFailureLogs: () => Promise<FailureLogEntry[]>
     restart: () => Promise<void>
     reportActivity: () => void
     clearAllData: () => Promise<void>

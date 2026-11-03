@@ -6,7 +6,7 @@ import type { IpcMainEvent, IpcMainInvokeEvent } from 'electron'
 import {
   accountCreateInputSchema,
   accountUpdateInputSchema,
-  appSettingsSchema,
+  appSettingsPatchSchema,
   changePasswordSchema,
   loginBatchStartSchema,
   loginStartSchema,
@@ -18,6 +18,7 @@ import type {
   AboutInfo,
   AppSettings,
   DataLocationInfo,
+  FailureLogEntry,
   LoginMode,
   LoginBatchState,
   LoginViewState,
@@ -28,7 +29,7 @@ import type {
   VaultStatus
 } from '@shared/types'
 import { migrateDataDirectory, readDataDirectory } from './data-location'
-import { failureLogPath, LoginBatchManager } from './login-batch'
+import { failureLogPath, LoginBatchManager, readFailureLogs } from './login-batch'
 import { clearManagedSessionDirectories, LoginSessionManager } from './login-session'
 import {
   discoverManagedBrowserProfileIds,
@@ -138,6 +139,10 @@ function createWindow(): void {
     window.show()
   })
 
+  if (vault?.status().unlocked) {
+    applyInterfaceScale(vault.getSettings().interfaceScale)
+  }
+
   window.on('closed', () => {
     void closeLoginManagers()
     mainWindow = null
@@ -221,6 +226,7 @@ function registerIpc(): void {
     const status = await vault.create(parsed.data)
     sessionIndex.replace([])
     ensureLoginManagers()
+    applyInterfaceScale(vault.getSettings().interfaceScale)
     return status
   })
   ipcMain.handle('vault:unlock', async (event, password: unknown) => {
@@ -232,6 +238,7 @@ function registerIpc(): void {
     const status = await vault.unlock(parsed.data)
     sessionIndex.replace(vault.requireData().accounts.map((account) => account.id))
     ensureLoginManagers()
+    applyInterfaceScale(vault.getSettings().interfaceScale)
     return status
   })
   ipcMain.handle('vault:lock', (event) => {
@@ -419,11 +426,13 @@ function registerIpc(): void {
   })
   ipcMain.handle('settings:update', (event, payload: unknown) => {
     assertTrustedSender(event)
-    const parsed = appSettingsSchema.safeParse(payload)
+    const parsed = appSettingsPatchSchema.safeParse(payload)
     if (!parsed.success) {
       throw new Error(firstIssue(parsed.error))
     }
-    return vault.updateSettings(parsed.data as AppSettings)
+    const settings = vault.updateSettings(parsed.data)
+    applyInterfaceScale(settings.interfaceScale)
+    return settings
   })
 
   ipcMain.handle('app:get-version', (event) => {
@@ -489,6 +498,10 @@ function registerIpc(): void {
     if (error) {
       throw new Error(`无法打开失败日志：${error}`)
     }
+  })
+  ipcMain.handle('app:list-failure-logs', (event): FailureLogEntry[] => {
+    assertTrustedSender(event)
+    return readFailureLogs(dataDirectory)
   })
   ipcMain.handle('app:restart', async (event) => {
     assertTrustedSender(event)
@@ -912,6 +925,13 @@ function sendToRenderer(channel: string, payload?: unknown): void {
   if (mainWindow && !mainWindow.isDestroyed()) {
     mainWindow.webContents.send(channel, payload)
   }
+}
+
+function applyInterfaceScale(interfaceScale: number): void {
+  if (!mainWindow || mainWindow.isDestroyed()) {
+    return
+  }
+  mainWindow.webContents.setZoomFactor(Math.min(1.25, Math.max(0.8, interfaceScale / 100)))
 }
 
 function requireId(value: unknown): string {

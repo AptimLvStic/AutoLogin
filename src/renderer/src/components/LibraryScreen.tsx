@@ -2,12 +2,16 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import {
   ArrowRight,
   ArrowUpRight,
+  ChevronDown,
+  ChevronRight,
   Clock3,
   Globe2,
   KeyRound,
   Layers3,
   LoaderCircle,
   LockKeyhole,
+  PanelRightOpen,
+  Pencil,
   Plus,
   Search,
   Settings,
@@ -20,6 +24,7 @@ import { AccountForm } from './AccountForm'
 import { BatchLoginModal } from './BatchLoginModal'
 import { BrandMark } from './Brand'
 import { DetailsDrawer } from './DetailsDrawer'
+import { FailureLogModal } from './FailureLogModal'
 import { SettingsModal } from './SettingsModal'
 
 type Filter = 'all' | 'favorites' | `site:${string}`
@@ -58,6 +63,8 @@ export function LibraryScreen({
   >(null)
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [batchOpen, setBatchOpen] = useState(false)
+  const [logsOpen, setLogsOpen] = useState(false)
+  const [allAccountsExpanded, setAllAccountsExpanded] = useState(true)
 
   const accountSites = useMemo(() => {
     const counts = new Map<string, number>()
@@ -146,7 +153,7 @@ export function LibraryScreen({
 
   function handleSaved(account: AccountWithSite, message: string): void {
     setFormState(null)
-    setSelectedId(account.id)
+    setSelectedId(null)
     void onRefresh()
     notify('success', message)
   }
@@ -159,13 +166,54 @@ export function LibraryScreen({
         <nav className="sidebar-nav" aria-label="账号筛选">
           <span className="sidebar-label">工作台</span>
           <button
-            className={`sidebar-nav__item${filter === 'all' ? ' is-active' : ''}`}
-            onClick={() => setFilter('all')}
+            className={`sidebar-nav__item sidebar-nav__item--expandable${
+              filter === 'all' ? ' is-active' : ''
+            }`}
+            onClick={() => {
+              setFilter('all')
+              setAllAccountsExpanded((value) => !value)
+            }}
+            aria-expanded={allAccountsExpanded}
           >
             <KeyRound size={17} />
             <span>全部账号</span>
             <small>{accounts.length}</small>
+            {allAccountsExpanded ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
           </button>
+
+          {allAccountsExpanded && (
+            <div className="sidebar-submenu" aria-label="站点分组">
+              {groupedSites.length === 0 ? (
+                <span className="sidebar-submenu__empty">暂无站点分组</span>
+              ) : (
+                groupedSites.map(([group, groupEntries]) => (
+                  <div className="sidebar-site-group" key={group}>
+                    <div className="sidebar-site-group__heading">
+                      <Layers3 size={12} />
+                      <span>{group}</span>
+                    </div>
+                    {groupEntries.map(({ site, count }) => (
+                      <button
+                        key={site.id}
+                        className={`sidebar-site${filter === `site:${site.id}` ? ' is-active' : ''}`}
+                        onClick={() => setFilter(`site:${site.id}`)}
+                      >
+                        <span className={`monogram monogram--small ${toneClass(site.id)}`}>
+                          {site.name.slice(0, 1).toUpperCase()}
+                        </span>
+                        <span>
+                          <strong>{site.name}</strong>
+                          <small>{safeHostname(site.startUrl)}</small>
+                        </span>
+                        <em>{count}</em>
+                      </button>
+                    ))}
+                  </div>
+                ))
+              )}
+            </div>
+          )}
+
           <button
             className={`sidebar-nav__item${filter === 'favorites' ? ' is-active' : ''}`}
             onClick={() => setFilter('favorites')}
@@ -174,40 +222,11 @@ export function LibraryScreen({
             <span>收藏</span>
             <small>{accounts.filter((account) => account.favorite).length}</small>
           </button>
+          <button className="sidebar-nav__item" onClick={() => setSettingsOpen(true)}>
+            <Settings size={17} />
+            <span>设置</span>
+          </button>
         </nav>
-
-        <div className="sidebar-sites">
-          <div className="sidebar-label-row">
-            <span className="sidebar-label">站点</span>
-            <span>{accountSites.length}</span>
-          </div>
-          <div className="sidebar-sites__list">
-            {groupedSites.map(([group, groupEntries]) => (
-              <div className="sidebar-site-group" key={group}>
-                <div className="sidebar-site-group__heading">
-                  <Layers3 size={12} />
-                  <span>{group}</span>
-                </div>
-                {groupEntries.map(({ site, count }) => (
-                  <button
-                    key={site.id}
-                    className={`sidebar-site${filter === `site:${site.id}` ? ' is-active' : ''}`}
-                    onClick={() => setFilter(`site:${site.id}`)}
-                  >
-                    <span className={`monogram monogram--small ${toneClass(site.id)}`}>
-                      {site.name.slice(0, 1).toUpperCase()}
-                    </span>
-                    <span>
-                      <strong>{site.name}</strong>
-                      <small>{safeHostname(site.startUrl)}</small>
-                    </span>
-                    <em>{count}</em>
-                  </button>
-                ))}
-              </div>
-            ))}
-          </div>
-        </div>
 
         <div className="sidebar-bottom">
           <div className="vault-indicator">
@@ -218,10 +237,6 @@ export function LibraryScreen({
             </div>
           </div>
           <div className="sidebar-actions">
-            <button className="sidebar-action" onClick={() => setSettingsOpen(true)}>
-              <Settings size={17} />
-              设置
-            </button>
             <button className="sidebar-action" onClick={() => void onLock()}>
               <LockKeyhole size={17} />
               立即锁定
@@ -243,12 +258,13 @@ export function LibraryScreen({
           </div>
           <div className="library-header__actions">
             {batchState && batchState.total > 0 && (
-              <div
+              <button
+                type="button"
                 className={`batch-status${batchState.active ? ' is-active' : ''}${
                   batchState.failed > 0 ? ' has-failures' : ''
                 }`}
-                role="status"
-                aria-live="polite"
+                onClick={() => setLogsOpen(true)}
+                aria-label="查看批量登录失败日志"
               >
                 {batchState.active ? (
                   <LoaderCircle size={14} className="spin" />
@@ -259,7 +275,7 @@ export function LibraryScreen({
                   成功 {batchState.success} / 失败 {batchState.failed}
                   {batchState.manual > 0 ? ` · 待处理 ${batchState.manual}` : ''}
                 </span>
-              </div>
+              </button>
             )}
             <button
               className="button button--ghost"
@@ -338,7 +354,7 @@ export function LibraryScreen({
               className={`account-row${selectedId === account.id ? ' is-selected' : ''}`}
               key={account.id}
               style={{ '--row-index': index } as React.CSSProperties}
-              onClick={() => setSelectedId(account.id)}
+              onClick={() => setFormState({ mode: 'edit', account })}
             >
               <div className="account-identity">
                 <span className={`monogram ${toneClass(account.siteId)}`}>
@@ -377,6 +393,26 @@ export function LibraryScreen({
                   aria-label={account.favorite ? '取消收藏' : '收藏'}
                 >
                   <Star size={15} fill={account.favorite ? 'currentColor' : 'none'} />
+                </button>
+                <button
+                  className="icon-button icon-button--small"
+                  onClick={(event) => {
+                    event.stopPropagation()
+                    setSelectedId(account.id)
+                  }}
+                  aria-label="账号详情"
+                >
+                  <PanelRightOpen size={15} />
+                </button>
+                <button
+                  className="row-edit-button"
+                  onClick={(event) => {
+                    event.stopPropagation()
+                    setFormState({ mode: 'edit', account })
+                  }}
+                >
+                  编辑
+                  <Pencil size={14} />
                 </button>
                 <button
                   className="row-login-button"
@@ -473,13 +509,21 @@ export function LibraryScreen({
           settings={settings}
           appVersion={appVersion}
           onClose={() => setSettingsOpen(false)}
-          onSettingsChange={async (next) => {
-            await window.autologin.settings.update(next)
+          onSettingsChange={async (patch) => {
+            await window.autologin.settings.update(patch)
             await onRefresh()
+          }}
+          onOpenFailureLogs={() => {
+            setSettingsOpen(false)
+            setLogsOpen(true)
           }}
           onClearAllData={clearAllData}
           notify={notify}
         />
+      )}
+
+      {logsOpen && (
+        <FailureLogModal onClose={() => setLogsOpen(false)} notify={notify} />
       )}
     </div>
   )

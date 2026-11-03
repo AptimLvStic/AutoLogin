@@ -1,5 +1,10 @@
 import { z } from 'zod'
-import { AUTO_LOCK_OPTIONS } from './types'
+import {
+  AUTO_LOCK_OPTIONS,
+  INTERFACE_SCALE_MAX,
+  INTERFACE_SCALE_MIN,
+  THEME_PRESETS
+} from './types'
 
 const httpUrl = z
   .string()
@@ -99,14 +104,56 @@ export const storedAccountSchema = z.object({
   updatedAt: z.string()
 })
 
-export const appSettingsSchema = z.object({
-  autoLockMinutes: z.union([
-    z.literal(AUTO_LOCK_OPTIONS[0]),
-    z.literal(AUTO_LOCK_OPTIONS[1]),
-    z.literal(AUTO_LOCK_OPTIONS[2]),
-    z.literal(AUTO_LOCK_OPTIONS[3])
-  ])
+const hexColorSchema = z.string().regex(/^#[0-9a-fA-F]{6}$/, '颜色必须是六位十六进制值')
+
+export const themeColorsSchema = z.object({
+  background: hexColorSchema,
+  surface: hexColorSchema,
+  text: hexColorSchema,
+  accent: hexColorSchema
 })
+
+const autoLockMinutesSchema = z.union([
+  z.literal(AUTO_LOCK_OPTIONS[0]),
+  z.literal(AUTO_LOCK_OPTIONS[1]),
+  z.literal(AUTO_LOCK_OPTIONS[2]),
+  z.literal(AUTO_LOCK_OPTIONS[3])
+])
+
+const themePresetSchema = z.enum([...THEME_PRESETS, 'custom'])
+
+const interfaceScaleSchema = z
+  .number()
+  .int()
+  .min(INTERFACE_SCALE_MIN)
+  .max(INTERFACE_SCALE_MAX)
+  .multipleOf(5)
+
+const defaultThemeColors = {
+  background: '#F4F1EA',
+  surface: '#FBF9F4',
+  text: '#1C2521',
+  accent: '#0E7567'
+}
+
+export const appSettingsSchema = z.object({
+  autoLockMinutes: autoLockMinutesSchema.default(10),
+  themePreset: themePresetSchema.default('warm'),
+  customTheme: themeColorsSchema.default(defaultThemeColors),
+  interfaceScale: interfaceScaleSchema.default(100)
+})
+
+export const appSettingsPatchSchema = z
+  .object({
+    autoLockMinutes: autoLockMinutesSchema.optional(),
+    themePreset: themePresetSchema.optional(),
+    customTheme: themeColorsSchema.optional(),
+    interfaceScale: interfaceScaleSchema.optional()
+  })
+  .strict()
+  .refine((value) => Object.keys(value).length > 0, {
+    message: '至少需要更新一项设置'
+  })
 
 export const vaultDataSchema = z.object({
   schemaVersion: z.literal(1),

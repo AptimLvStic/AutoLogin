@@ -35,4 +35,4 @@ AutoLogin v0.3.0 完成无边框窗口、日志管理、站点编辑、录制流
 - 所有目标网站仍通过 Windows 默认的 Google Chrome 或 Microsoft Edge 打开，不在 AutoLogin 内嵌网页。
 - AutoLogin 不绕过验证码、短信验证、2FA 或第三方风控。
 - “检查更新”仅读取 GitHub Releases，不自动下载或安装更新。
-- 当前 GitHub 仓库如保持私有，未携带访问凭据的安装包无法使用在线检查更新。
+- “检查更新”依赖 GitHub API 的网络可用性和匿名请求速率额度。

@@ -1,7 +1,7 @@
 import { spawn, type ChildProcess } from 'node:child_process'
 import { existsSync, mkdirSync, readFileSync, rmSync } from 'node:fs'
 import { join } from 'node:path'
-import type { RecipeStep } from '@shared/types'
+import type { ProxySettings, RecipeStep } from '@shared/types'
 import { isHttpUrl } from '@shared/url'
 import pageAgentSource from 'virtual:page-agent-source'
 import type { DefaultBrowser } from './browser-discovery'
@@ -45,6 +45,7 @@ export interface ExternalBrowserHostOptions {
   browser: DefaultBrowser
   profileDirectory: string
   headless: boolean
+  proxy?: ProxySettings
 }
 
 interface ExternalBrowserPageOptions {
@@ -142,6 +143,7 @@ export class ExternalBrowserHost {
       '--disable-background-timer-throttling',
       '--disable-backgrounding-occluded-windows',
       '--disable-renderer-backgrounding',
+      ...proxyArguments(options.proxy),
       ...(options.headless ? ['--headless=new', '--disable-gpu'] : []),
       '--new-window',
       'about:blank'
@@ -711,6 +713,21 @@ export class ExternalBrowserPage {
     }
     return this.client
   }
+}
+
+function proxyArguments(proxy: ProxySettings | undefined): string[] {
+  if (!proxy?.enabled || !proxy.host.trim()) {
+    return []
+  }
+  const bypass = proxy.bypassList
+    .split(/[;,]/)
+    .map((entry) => entry.trim())
+    .filter(Boolean)
+    .join(';')
+  return [
+    `--proxy-server=${proxy.protocol}://${proxy.host.trim()}:${proxy.port}`,
+    ...(bypass ? [`--proxy-bypass-list=${bypass}`] : [])
+  ]
 }
 
 function waitForExit(child: ChildProcess, timeoutMilliseconds: number): Promise<boolean> {

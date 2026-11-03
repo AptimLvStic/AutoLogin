@@ -10,8 +10,11 @@ import {
   changePasswordSchema,
   favoriteGroupInputSchema,
   loginBatchStartSchema,
+  loginLogDeleteSchema,
+  loginLogQuerySchema,
   loginStartSchema,
   masterPasswordSchema,
+  proxyTestInputSchema,
   siteInputSchema
 } from '@shared/schemas'
 import type {
@@ -20,17 +23,26 @@ import type {
   AppSettings,
   DataLocationInfo,
   LoginLogEntry,
+  LoginLogDeleteResult,
+  LoginLogQuery,
   LoginMode,
   LoginBatchState,
   LoginViewState,
   PasswordReveal,
+  ProxySettings,
+  ProxyTestResult,
   Site,
   SiteInput,
   UpdateCheckResult,
   VaultStatus
 } from '@shared/types'
 import { migrateDataDirectory, readDataDirectory } from './data-location'
-import { failureLogPath, LoginBatchManager, readLoginLogs } from './login-batch'
+import {
+  deleteLoginLogs,
+  failureLogPath,
+  LoginBatchManager,
+  readLoginLogs
+} from './login-batch'
 import { clearManagedSessionDirectories, LoginSessionManager } from './login-session'
 import {
   discoverManagedBrowserProfileIds,
@@ -120,6 +132,8 @@ function createWindow(): void {
     minWidth: 960,
     minHeight: 640,
     show: false,
+    frame: false,
+    thickFrame: true,
     backgroundColor: '#f4f1ea',
     title: 'AutoLogin',
     autoHideMenuBar: true,
@@ -148,6 +162,14 @@ function createWindow(): void {
     void closeLoginManagers()
     mainWindow = null
   })
+
+  const publishMaximizedState = (): void => {
+    if (!window.isDestroyed()) {
+      window.webContents.send('window:maximized-change', window.isMaximized())
+    }
+  }
+  window.on('maximize', publishMaximizedState)
+  window.on('unmaximize', publishMaximizedState)
 
   window.webContents.on('will-navigate', (event) => {
     event.preventDefault()
@@ -228,6 +250,7 @@ function registerIpc(): void {
     sessionIndex.replace([])
     ensureLoginManagers()
     applyInterfaceScale(vault.getSettings().interfaceScale)
+    await applySystemProxy(vault.getSettings().proxy)
     return status
   })
   ipcMain.handle('vault:unlock', async (event, password: unknown) => {
@@ -240,6 +263,7 @@ function registerIpc(): void {
     sessionIndex.replace(vault.requireData().accounts.map((account) => account.id))
     ensureLoginManagers()
     applyInterfaceScale(vault.getSettings().interfaceScale)
+    await applySystemProxy(vault.getSettings().proxy)
     return status
   })
   ipcMain.handle('vault:lock', (event) => {
@@ -320,6 +344,19 @@ function registerIpc(): void {
       throw new Error(firstIssue(parsed.error))
     }
     return updateAccount(id, parsed.data)
+  })
+  ipcMain.handle(
+    'accounts:set-active-recipe',
+    (event, accountId: unknown, recipeId: unknown) => {
+      assertTrustedSender(event)
+      const id = requireId(accountId)
+      const nextRecipeId = recipeId === undefined ? undefined : requireId(recipeId)
+      return setActiveAccountRecipe(id, nextRecipeId)
+    }
+  )
+  ipcMain.handle('accounts:delete-recipe', (event, accountId: unknown, recipeId: unknown) => {
+    assertTrustedSender(event)
+    return deleteAccountRecipe(requireId(accountId), requireId(recipeId))
   })
   ipcMain.handle('accounts:delete', async (event, accountId: unknown) => {
     assertTrustedSender(event)
@@ -446,7 +483,7 @@ function registerIpc(): void {
     assertTrustedSender(event)
     return vault.getSettings()
   })
-  ipcMain.handle('settings:update', (event, payload: unknown) => {
+  ipcMain.handle('settings:update', async (event, payload: unknown) => {
     assertTrustedSender(event)
     const parsed = appSettingsPatchSchema.safeParse(payload)
     if (!parsed.success) {
@@ -454,7 +491,38 @@ function registerIpc(): void {
     }
     const settings = vault.updateSettings(parsed.data)
     applyInterfaceScale(settings.interfaceScale)
+    await applySystemProxy(settings.proxy)
     return settings
+  })
+  ipcMain.handle('network:test-proxy', async (event, payload: unknown): Promise<ProxyTestResult> => {
+    assertTrustedSender(event)
+    const parsed = proxyTestInputSchema.safeParse(payload)
+    if (!parsed.success) {
+      throw new Error(firstIssue(parsed.error))
+    }
+    return testProxy(parsed.data)
+  })
+
+  ipcMain.handle('window:minimize', (event) => {
+    assertTrustedSender(event)
+    mainWindow?.minimize()
+  })
+  ipcMain.handle('window:toggle-maximize', (event) => {
+    assertTrustedSender(event)
+    if (!mainWindow) return
+    if (mainWindow.isMaximized()) {
+      mainWindow.unmaximize()
+    } else {
+      mainWindow.maximize()
+    }
+  })
+  ipcMain.handle('window:close', (event) => {
+    assertTrustedSender(event)
+    mainWindow?.close()
+  })
+  ipcMain.handle('window:get-state', (event) => {
+    assertTrustedSender(event)
+    return { maximized: mainWindow?.isMaximized() ?? false }
   })
 
   ipcMain.handle('app:get-version', (event) => {
@@ -521,13 +589,25 @@ function registerIpc(): void {
       throw new Error(`无法打开失败日志：${error}`)
     }
   })
-  ipcMain.handle('app:list-login-logs', (event): LoginLogEntry[] => {
+  ipcMain.handle('app:list-login-logs', (event, payload: unknown): LoginLogEntry[] => {
     assertTrustedSender(event)
-    return readLoginLogs(dataDirectory, 1000)
+    const parsed = loginLogQuerySchema.safeParse(payload)
+    if (!parsed.success) {
+      throw new Error(firstIssue(parsed.error))
+    }
+    return readLoginLogs(dataDirectory, parsed.data ?? {}, 1000)
   })
   ipcMain.handle('app:list-failure-logs', (event): LoginLogEntry[] => {
     assertTrustedSender(event)
-    return readLoginLogs(dataDirectory, 1000)
+    return readLoginLogs(dataDirectory, {}, 1000)
+  })
+  ipcMain.handle('app:delete-login-logs', (event, payload: unknown): LoginLogDeleteResult => {
+    assertTrustedSender(event)
+    const parsed = loginLogDeleteSchema.safeParse(payload)
+    if (!parsed.success) {
+      throw new Error(firstIssue(parsed.error))
+    }
+    return { deleted: deleteLoginLogs(dataDirectory, parsed.data) }
   })
   ipcMain.handle('app:restart', async (event) => {
     assertTrustedSender(event)
@@ -594,6 +674,15 @@ function saveSite(input: SiteInput): Site {
   const now = new Date().toISOString()
   const startUrl = normalizeUrl(input.startUrl)
   const startOrigin = new URL(startUrl).origin
+  const requestedName = input.name.trim()
+  const normalizedName = normalizeSiteName(requestedName)
+  const duplicate = data.sites.find(
+    (site) =>
+      site.id !== input.id && normalizeSiteName(site.name) === normalizedName
+  )
+  if (duplicate) {
+    throw new Error('站点名称已存在，请使用其他名称')
+  }
   const allowedOrigins = [
     ...new Set(
       [startOrigin, ...(input.allowedOrigins ?? [])]
@@ -607,19 +696,28 @@ function saveSite(input: SiteInput): Site {
     if (!existing) {
       throw new Error('站点不存在')
     }
-    existing.name = input.name.trim()
+    const previousName = existing.name
+    existing.name = requestedName
     existing.startUrl = startUrl
     existing.allowedOrigins = allowedOrigins
     existing.autoSubmit = input.autoSubmit
     existing.group = input.group?.trim() || undefined
     existing.updatedAt = now
+    if (previousName !== requestedName) {
+      for (const account of data.accounts) {
+        if (account.siteId === existing.id) {
+          account.label = requestedName
+          account.updatedAt = now
+        }
+      }
+    }
     vault.save()
     return structuredClone(existing)
   }
 
   const site: Site = {
     id: randomUUID(),
-    name: input.name.trim(),
+    name: requestedName,
     startUrl,
     allowedOrigins,
     autoSubmit: input.autoSubmit,
@@ -648,7 +746,7 @@ function createAccount(input: {
   data.accounts.push({
     id: randomUUID(),
     siteId: site.id,
-    label: input.label.trim(),
+    label: site.name,
     username: input.username.trim(),
     password: input.password,
     favorite: input.favorite ?? false,
@@ -667,6 +765,7 @@ function updateAccount(
     username?: string
     password?: string
     favorite?: boolean
+    activeRecipeId?: string
   }
 ): AccountWithSite {
   const data = vault.requireData()
@@ -682,6 +781,15 @@ function updateAccount(
   if (patch.username !== undefined) account.username = patch.username.trim()
   if (patch.password !== undefined) account.password = patch.password
   if (patch.favorite !== undefined) account.favorite = patch.favorite
+  if (patch.activeRecipeId !== undefined) {
+    if (
+      patch.activeRecipeId &&
+      !(account.recipes ?? []).some((recipe) => recipe.id === patch.activeRecipeId)
+    ) {
+      throw new Error('录制流程不存在')
+    }
+    account.activeRecipeId = patch.activeRecipeId || undefined
+  }
   account.updatedAt = new Date().toISOString()
   vault.save()
   return toPublicAccount(account, site)
@@ -706,11 +814,58 @@ function toPublicAccount(
     label: account.label,
     username: account.username,
     favorite: account.favorite,
+    recipes: structuredClone(account.recipes ?? []),
+    activeRecipeId: account.activeRecipeId,
     lastUsedAt: account.lastUsedAt,
     createdAt: account.createdAt,
     updatedAt: account.updatedAt,
     site: structuredClone(site)
   }
+}
+
+function setActiveAccountRecipe(
+  accountId: string,
+  recipeId: string | undefined
+): AccountWithSite {
+  const data = vault.requireData()
+  const account = data.accounts.find((entry) => entry.id === accountId)
+  if (!account) {
+    throw new Error('账号不存在')
+  }
+  if (recipeId && !(account.recipes ?? []).some((recipe) => recipe.id === recipeId)) {
+    throw new Error('录制流程不存在')
+  }
+  account.activeRecipeId = recipeId
+  account.updatedAt = new Date().toISOString()
+  vault.save()
+  const site = data.sites.find((entry) => entry.id === account.siteId)
+  if (!site) {
+    throw new Error('站点不存在')
+  }
+  return toPublicAccount(account, site)
+}
+
+function deleteAccountRecipe(accountId: string, recipeId: string): AccountWithSite {
+  const data = vault.requireData()
+  const account = data.accounts.find((entry) => entry.id === accountId)
+  if (!account) {
+    throw new Error('账号不存在')
+  }
+  const recipes = account.recipes ?? []
+  if (!recipes.some((recipe) => recipe.id === recipeId)) {
+    throw new Error('录制流程不存在')
+  }
+  account.recipes = recipes.filter((recipe) => recipe.id !== recipeId)
+  if (account.activeRecipeId === recipeId) {
+    account.activeRecipeId = account.recipes[0]?.id
+  }
+  account.updatedAt = new Date().toISOString()
+  vault.save()
+  const site = data.sites.find((entry) => entry.id === account.siteId)
+  if (!site) {
+    throw new Error('站点不存在')
+  }
+  return toPublicAccount(account, site)
 }
 
 async function copySecret(value: string): Promise<void> {
@@ -990,6 +1145,75 @@ function normalizeOrigin(value: string): string | null {
     return url.protocol === 'http:' || url.protocol === 'https:' ? url.origin : null
   } catch {
     return null
+  }
+}
+
+function normalizeSiteName(value: string): string {
+  return value.trim().toLocaleLowerCase()
+}
+
+async function applySystemProxy(proxy: ProxySettings): Promise<void> {
+  if (proxy.enabled && proxy.host.trim()) {
+    await session.defaultSession.setProxy({
+      mode: 'fixed_servers',
+      proxyRules: `${proxy.protocol}://${proxy.host.trim()}:${proxy.port}`,
+      proxyBypassRules: proxy.bypassList
+    })
+  } else {
+    await session.defaultSession.setProxy({ mode: 'direct' })
+  }
+  await session.defaultSession.closeAllConnections()
+}
+
+async function testProxy(settings: ProxySettings): Promise<ProxyTestResult> {
+  if (!settings.enabled) {
+    return { ok: false, message: '请先启用代理配置' }
+  }
+  if (!settings.host.trim()) {
+    return { ok: false, message: '请输入代理服务器地址' }
+  }
+
+  const testSession = session.fromPartition(`autologin-proxy-test-${randomUUID()}`)
+  const controller = new AbortController()
+  const timer = setTimeout(() => controller.abort(), 8_000)
+  const startedAt = Date.now()
+  try {
+    await testSession.setProxy({
+      mode: 'fixed_servers',
+      proxyRules: `${settings.protocol}://${settings.host.trim()}:${settings.port}`,
+      proxyBypassRules: settings.bypassList
+    })
+    const response = await testSession.fetch('https://api.github.com/zen', {
+      headers: {
+        Accept: 'text/plain',
+        'User-Agent': `AutoLogin/${app.getVersion()}`
+      },
+      signal: controller.signal
+    })
+    const latencyMs = Date.now() - startedAt
+    if (!response.ok) {
+      return {
+        ok: false,
+        latencyMs,
+        message: `代理已连接，但测试请求返回 HTTP ${response.status}`
+      }
+    }
+    return {
+      ok: true,
+      latencyMs,
+      message: `代理连接正常，延迟 ${latencyMs} ms`
+    }
+  } catch (error) {
+    const message =
+      error instanceof Error && error.name === 'AbortError'
+        ? '代理连接超时'
+        : error instanceof Error
+          ? `代理连接失败：${error.message}`
+          : '代理连接失败'
+    return { ok: false, message }
+  } finally {
+    clearTimeout(timer)
+    await testSession.closeAllConnections().catch(() => undefined)
   }
 }
 

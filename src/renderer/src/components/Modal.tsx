@@ -1,4 +1,5 @@
 import { useEffect, useId, useRef } from 'react'
+import { createPortal } from 'react-dom'
 import { X } from 'lucide-react'
 import { useI18n } from '../i18n'
 
@@ -61,7 +62,7 @@ export function Modal({
     }
   }, [onClose])
 
-  return (
+  return createPortal(
     <div className="modal-layer" role="presentation">
       <button
         className="modal-backdrop"
@@ -91,7 +92,8 @@ export function Modal({
         </header>
         {children}
       </div>
-    </div>
+    </div>,
+    document.body
   )
 }
 

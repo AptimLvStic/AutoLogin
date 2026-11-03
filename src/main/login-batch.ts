@@ -1,4 +1,12 @@
-import { appendFileSync, mkdirSync, readFileSync, rmSync, statSync } from 'node:fs'
+import {
+  appendFileSync,
+  mkdirSync,
+  readFileSync,
+  renameSync,
+  rmSync,
+  statSync,
+  writeFileSync
+} from 'node:fs'
 import { join } from 'node:path'
 import { randomUUID } from 'node:crypto'
 import type {
@@ -7,7 +15,8 @@ import type {
   LoginBatchState,
   LoginStatus,
   LoginViewState,
-  LoginLogEntry
+  LoginLogEntry,
+  LoginLogQuery
 } from '@shared/types'
 import {
   clearManagedSessionDirectories,
@@ -73,7 +82,8 @@ export class LoginBatchManager {
     this.host = await ExternalBrowserHost.launch({
       browser: browserInfo,
       profileDirectory: browserProfileDirectory(this.userDataPath, 'batch'),
-      headless: this.headlessBrowser
+      headless: this.headlessBrowser,
+      proxy: this.vault.getSettings().proxy
     })
 
     const startedAt = new Date().toISOString()
@@ -91,6 +101,7 @@ export class LoginBatchManager {
       startedAt,
       items: accounts.map(({ account, site }) => ({
         accountId: account.id,
+        siteId: site.id,
         accountLabel: account.label,
         siteName: site.name,
         groupName: site.group?.trim() || '未分组',
@@ -288,9 +299,11 @@ export class LoginBatchManager {
     this.loggedResults.add(key)
 
     const entry: LoginLogEntry = {
+      id: randomUUID(),
       timestamp: new Date().toISOString(),
       batchId: this.state?.batchId ?? '',
       accountId: item.accountId,
+      siteId: item.siteId,
       accountLabel: item.accountLabel,
       siteName: item.siteName,
       groupName: item.groupName,
@@ -371,7 +384,11 @@ export function failureLogPath(userDataPath: string): string {
   return join(userDataPath, 'logs', 'login-failures.jsonl')
 }
 
-export function readLoginLogs(userDataPath: string, limit = 1000): LoginLogEntry[] {
+export function readLoginLogs(
+  userDataPath: string,
+  query: LoginLogQuery = {},
+  limit = 1000
+): LoginLogEntry[] {
   const path = failureLogPath(userDataPath)
   let content = ''
   try {
@@ -380,47 +397,144 @@ export function readLoginLogs(userDataPath: string, limit = 1000): LoginLogEntry
     return []
   }
 
-  const entries: LoginLogEntry[] = []
-  for (const line of content.split(/\r?\n/)) {
-    if (!line.trim()) continue
-    try {
-      const value = JSON.parse(line) as Partial<LoginLogEntry>
-      if (
-        typeof value.timestamp !== 'string' ||
-        typeof value.batchId !== 'string' ||
-        typeof value.accountId !== 'string' ||
-        typeof value.accountLabel !== 'string' ||
-        typeof value.siteName !== 'string' ||
-        !['success', 'error', 'timeout', 'manual'].includes(value.status ?? '') ||
-        typeof value.reason !== 'string'
-      ) {
-        continue
-      }
-      entries.push({
-        timestamp: value.timestamp,
-        batchId: value.batchId.slice(0, 128),
-        accountId: value.accountId.slice(0, 128),
-        accountLabel: value.accountLabel.slice(0, 80),
-        siteName: value.siteName.slice(0, 80),
-        groupName:
-          typeof value.groupName === 'string' && value.groupName.trim()
-            ? value.groupName.trim().slice(0, 40)
-            : '未分组',
-        status: value.status as LoginLogEntry['status'],
-        reason: sanitizeLoginReason(
-          value.reason,
-          value.status === 'success' ? '登录成功' : '登录失败'
-        )
-      })
-    } catch {
-      // A malformed line must not hide the remaining valid records.
+  const querySiteName = normalizeFilter(query.siteName)
+  const queryGroup = normalizeFilter(query.groupName)
+  const entries = parseLoginLogLines(content).filter((entry) => {
+    if (query.date && localDateKey(entry.timestamp) !== query.date) return false
+    if (query.siteId && entry.siteId !== query.siteId) {
+      if (!querySiteName || entry.siteName !== querySiteName) return false
     }
-  }
+    if (querySiteName && entry.siteName !== querySiteName) return false
+    if (queryGroup && entry.groupName !== queryGroup) return false
+    if (query.status && entry.status !== query.status) return false
+    return true
+  })
   return entries.slice(-Math.max(1, Math.min(limit, 1000))).reverse()
 }
 
 export function readFailureLogs(userDataPath: string, limit = 200): LoginLogEntry[] {
-  return readLoginLogs(userDataPath, limit).filter((entry) => entry.status !== 'success')
+  return readLoginLogs(userDataPath, {}, limit).filter((entry) => entry.status !== 'success')
+}
+
+export function deleteLoginLogs(userDataPath: string, ids: string[]): number {
+  const path = failureLogPath(userDataPath)
+  let content = ''
+  try {
+    content = readFileSync(path, 'utf8')
+  } catch {
+    return 0
+  }
+
+  const idSet = new Set(ids)
+  const lines = content.split(/\r?\n/)
+  const kept: string[] = []
+  let deleted = 0
+  for (const line of lines) {
+    if (!line.trim()) {
+      continue
+    }
+    const entry = parseLoginLogLine(line)
+    if (entry && idSet.has(entry.id)) {
+      deleted += 1
+    } else {
+      kept.push(line)
+    }
+  }
+
+  if (deleted > 0) {
+    const tempPath = `${path}.${process.pid}.tmp`
+    writeFileSync(tempPath, kept.length > 0 ? `${kept.join('\n')}\n` : '', {
+      encoding: 'utf8',
+      mode: 0o600
+    })
+    renameSync(tempPath, path)
+  }
+  return deleted
+}
+
+function parseLoginLogLines(content: string): LoginLogEntry[] {
+  const entries: LoginLogEntry[] = []
+  for (const line of content.split(/\r?\n/)) {
+    const entry = parseLoginLogLine(line)
+    if (entry) entries.push(entry)
+  }
+  return entries
+}
+
+function parseLoginLogLine(line: string): LoginLogEntry | null {
+  if (!line.trim()) return null
+  try {
+    const value = JSON.parse(line) as Partial<LoginLogEntry>
+    if (
+      typeof value.timestamp !== 'string' ||
+      typeof value.batchId !== 'string' ||
+      typeof value.accountId !== 'string' ||
+      typeof value.accountLabel !== 'string' ||
+      typeof value.siteName !== 'string' ||
+      !['success', 'error', 'timeout', 'manual'].includes(value.status ?? '') ||
+      typeof value.reason !== 'string'
+    ) {
+      return null
+    }
+    const siteId =
+      typeof value.siteId === 'string' && value.siteId.trim()
+        ? value.siteId.slice(0, 128)
+        : ''
+    const fallbackId = [
+      value.timestamp,
+      value.batchId,
+      value.accountId,
+      siteId,
+      value.siteName
+    ].join(':')
+    return {
+      id:
+        typeof value.id === 'string' && value.id.trim()
+          ? value.id.slice(0, 256)
+          : `legacy-${stableHash(fallbackId)}`,
+      timestamp: value.timestamp,
+      batchId: value.batchId.slice(0, 128),
+      accountId: value.accountId.slice(0, 128),
+      siteId,
+      accountLabel: value.accountLabel.slice(0, 80),
+      siteName: value.siteName.slice(0, 80),
+      groupName:
+        typeof value.groupName === 'string' && value.groupName.trim()
+          ? value.groupName.trim().slice(0, 40)
+          : '未分组',
+      status: value.status as LoginLogEntry['status'],
+      reason: sanitizeLoginReason(
+        value.reason,
+        value.status === 'success' ? '登录成功' : '登录失败'
+      )
+    }
+  } catch {
+    return null
+  }
+}
+
+function normalizeFilter(value: string | undefined): string {
+  return value?.trim() ?? ''
+}
+
+function localDateKey(value: string): string {
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) return ''
+  const year = date.getFullYear()
+  const month = String(date.getMonth() + 1).padStart(2, '0')
+  const day = String(date.getDate()).padStart(2, '0')
+  return `${year}-${month}-${day}`
+}
+
+function stableHash(value: string): string {
+  let left = 0x811c9dc5
+  let right = 0x01000193
+  for (let index = 0; index < value.length; index += 1) {
+    const code = value.charCodeAt(index)
+    left = Math.imul(left ^ code, 0x01000193) >>> 0
+    right = Math.imul(right ^ code, 0x85ebca6b) >>> 0
+  }
+  return `${left.toString(16).padStart(8, '0')}${right.toString(16).padStart(8, '0')}`
 }
 
 function mapRunningStatus(status: LoginStatus): LoginBatchItemStatus | null {

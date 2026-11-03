@@ -5,6 +5,7 @@ import {
   COLOR_MODES,
   INTERFACE_SCALE_MAX,
   INTERFACE_SCALE_MIN,
+  PROXY_PROTOCOLS,
   THEME_PRESETS
 } from './types'
 
@@ -96,6 +97,12 @@ export const siteSchema = z.object({
   updatedAt: z.string()
 })
 
+export const accountRecipeSchema = z.object({
+  id: idSchema,
+  name: z.string().trim().min(1).max(60),
+  recipe: loginRecipeSchema
+})
+
 export const storedAccountSchema = z.object({
   id: idSchema,
   siteId: idSchema,
@@ -103,6 +110,8 @@ export const storedAccountSchema = z.object({
   username: z.string().max(320),
   password: z.string().max(2048),
   favorite: z.boolean(),
+  recipes: z.array(accountRecipeSchema).max(3).default([]),
+  activeRecipeId: idSchema.optional(),
   lastUsedAt: z.string().optional(),
   createdAt: z.string(),
   updatedAt: z.string()
@@ -135,6 +144,28 @@ const interfaceScaleSchema = z
   .max(INTERFACE_SCALE_MAX)
   .multipleOf(5)
 
+export const proxySettingsSchema = z
+  .object({
+    enabled: z.boolean(),
+    protocol: z.enum(PROXY_PROTOCOLS),
+    host: z.string().trim().max(255),
+    port: z.number().int().min(1).max(65535),
+    bypassList: z.string().trim().max(1000)
+  })
+  .superRefine((value, context) => {
+    if (value.enabled && !value.host) {
+      context.addIssue({ code: 'custom', path: ['host'], message: '请输入代理服务器地址' })
+    }
+  })
+
+const defaultProxySettings = {
+  enabled: false,
+  protocol: 'http' as const,
+  host: '',
+  port: 8080,
+  bypassList: 'localhost, 127.0.0.1, ::1'
+}
+
 const defaultThemeColors = {
   background: '#F4F1EA',
   surface: '#FBF9F4',
@@ -148,7 +179,8 @@ export const appSettingsSchema = z.object({
   language: languageSchema.default('zh-CN'),
   themePreset: themePresetSchema.default('warm'),
   customTheme: themeColorsSchema.default(defaultThemeColors),
-  interfaceScale: interfaceScaleSchema.default(100)
+  interfaceScale: interfaceScaleSchema.default(100),
+  proxy: proxySettingsSchema.default(defaultProxySettings)
 })
 
 export const appSettingsPatchSchema = z
@@ -158,7 +190,8 @@ export const appSettingsPatchSchema = z
     language: languageSchema.optional(),
     themePreset: themePresetSchema.optional(),
     customTheme: themeColorsSchema.optional(),
-    interfaceScale: interfaceScaleSchema.optional()
+    interfaceScale: interfaceScaleSchema.optional(),
+    proxy: proxySettingsSchema.optional()
   })
   .strict()
   .refine((value) => Object.keys(value).length > 0, {
@@ -196,7 +229,8 @@ export const accountUpdateInputSchema = z.object({
   label: z.string().trim().min(1).max(80).optional(),
   username: z.string().trim().min(1).max(320).optional(),
   password: z.string().min(1).max(2048).optional(),
-  favorite: z.boolean().optional()
+  favorite: z.boolean().optional(),
+  activeRecipeId: idSchema.optional()
 })
 
 export const loginStartSchema = z.object({
@@ -215,3 +249,22 @@ export const changePasswordSchema = z.object({
   currentPassword: z.string().min(1),
   nextPassword: masterPasswordSchema
 })
+
+export const loginLogQuerySchema = z
+  .object({
+    date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+    siteId: idSchema.optional(),
+    siteName: z.string().trim().max(80).optional(),
+    groupName: z.string().trim().max(40).optional(),
+    status: z.enum(['success', 'error', 'timeout', 'manual']).optional()
+  })
+  .strict()
+  .optional()
+
+export const loginLogDeleteSchema = z
+  .array(z.string().min(1).max(256))
+  .min(1)
+  .max(100)
+  .refine((ids) => new Set(ids).size === ids.length, { message: '日志标识不能重复' })
+
+export const proxyTestInputSchema = proxySettingsSchema

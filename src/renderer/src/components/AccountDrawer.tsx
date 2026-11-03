@@ -2,7 +2,6 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import {
   ArrowRight,
   Check,
-  ChevronDown,
   CirclePlay,
   Copy,
   Eye,
@@ -10,6 +9,7 @@ import {
   Globe2,
   KeyRound,
   Layers3,
+  ListChecks,
   LoaderCircle,
   RefreshCw,
   Star,
@@ -17,9 +17,9 @@ import {
   UserRound,
   X
 } from 'lucide-react'
-import type { AccountWithSite, Site } from '@shared/types'
+import type { AccountRecipe, AccountWithSite, Site } from '@shared/types'
 import { useI18n } from '../i18n'
-import { ConfirmDialog } from './Modal'
+import { ConfirmDialog, Modal } from './Modal'
 
 interface AccountDrawerProps {
   mode: 'create' | 'edit'
@@ -30,6 +30,7 @@ interface AccountDrawerProps {
   onSaved: (account: AccountWithSite, message: string) => void
   onDeleted: () => void
   onRecord?: () => void
+  onChanged: () => Promise<void>
   notify: (kind: 'success' | 'error' | 'info', message: string) => void
 }
 
@@ -42,6 +43,7 @@ export function AccountDrawer({
   onSaved,
   onDeleted,
   onRecord,
+  onChanged,
   notify
 }: AccountDrawerProps): React.JSX.Element {
   const { tr } = useI18n()
@@ -50,12 +52,14 @@ export function AccountDrawer({
     account || initialSite || sites.length > 0 ? 'existing' : 'new'
   )
   const [selectedSiteId, setSelectedSiteId] = useState(initialSite?.id ?? sites[0]?.id ?? '')
-  const [siteName, setSiteName] = useState('')
-  const [startUrl, setStartUrl] = useState('https://')
+  const [siteName, setSiteName] = useState(
+    account?.site.name ?? initialSite?.name ?? ''
+  )
+  const [startUrl, setStartUrl] = useState(
+    account?.site.startUrl ?? initialSite?.startUrl ?? 'https://'
+  )
   const [autoSubmit, setAutoSubmit] = useState(initialSite?.autoSubmit ?? true)
   const [siteGroup, setSiteGroup] = useState(initialSite?.group ?? '')
-  const [sitePickerOpen, setSitePickerOpen] = useState(false)
-  const [label, setLabel] = useState(account?.label ?? '')
   const [username, setUsername] = useState(account?.username ?? '')
   const [password, setPassword] = useState('')
   const [favorite, setFavorite] = useState(account?.favorite ?? false)
@@ -66,31 +70,17 @@ export function AccountDrawer({
   const [error, setError] = useState('')
   const [confirmDelete, setConfirmDelete] = useState(false)
   const [confirmClear, setConfirmClear] = useState(false)
-  const sitePickerRef = useRef<HTMLDivElement>(null)
+  const [recipes, setRecipes] = useState<AccountRecipe[]>(account?.recipes ?? [])
+  const [activeRecipeId, setActiveRecipeId] = useState(account?.activeRecipeId)
+  const [recipeDetails, setRecipeDetails] = useState<AccountRecipe | null>(null)
+  const [confirmRecipeDelete, setConfirmRecipeDelete] = useState<AccountRecipe | null>(null)
+  const [recipeBusy, setRecipeBusy] = useState(false)
   const revealTimer = useRef<number | null>(null)
 
   const selectedSite = useMemo(
     () => sites.find((site) => site.id === selectedSiteId),
     [selectedSiteId, sites]
   )
-
-  useEffect(() => {
-    if (!sitePickerOpen) return
-    const closeOnPointerDown = (event: PointerEvent): void => {
-      if (!sitePickerRef.current?.contains(event.target as Node)) {
-        setSitePickerOpen(false)
-      }
-    }
-    const closeOnEscape = (event: KeyboardEvent): void => {
-      if (event.key === 'Escape') setSitePickerOpen(false)
-    }
-    document.addEventListener('pointerdown', closeOnPointerDown)
-    document.addEventListener('keydown', closeOnEscape)
-    return () => {
-      document.removeEventListener('pointerdown', closeOnPointerDown)
-      document.removeEventListener('keydown', closeOnEscape)
-    }
-  }, [sitePickerOpen])
 
   useEffect(() => {
     return () => {
@@ -111,6 +101,8 @@ export function AccountDrawer({
     const site = sites[0]
     if (site) {
       setSelectedSiteId(site.id)
+      setSiteName(site.name)
+      setStartUrl(site.startUrl)
       setAutoSubmit(site.autoSubmit)
       setSiteGroup(site.group ?? '')
     }
@@ -118,6 +110,8 @@ export function AccountDrawer({
 
   function chooseNew(): void {
     setSiteMode('new')
+    setSiteName('')
+    setStartUrl('https://')
     setAutoSubmit(true)
     setSiteGroup('')
   }
@@ -126,9 +120,10 @@ export function AccountDrawer({
     setSelectedSiteId(siteId)
     const site = sites.find((entry) => entry.id === siteId)
     if (site) {
+      setSiteName(site.name)
+      setStartUrl(site.startUrl)
       setAutoSubmit(site.autoSubmit)
       setSiteGroup(site.group ?? '')
-      setSitePickerOpen(false)
     }
   }
 
@@ -146,15 +141,15 @@ export function AccountDrawer({
   async function submit(event: React.FormEvent): Promise<void> {
     event.preventDefault()
     setError('')
-    if (!label.trim() || !username.trim()) {
-      setError(tr('请填写账号名称和用户名', 'Enter an account name and username.', '請填寫帳號名稱和使用者名稱'))
+    if (!siteName.trim() || !username.trim()) {
+      setError(tr('请填写站点名称和用户名', 'Enter a site name and username.', '請填寫站點名稱和使用者名稱'))
       return
     }
     if (mode === 'create' && !password) {
       setError(tr('请填写登录密码', 'Enter the login password.', '請填寫登入密碼'))
       return
     }
-    if (siteMode === 'new' && (!siteName.trim() || !/^https?:\/\//.test(startUrl))) {
+    if (!siteName.trim() || !/^https?:\/\//.test(startUrl)) {
       setError(tr('请填写有效的站点名称和登录地址', 'Enter a valid site name and sign-in URL.', '請填寫有效的站點名稱和登入網址'))
       return
     }
@@ -176,13 +171,18 @@ export function AccountDrawer({
       } else {
         if (!selectedSite) throw new Error(tr('请选择站点', 'Select a site.', '請選擇站點'))
         const groupChanged = (selectedSite.group ?? '') !== siteGroup.trim()
+        const siteChanged =
+          selectedSite.name !== siteName.trim() ||
+          selectedSite.startUrl !== startUrl.trim() ||
+          selectedSite.autoSubmit !== autoSubmit ||
+          groupChanged
         site =
-          selectedSite.autoSubmit === autoSubmit && !groupChanged
+          !siteChanged
             ? selectedSite
             : await window.autologin.sites.save({
                 id: selectedSite.id,
-                name: selectedSite.name,
-                startUrl: selectedSite.startUrl,
+                name: siteName.trim(),
+                startUrl: startUrl.trim(),
                 allowedOrigins: selectedSite.allowedOrigins,
                 autoSubmit,
                 group: siteGroup.trim() || undefined
@@ -192,7 +192,7 @@ export function AccountDrawer({
       let saved: AccountWithSite
       if (mode === 'edit' && account) {
         saved = await window.autologin.accounts.update(account.id, {
-          label: label.trim(),
+          label: site.name,
           username: username.trim(),
           favorite,
           ...(password ? { password } : {})
@@ -201,7 +201,7 @@ export function AccountDrawer({
       } else {
         saved = await window.autologin.accounts.create({
           siteId: site.id,
-          label: label.trim(),
+          label: site.name,
           username: username.trim(),
           password,
           favorite
@@ -281,6 +281,71 @@ export function AccountDrawer({
     }
   }
 
+  async function activateRecipe(recipeId: string): Promise<void> {
+    if (!account) return
+    setRecipeBusy(true)
+    try {
+      const saved = await window.autologin.accounts.setActiveRecipe(account.id, recipeId)
+      setRecipes(saved.recipes ?? [])
+      setActiveRecipeId(saved.activeRecipeId)
+      await onChanged()
+      notify(
+        'success',
+        tr('已切换当前录制流程', 'Active recorded flow updated.', '已切換目前錄製流程')
+      )
+    } catch (reason) {
+      notify(
+        'error',
+        reason instanceof Error
+          ? reason.message
+          : tr('切换录制流程失败', 'Could not switch recorded flow.', '切換錄製流程失敗')
+      )
+    } finally {
+      setRecipeBusy(false)
+    }
+  }
+
+  async function removeRecipe(): Promise<void> {
+    if (!account || !confirmRecipeDelete) return
+    setRecipeBusy(true)
+    try {
+      const saved = await window.autologin.accounts.deleteRecipe(
+        account.id,
+        confirmRecipeDelete.id
+      )
+      setRecipes(saved.recipes ?? [])
+      setActiveRecipeId(saved.activeRecipeId)
+      setConfirmRecipeDelete(null)
+      await onChanged()
+      notify('success', tr('录制流程已删除', 'Recorded flow deleted.', '錄製流程已刪除'))
+    } catch (reason) {
+      notify(
+        'error',
+        reason instanceof Error
+          ? reason.message
+          : tr('删除录制流程失败', 'Could not delete recorded flow.', '刪除錄製流程失敗')
+      )
+    } finally {
+      setRecipeBusy(false)
+    }
+  }
+
+  function startRecording(): void {
+    if (!onRecord) return
+    if (recipes.length >= 3) {
+      notify(
+        'info',
+        tr(
+          '每个账号最多保存三个录制流程，请先删除一个旧流程',
+          'Each account can keep up to three recorded flows. Delete one first.',
+          '每個帳號最多儲存三個錄製流程，請先刪除一個舊流程'
+        )
+      )
+      return
+    }
+    onRecord()
+  }
+
   return (
     <>
       <div className="drawer-layer account-drawer-layer">
@@ -298,20 +363,24 @@ export function AccountDrawer({
           <header className="details-header account-drawer__header">
             <div className="details-identity">
               <span className={`monogram ${account ? toneClass(account.siteId) : ''}`}>
-                {(selectedSite?.name ?? account?.site.name ?? '?').slice(0, 1).toUpperCase()}
+                {(siteName || selectedSite?.name || account?.site.name || '?')
+                  .slice(0, 1)
+                  .toUpperCase()}
               </span>
               <div>
                 <span className="eyebrow">
-                  {mode === 'edit' ? 'ACCOUNT DETAILS' : 'NEW CREDENTIAL'}
+                  {mode === 'edit' ? 'SITE DETAILS' : 'NEW CREDENTIAL'}
                 </span>
                 <h2 id="account-drawer-title">
                   {mode === 'edit'
-                    ? account?.label
+                    ? siteName || account?.site.name
                     : tr('添加登录账号', 'Add account', '新增登入帳號')}
                 </h2>
                 <span className="domain-label">
                   <Globe2 size={12} />
-                  {selectedSite ? safeHostname(selectedSite.startUrl) : tr('选择站点后开始', 'Choose a site to begin', '選擇站點後開始')}
+                  {startUrl.startsWith('http')
+                    ? safeHostname(startUrl)
+                    : tr('填写登录地址后开始', 'Enter a sign-in URL to begin', '填寫登入網址後開始')}
                 </span>
               </div>
             </div>
@@ -347,99 +416,52 @@ export function AccountDrawer({
             )}
 
             <div className="account-form__grid">
-              {siteMode === 'existing' ? (
-                account ? (
-                  <div className="account-site-summary account-form__span-2">
-                    <span className="monogram monogram--small">
-                      {selectedSite?.name.slice(0, 1).toUpperCase() ?? '?'}
-                    </span>
-                    <span>
-                      <strong>{selectedSite?.name ?? tr('站点信息不可用', 'Site unavailable', '站點資料不可用')}</strong>
-                      <small>
-                        {selectedSite ? safeHostname(selectedSite.startUrl) : tr('请重新选择站点', 'Choose the site again', '請重新選擇站點')}
-                      </small>
-                    </span>
-                    <em>{tr('固定站点', 'Fixed site', '固定站點')}</em>
-                  </div>
-                ) : (
-                  <label className="field account-form__span-2">
-                    <span className="field__label">{tr('选择站点', 'Select site', '選擇站點')}</span>
-                    <div className="site-picker" ref={sitePickerRef}>
-                      <button
-                        type="button"
-                        className={`site-picker__trigger${sitePickerOpen ? ' is-open' : ''}`}
-                        onClick={() => setSitePickerOpen((open) => !open)}
-                        aria-haspopup="listbox"
-                        aria-expanded={sitePickerOpen}
-                      >
-                        <Globe2 size={17} />
-                        <span>
-                          <strong>{selectedSite?.name ?? tr('选择站点', 'Select site', '選擇站點')}</strong>
-                          <small>
-                            {selectedSite
-                              ? safeHostname(selectedSite.startUrl)
-                              : tr('请选择已有站点', 'Choose an existing site', '請選擇現有站點')}
-                          </small>
-                        </span>
-                        <ChevronDown size={16} className={sitePickerOpen ? 'is-open' : ''} />
-                      </button>
-                      {sitePickerOpen && (
-                        <div className="site-picker__menu" role="listbox" aria-label={tr('选择站点', 'Select site', '選擇站點')}>
-                          {sites.map((site) => (
-                            <button
-                              key={site.id}
-                              type="button"
-                              role="option"
-                              aria-selected={site.id === selectedSiteId}
-                              className={site.id === selectedSiteId ? 'is-selected' : ''}
-                              onClick={() => handleSiteChange(site.id)}
-                            >
-                              <span className="monogram monogram--small">
-                                {site.name.slice(0, 1).toUpperCase()}
-                              </span>
-                              <span>
-                                <strong>{site.name}</strong>
-                                <small>
-                                  {displayGroup(site.group, tr)} · {safeHostname(site.startUrl)}
-                                </small>
-                              </span>
-                              {site.id === selectedSiteId && <Check size={15} />}
-                            </button>
-                          ))}
-                        </div>
-                      )}
-                    </div>
-                  </label>
-                )
-              ) : (
-                <>
-                  <label className="field">
-                    <span className="field__label">{tr('站点名称', 'Site name', '站點名稱')}</span>
-                    <span className="input-shell">
-                      <Globe2 size={17} />
-                      <input
-                        value={siteName}
-                        onChange={(event) => setSiteName(event.target.value)}
-                        placeholder={tr('例如：工作台', 'e.g. Workspace', '例如：工作台')}
-                        autoFocus
-                      />
-                    </span>
-                  </label>
-                  <label className="field">
-                    <span className="field__label">{tr('登录地址', 'Sign-in URL', '登入網址')}</span>
-                    <span className="input-shell">
-                      <span className="protocol-mark">URL</span>
-                      <input
-                        value={startUrl}
-                        onChange={(event) => setStartUrl(event.target.value)}
-                        onBlur={deriveSiteName}
-                        placeholder="https://example.com/login"
-                        spellCheck={false}
-                      />
-                    </span>
-                  </label>
-                </>
+              {!account && siteMode === 'existing' && (
+                <label className="field account-form__span-2">
+                  <span className="field__label">{tr('选择站点', 'Select site', '選擇站點')}</span>
+                  <span className="input-shell input-shell--select">
+                    <Globe2 size={17} />
+                    <select
+                      className="select-control"
+                      value={selectedSiteId}
+                      onChange={(event) => handleSiteChange(event.target.value)}
+                    >
+                      <option value="">{tr('请选择已有站点', 'Choose an existing site', '請選擇現有站點')}</option>
+                      {sites.map((site) => (
+                        <option key={site.id} value={site.id}>
+                          {site.name} · {safeHostname(site.startUrl)}
+                        </option>
+                      ))}
+                    </select>
+                  </span>
+                </label>
               )}
+
+              <label className="field">
+                <span className="field__label">{tr('站点名称', 'Site name', '站點名稱')}</span>
+                <span className="input-shell">
+                  <Globe2 size={17} />
+                  <input
+                    value={siteName}
+                    onChange={(event) => setSiteName(event.target.value)}
+                    placeholder={tr('例如：工作台', 'e.g. Workspace', '例如：工作台')}
+                    autoFocus={mode === 'edit'}
+                  />
+                </span>
+              </label>
+              <label className="field">
+                <span className="field__label">{tr('登录地址', 'Sign-in URL', '登入網址')}</span>
+                <span className="input-shell">
+                  <span className="protocol-mark">URL</span>
+                  <input
+                    value={startUrl}
+                    onChange={(event) => setStartUrl(event.target.value)}
+                    onBlur={deriveSiteName}
+                    placeholder="https://example.com/login"
+                    spellCheck={false}
+                  />
+                </span>
+              </label>
 
               <label className="field">
                 <span className="field__label">{tr('站点分组（可选）', 'Site group (optional)', '站點分組（選填）')}</span>
@@ -450,19 +472,6 @@ export function AccountDrawer({
                     onChange={(event) => setSiteGroup(event.target.value)}
                     placeholder={tr('例如：工作、财务、个人', 'e.g. Work, Finance, Personal', '例如：工作、財務、個人')}
                     maxLength={40}
-                  />
-                </span>
-              </label>
-
-              <label className="field">
-                <span className="field__label">{tr('账号名称', 'Account name', '帳號名稱')}</span>
-                <span className="input-shell">
-                  <Star size={17} />
-                  <input
-                    value={label}
-                    onChange={(event) => setLabel(event.target.value)}
-                    placeholder={tr('例如：主账号', 'e.g. Primary account', '例如：主帳號')}
-                    autoFocus={Boolean(account)}
                   />
                 </span>
               </label>
@@ -580,24 +589,97 @@ export function AccountDrawer({
             {error && <p className="form-error">{error}</p>}
 
             {account && (
-              <div className="account-drawer__management">
-                {onRecord && (
-                  <button type="button" className="text-button" onClick={onRecord}>
-                    <CirclePlay size={14} />
-                    {account.site.recipe
-                      ? tr('重新录制登录流程', 'Record flow again', '重新錄製登入流程')
-                      : tr('录制登录流程', 'Record sign-in flow', '錄製登入流程')}
+              <>
+                <section className="drawer-recipes" aria-label={tr('录制流程', 'Recorded flows', '錄製流程')}>
+                  <header className="drawer-recipes__header">
+                    <div>
+                      <strong>{tr('录制流程', 'Recorded flows', '錄製流程')}</strong>
+                      <small>{recipes.length}/3 {tr('已保存', 'saved', '已儲存')}</small>
+                    </div>
+                    {onRecord && (
+                      <button type="button" className="text-button" onClick={startRecording}>
+                        <CirclePlay size={14} />
+                        {tr('录制新流程', 'Record new flow', '錄製新流程')}
+                      </button>
+                    )}
+                  </header>
+                  {recipes.length === 0 ? (
+                    <p className="drawer-recipes__empty">
+                      {account.site.recipe
+                        ? tr(
+                            '检测到旧版录制流程，将在下次登录时迁移到此账号。',
+                            'A legacy recorded flow will migrate to this account on the next sign-in.',
+                            '偵測到舊版錄製流程，將在下次登入時遷移到此帳號。'
+                          )
+                        : tr(
+                            '尚未录制。特殊登录页可录制后回放。',
+                            'No recorded flow yet. Record one for special sign-in pages.',
+                            '尚未錄製。特殊登入頁可錄製後回放。'
+                          )}
+                    </p>
+                  ) : (
+                    <div className="drawer-recipes__list">
+                      {recipes.map((recipe) => {
+                        const active = recipe.id === activeRecipeId
+                        return (
+                          <div
+                            className={`drawer-recipe-row${active ? ' is-active' : ''}`}
+                            key={recipe.id}
+                          >
+                            <span className="drawer-recipe-row__state" aria-hidden="true">
+                              {active ? <Check size={12} /> : <ListChecks size={13} />}
+                            </span>
+                            <span className="drawer-recipe-row__identity">
+                              <strong>{recipe.name}</strong>
+                              <small>
+                                {recipe.recipe.steps.length} {tr('个步骤', 'steps', '個步驟')}
+                                {active ? ` · ${tr('当前流程', 'Active', '目前流程')}` : ''}
+                              </small>
+                            </span>
+                            <span className="drawer-recipe-row__actions">
+                              <button
+                                type="button"
+                                className="text-button"
+                                onClick={() => setRecipeDetails(recipe)}
+                              >
+                                {tr('查看', 'View', '查看')}
+                              </button>
+                              {!active && (
+                                <button
+                                  type="button"
+                                  className="text-button"
+                                  onClick={() => void activateRecipe(recipe.id)}
+                                  disabled={recipeBusy}
+                                >
+                                  {tr('启用', 'Enable', '啟用')}
+                                </button>
+                              )}
+                              <button
+                                type="button"
+                                className="icon-button icon-button--small"
+                                onClick={() => setConfirmRecipeDelete(recipe)}
+                                aria-label={tr('删除录制流程', 'Delete recorded flow', '刪除錄製流程')}
+                              >
+                                <Trash2 size={13} />
+                              </button>
+                            </span>
+                          </div>
+                        )
+                      })}
+                    </div>
+                  )}
+                </section>
+                <div className="account-drawer__management">
+                  <button type="button" className="text-button" onClick={() => setConfirmClear(true)}>
+                    <RefreshCw size={14} />
+                    {tr('清除会话', 'Clear session', '清除工作階段')}
                   </button>
-                )}
-                <button type="button" className="text-button" onClick={() => setConfirmClear(true)}>
-                  <RefreshCw size={14} />
-                  {tr('清除会话', 'Clear session', '清除工作階段')}
-                </button>
-                <button type="button" className="text-button text-button--danger" onClick={() => setConfirmDelete(true)}>
-                  <Trash2 size={14} />
-                  {tr('删除账号', 'Delete account', '刪除帳號')}
-                </button>
-              </div>
+                  <button type="button" className="text-button text-button--danger" onClick={() => setConfirmDelete(true)}>
+                    <Trash2 size={14} />
+                    {tr('删除账号', 'Delete account', '刪除帳號')}
+                  </button>
+                </div>
+              </>
             )}
 
             <div className="modal-actions account-drawer__actions">
@@ -646,6 +728,64 @@ export function AccountDrawer({
           onClose={() => setConfirmClear(false)}
         />
       )}
+      {confirmRecipeDelete && (
+        <ConfirmDialog
+          title={tr('删除这个录制流程？', 'Delete this recorded flow?', '刪除這個錄製流程？')}
+          description={tr(
+            `“${confirmRecipeDelete.name}”会被永久删除，账号密码和网站会话不会受到影响。`,
+            `“${confirmRecipeDelete.name}” will be permanently deleted. Credentials and website sessions are unaffected.`,
+            `「${confirmRecipeDelete.name}」會被永久刪除，帳號密碼和網站工作階段不會受到影響。`
+          )}
+          confirmLabel={tr('删除流程', 'Delete flow', '刪除流程')}
+          danger
+          busy={recipeBusy}
+          onConfirm={() => void removeRecipe()}
+          onClose={() => setConfirmRecipeDelete(null)}
+        />
+      )}
+      {recipeDetails && (
+        <Modal
+          title={recipeDetails.name}
+          eyebrow={tr('录制流程详情', 'RECORDED FLOW', '錄製流程詳情')}
+          onClose={() => setRecipeDetails(null)}
+          width="620px"
+          className="recipe-details-modal"
+        >
+          <div className="recipe-details-meta">
+            <span>
+              {recipeDetails.recipe.steps.length} {tr('个步骤', 'steps', '個步驟')}
+            </span>
+            <span>{safeHostname(recipeDetails.recipe.startUrl)}</span>
+            {recipeDetails.id === activeRecipeId && (
+              <strong>{tr('当前启用', 'Active', '目前啟用')}</strong>
+            )}
+          </div>
+          <ol className="recipe-steps">
+            {recipeDetails.recipe.steps.map((step, index) => (
+              <li key={step.id}>
+                <span>{String(index + 1).padStart(2, '0')}</span>
+                <div>
+                  <strong>{recipeStepName(step.type, tr)}</strong>
+                  <small>
+                    {step.type === 'press'
+                      ? `${tr('按键', 'Key', '按鍵')} ${step.key}`
+                      : step.selector
+                        ? step.selector.candidates.join('  ·  ')
+                        : tr('无需选择器', 'No selector', '無需選擇器')}
+                  </small>
+                </div>
+              </li>
+            ))}
+          </ol>
+          <p className="modal-description">
+            {tr(
+              '这里只展示步骤类型与稳定选择器，不包含账号、密码、验证码或页面输入的真实内容。',
+              'Only step types and stable selectors are shown. Credentials, verification codes and real page input are excluded.',
+              '這裡只顯示步驟類型與穩定選擇器，不包含帳號、密碼、驗證碼或頁面輸入的真實內容。'
+            )}
+          </p>
+        </Modal>
+      )}
     </>
   )
 }
@@ -658,11 +798,22 @@ function safeHostname(value: string): string {
   }
 }
 
-function displayGroup(
-  value: string | undefined,
+function recipeStepName(
+  type: AccountRecipe['recipe']['steps'][number]['type'],
   tr: (zhCN: string, en: string, zhTW: string) => string
 ): string {
-  return value?.trim() || tr('未分组', 'Ungrouped', '未分組')
+  switch (type) {
+    case 'fillUsername':
+      return tr('填写用户名', 'Fill username', '填寫使用者名稱')
+    case 'fillPassword':
+      return tr('填写密码', 'Fill password', '填寫密碼')
+    case 'click':
+      return tr('点击元素', 'Click element', '點擊元素')
+    case 'press':
+      return tr('按下按键', 'Press key', '按下按鍵')
+    case 'focusChallenge':
+      return tr('聚焦人工验证', 'Focus manual challenge', '聚焦人工驗證')
+  }
 }
 
 function toneClass(id: string): string {

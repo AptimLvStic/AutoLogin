@@ -1,5 +1,6 @@
 import { rmSync } from 'node:fs'
 import { resolve, sep } from 'node:path'
+import { randomUUID } from 'node:crypto'
 import { recipeStepSchema } from '@shared/schemas'
 import type {
   LoginMode,
@@ -109,6 +110,16 @@ export class LoginSessionManager {
     if (!site) {
       throw new Error('站点不存在')
     }
+    if (site.recipe && (account.recipes?.length ?? 0) === 0) {
+      const legacyRecipe = {
+        id: randomUUID(),
+        name: '旧版录制流程',
+        recipe: structuredClone(site.recipe)
+      }
+      account.recipes = [legacyRecipe]
+      account.activeRecipeId = legacyRecipe.id
+      account.updatedAt = new Date().toISOString()
+    }
 
     this.destroyed = false
     this.account = account
@@ -140,9 +151,9 @@ export class LoginSessionManager {
       currentOrigin: safeOrigin(site.startUrl),
       pageTitle: site.name,
       isLoading: true,
-      originTrusted: isOriginTrusted(site, safeOrigin(site.startUrl)),
+      originTrusted: isOriginTrusted(site, safeOrigin(site.startUrl), this.currentRecipe()),
       recording: mode === 'record',
-      recipeExists: Boolean(site.recipe),
+      recipeExists: Boolean(this.currentRecipe()),
       recordingStepCount: 0,
       browserName: ''
     })
@@ -161,7 +172,8 @@ export class LoginSessionManager {
         (await ExternalBrowserHost.launch({
           browser: browserInfo,
           profileDirectory: browserProfileDirectory(this.userDataPath, account.id),
-          headless: this.headlessBrowser
+          headless: this.headlessBrowser,
+          proxy: this.vault.getSettings().proxy
         }))
       this.host = host
       if (token !== this.sessionToken || this.destroyed) {
@@ -265,7 +277,12 @@ export class LoginSessionManager {
       throw new Error('当前没有正在录制的登录流程')
     }
     if (this.recordingSteps.length === 0) {
-      return { siteId: this.site.id, recipe: emptyRecipe(this.site.startUrl), saved: false }
+      return {
+        accountId: this.account.id,
+        siteId: this.site.id,
+        recipe: emptyRecipe(this.site.startUrl),
+        saved: false
+      }
     }
 
     const now = new Date().toISOString()
@@ -285,13 +302,30 @@ export class LoginSessionManager {
 
     const data = this.vault.requireData()
     const site = data.sites.find((entry) => entry.id === this.site?.id)
-    if (!site) {
+    const account = data.accounts.find((entry) => entry.id === this.account?.id)
+    if (!site || !account) {
       throw new Error('站点不存在')
     }
-    site.recipe = recipe
+    const recipes = account.recipes ?? []
+    if (recipes.length >= 3) {
+      throw new Error('每个账号最多保存三个录制流程，请先删除旧流程')
+    }
+    let sequence = recipes.length + 1
+    while (recipes.some((entry) => entry.name === `录制流程 ${sequence}`)) {
+      sequence += 1
+    }
+    const accountRecipe = {
+      id: randomUUID(),
+      name: `录制流程 ${sequence}`,
+      recipe
+    }
+    account.recipes = [...recipes, accountRecipe]
+    account.activeRecipeId = accountRecipe.id
+    account.updatedAt = now
     site.allowedOrigins = [...new Set([...site.allowedOrigins, ...recipe.allowedOrigins])]
     site.updatedAt = now
     this.site = site
+    this.account = account
     this.vault.save()
     this.mode = 'login'
     await this.runAgentCommand({ type: 'record-stop' }).catch(() => null)
@@ -302,7 +336,13 @@ export class LoginSessionManager {
       status: 'authenticated',
       message: '登录流程已保存，下次可一键回放'
     })
-    return { siteId: site.id, recipe, saved: true }
+    return {
+      accountId: account.id,
+      siteId: site.id,
+      recipeId: accountRecipe.id,
+      recipe,
+      saved: true
+    }
   }
 
   cancelRecording(): void {
@@ -363,7 +403,9 @@ export class LoginSessionManager {
       this.clearSubmissionTimer()
       this.recordOrigin(event.url)
       const origin = safeOrigin(event.url)
-      const trusted = this.site ? isOriginTrusted(this.site, origin) : false
+      const trusted = this.site
+        ? isOriginTrusted(this.site, origin, this.currentRecipe())
+        : false
       this.emit({
         currentUrl: stripQuery(event.url),
         currentOrigin: origin,
@@ -392,7 +434,9 @@ export class LoginSessionManager {
         currentOrigin: safeOrigin(event.url),
         pageTitle: event.title || this.state.pageTitle,
         isLoading: event.type === 'page' ? event.loading : false,
-        originTrusted: this.site ? isOriginTrusted(this.site, safeOrigin(event.url)) : false
+        originTrusted: this.site
+          ? isOriginTrusted(this.site, safeOrigin(event.url), this.currentRecipe())
+          : false
       })
       if (isHttpUrl(event.url)) {
         this.schedulePageRun(350)
@@ -465,13 +509,14 @@ export class LoginSessionManager {
     const snapshot = this.browser.getSnapshot()
     const currentUrl = snapshot.url
     const currentOrigin = safeOrigin(currentUrl)
-    const trusted = isOriginTrusted(this.site, currentOrigin)
+    const recipe = this.currentRecipe()
+    const trusted = isOriginTrusted(this.site, currentOrigin, recipe)
     this.emit({
       currentUrl: stripQuery(currentUrl),
       currentOrigin,
       originTrusted: trusted,
       pageTitle: snapshot.title || this.site.name,
-      recipeExists: Boolean(this.site.recipe),
+      recipeExists: Boolean(recipe),
       isLoading: snapshot.loading
     })
 
@@ -498,7 +543,7 @@ export class LoginSessionManager {
       return
     }
 
-    const successPrefix = this.site.recipe?.successCheck?.urlPrefix
+    const successPrefix = recipe?.successCheck?.urlPrefix
     if (successPrefix && stripQuery(currentUrl).startsWith(successPrefix)) {
       this.emit({ status: 'authenticated', message: '会话仍然有效，已直接打开站点' })
       return
@@ -512,7 +557,7 @@ export class LoginSessionManager {
       return
     }
 
-    if (this.site.recipe && this.site.recipe.steps.length > 0) {
+    if (recipe && recipe.steps.length > 0) {
       const completed = await this.runRecipe()
       if (completed) {
         return
@@ -567,22 +612,22 @@ export class LoginSessionManager {
   }
 
   private async runRecipe(): Promise<boolean> {
-    if (!this.site?.recipe || !this.account || !this.browser || this.recipeRunning) {
+    const recipe = this.currentRecipe()
+    if (!recipe || !this.site || !this.account || !this.browser || this.recipeRunning) {
       return false
     }
     this.recipeRunning = true
     try {
       while (
         this.browser &&
-        this.site?.recipe &&
-        this.stepIndex < this.site.recipe.steps.length
+        this.stepIndex < recipe.steps.length
       ) {
-        const step = this.site.recipe.steps[this.stepIndex]
+        const step = recipe.steps[this.stepIndex]
         if (!step) {
           break
         }
         const origin = safeOrigin(this.browser.getSnapshot().url)
-        if (!isOriginTrusted(this.site, origin)) {
+        if (!isOriginTrusted(this.site, origin, recipe)) {
           this.emit({
             status: 'needs_action',
             message: `回放暂停：当前域名 ${origin || '未知'} 未被信任`
@@ -644,7 +689,7 @@ export class LoginSessionManager {
         }
       }
 
-      if (this.site?.recipe && this.stepIndex >= this.site.recipe.steps.length) {
+      if (this.stepIndex >= recipe.steps.length) {
         await delay(900)
         try {
           if (await this.sendChallengeCommand()) {
@@ -661,8 +706,8 @@ export class LoginSessionManager {
         }
         const currentUrl = this.browser?.getSnapshot().url ?? ''
         if (
-          this.site.recipe.successCheck?.urlPrefix &&
-          stripQuery(currentUrl).startsWith(this.site.recipe.successCheck.urlPrefix)
+          recipe.successCheck?.urlPrefix &&
+          stripQuery(currentUrl).startsWith(recipe.successCheck.urlPrefix)
         ) {
           this.emit({ status: 'authenticated', message: '登录流程回放完成' })
           return true
@@ -788,6 +833,19 @@ export class LoginSessionManager {
     }
   }
 
+  private currentRecipe(): LoginRecipe | null {
+    if (!this.account) {
+      return this.site?.recipe ?? null
+    }
+    const recipes = this.account.recipes ?? []
+    return (
+      recipes.find((entry) => entry.id === this.account?.activeRecipeId)?.recipe ??
+      recipes[0]?.recipe ??
+      this.site?.recipe ??
+      null
+    )
+  }
+
   private emit(patch: Partial<LoginViewState>): void {
     this.state = { ...this.state, ...patch }
     this.onState(this.getState())
@@ -821,10 +879,14 @@ export class LoginSessionManager {
   }
 }
 
-export function isOriginTrusted(site: Site, origin: string): boolean {
+export function isOriginTrusted(
+  site: Site,
+  origin: string,
+  recipe: LoginRecipe | null = site.recipe ?? null
+): boolean {
   return isOriginAllowed(origin, [
     ...site.allowedOrigins,
-    ...(site.recipe?.allowedOrigins ?? [])
+    ...(recipe?.allowedOrigins ?? [])
   ])
 }
 

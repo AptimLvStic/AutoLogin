@@ -149,6 +149,13 @@ describe('VaultManager', () => {
         surface: '#F8FAFA',
         text: '#17262B',
         accent: '#176B7A'
+      },
+      proxy: {
+        enabled: false,
+        protocol: 'http',
+        host: '',
+        port: 8080,
+        bypassList: 'localhost, 127.0.0.1, ::1'
       }
     })
   })

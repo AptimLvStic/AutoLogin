@@ -4,7 +4,8 @@ import {
   appSettingsPatchSchema,
   appSettingsSchema,
   masterPasswordSchema,
-  siteInputSchema
+  siteInputSchema,
+  storedAccountSchema
 } from '../../src/shared/schemas'
 
 describe('shared input schemas', () => {
@@ -51,7 +52,14 @@ describe('shared input schemas', () => {
         text: '#1C2521',
         accent: '#0E7567'
       },
-      interfaceScale: 100
+      interfaceScale: 100,
+      proxy: {
+        enabled: false,
+        protocol: 'http',
+        host: '',
+        port: 8080,
+        bypassList: 'localhost, 127.0.0.1, ::1'
+      }
     })
   })
 
@@ -70,6 +78,35 @@ describe('shared input schemas', () => {
     ).toBe(true)
     expect(appSettingsPatchSchema.safeParse({ interfaceScale: 111 }).success).toBe(false)
     expect(appSettingsPatchSchema.safeParse({}).success).toBe(false)
+  })
+
+  it('limits each account to three recorded flows', () => {
+    const now = new Date().toISOString()
+    const recipe = {
+      version: 1 as const,
+      startUrl: 'https://example.com/login',
+      allowedOrigins: ['https://example.com'],
+      steps: [],
+      createdAt: now,
+      updatedAt: now
+    }
+    const base = {
+      id: 'account-1',
+      siteId: 'site-1',
+      label: 'Example',
+      username: 'user',
+      password: 'secret',
+      favorite: false,
+      createdAt: now,
+      updatedAt: now
+    }
+    const flows = Array.from({ length: 4 }, (_, index) => ({
+      id: `recipe-${index}`,
+      name: `Flow ${index}`,
+      recipe
+    }))
+    expect(storedAccountSchema.safeParse({ ...base, recipes: flows.slice(0, 3) }).success).toBe(true)
+    expect(storedAccountSchema.safeParse({ ...base, recipes: flows }).success).toBe(false)
   })
 
 })

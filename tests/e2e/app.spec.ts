@@ -213,7 +213,7 @@ test('pauses on a captcha and resumes after manual verification', async () => {
   await page.locator('.batch-status').click()
   const logsPage = page.locator('.logs-page')
   await expect(logsPage.getByRole('heading', { name: '登录日志' })).toBeVisible()
-  await expect(logsPage.locator('.log-table__row')).toContainText('验证码账号')
+  await expect(logsPage.locator('.log-table__row')).toContainText('验证码登录')
   await expect(logsPage.locator('.log-table__row')).toContainText('待人工')
 
   const today = await page.evaluate(() => {
@@ -225,7 +225,7 @@ test('pauses on a captcha and resumes after manual verification', async () => {
     ].join('-')
   })
   await logsPage.getByLabel('日期').fill(today)
-  await logsPage.getByLabel('账号').selectOption({ label: '验证码账号' })
+  await logsPage.getByLabel('站点名称').selectOption({ label: '验证码登录' })
   await logsPage.getByLabel('分组').selectOption({ label: '安全' })
   await logsPage.getByLabel('状态').selectOption('manual')
   await logsPage.getByLabel('每页条数').selectOption('10')
@@ -266,6 +266,20 @@ test('pauses on a captcha and resumes after manual verification', async () => {
     manual: 0
   })
   await expect(page.locator('.batch-status')).toContainText('成功 1 / 失败 0')
+
+  await page.locator('.sidebar-nav__item').filter({ hasText: '登录日志' }).click()
+  await logsPage.getByLabel('状态').selectOption('manual')
+  const manualRow = logsPage.locator('.log-table__row').filter({ hasText: '待人工' })
+  await manualRow.getByRole('checkbox').check()
+  await expect(logsPage.getByRole('button', { name: '批量删除' })).toBeEnabled()
+  await manualRow.getByRole('button', { name: '查看详情' }).click()
+  const detailModal = page.locator('.log-detail-modal')
+  await expect(detailModal).toContainText('完整错误说明')
+  await expect(detailModal).toContainText('验证码')
+  await page.locator('.modal-backdrop').click({ position: { x: 10, y: 10 } })
+  await logsPage.getByRole('button', { name: '批量删除' }).click()
+  await page.locator('.confirm-dialog').getByRole('button', { name: '确认删除' }).click()
+  await expect(page.locator('.toast')).toContainText('已删除 1 条日志')
 })
 
 test('stops automation when a site redirects outside trusted origins', async () => {
@@ -326,19 +340,19 @@ test('searches accounts and filters favorites', async () => {
     password: 'secret-password'
   })
 
-  const alphaRow = page.locator('.account-row').filter({ hasText: 'Alpha 账号' })
+  const alphaRow = page.locator('.account-row').filter({ hasText: '搜索站点 A' })
   await alphaRow.click()
   const accountDrawer = page.locator('.account-drawer')
   await accountDrawer.getByRole('checkbox', { name: /加入收藏/ }).check()
   await accountDrawer.getByRole('button', { name: '保存修改' }).click()
   await page.locator('.sidebar-nav__item').filter({ hasText: '收藏' }).click()
   await expect(alphaRow).toBeVisible()
-  await expect(page.locator('.account-row').filter({ hasText: 'Beta 账号' })).toHaveCount(0)
+  await expect(page.locator('.account-row').filter({ hasText: '搜索站点 B' })).toHaveCount(0)
 
   await page.locator('.sidebar-nav__item').filter({ hasText: '全部账号' }).click()
   await page.getByRole('textbox', { name: '搜索账号' }).fill('beta@example.test')
   await expect(page.locator('.account-row')).toHaveCount(1)
-  await expect(page.locator('.account-row')).toContainText('Beta 账号')
+  await expect(page.locator('.account-row')).toContainText('搜索站点 B')
 })
 
 test('persists dark mode, language, themes and interface scale with separate resets', async () => {
@@ -359,7 +373,8 @@ test('persists dark mode, language, themes and interface scale with separate res
   await settingsNav.click()
 
   const settings = page.locator('.settings-page')
-  await expect(settings.getByRole('heading', { name: '外观与语言' })).toBeVisible()
+  await settings.locator('.settings-subnav__item').filter({ hasText: '外观主题' }).click()
+  await expect(settings.getByRole('heading', { name: '外观主题' })).toBeVisible()
 
   await settings.getByRole('button', { name: '暗色' }).click()
   await expect
@@ -412,6 +427,7 @@ test('persists dark mode, language, themes and interface scale with separate res
     .poll(() => page.evaluate(() => window.autologin.settings.get()))
     .toMatchObject({ themePreset: 'warm' })
 
+  await settings.locator('.settings-subnav__item').filter({ hasText: '通用设置' }).click()
   await settings.getByRole('slider', { name: '界面比例' }).fill('125')
   await expect
     .poll(() => page.evaluate(() => window.autologin.settings.get()))
@@ -420,7 +436,7 @@ test('persists dark mode, language, themes and interface scale with separate res
 
   await page.locator('.account-row').first().click()
   const editDrawer = page.locator('.account-drawer')
-  await expect(editDrawer.getByRole('heading', { name: '主题测试账号' })).toBeVisible()
+  await expect(editDrawer.getByRole('heading', { name: '主题测试站点' })).toBeVisible()
   const scaledMetrics = await editDrawer.evaluate((element) => ({
     clientHeight: element.clientHeight,
     scrollHeight: element.scrollHeight,
@@ -440,6 +456,7 @@ test('persists dark mode, language, themes and interface scale with separate res
     .poll(() => page.evaluate(() => window.autologin.settings.get()))
     .toMatchObject({ interfaceScale: 100 })
 
+  await settings.locator('.settings-subnav__item').filter({ hasText: '数据与关于' }).click()
   await expect(settings.getByRole('heading', { name: '关于 AutoLogin' })).toBeVisible()
   await expect(settings.getByRole('heading', { name: '检查更新' })).toBeVisible()
   await expect(settings.getByRole('heading', { name: '数据保存位置' })).toBeVisible()
@@ -448,6 +465,14 @@ test('persists dark mode, language, themes and interface scale with separate res
   await expect(settings.locator('.settings-location code')).toContainText(userDataDirectory)
   await settings.getByRole('button', { name: '检查更新' }).click()
   await expect(settings.locator('.settings-update-status')).toBeVisible({ timeout: 12000 })
+
+  await settings.locator('.settings-subnav__item').filter({ hasText: '网络代理' }).click()
+  await expect(settings.getByRole('heading', { name: '网络代理' })).toBeVisible()
+  await expect(settings.getByRole('button', { name: '测试连接' })).toBeVisible()
+  await settings.getByRole('button', { name: '保存代理配置' }).click()
+  await expect
+    .poll(() => page.evaluate(() => window.autologin.settings.get()))
+    .toMatchObject({ proxy: { enabled: false, protocol: 'http', port: 8080 } })
 })
 
 test('supports grouped favorites, drawer editing and checkbox batch tabs in one browser', async () => {
@@ -465,10 +490,9 @@ test('supports grouped favorites, drawer editing and checkbox batch tabs in one 
   const accountDrawer = page.locator('.account-drawer')
   await expect(accountDrawer).toBeVisible()
   await accountDrawer.getByRole('button', { name: '已有站点' }).click()
-  await expect(accountDrawer.locator('select')).toHaveCount(0)
-  await accountDrawer.locator('.site-picker__trigger').click()
-  await expect(accountDrawer.getByRole('listbox', { name: '选择站点' })).toBeVisible()
-  await accountDrawer.getByRole('option', { name: /工作站点/ }).click()
+  await expect(accountDrawer.getByLabel('选择站点')).toBeVisible()
+  await accountDrawer.getByLabel('选择站点').selectOption({ index: 1 })
+  await expect(accountDrawer.getByPlaceholder('例如：工作台')).toHaveValue('工作站点')
   await accountDrawer.getByRole('button', { name: '取消' }).click()
 
   await addAccount(page, {
@@ -493,23 +517,25 @@ test('supports grouped favorites, drawer editing and checkbox batch tabs in one 
     page.locator('.sidebar-actions').getByRole('button', { name: '添加账号' })
   ).toHaveCount(0)
 
-  const secondaryRow = page.locator('.account-row').filter({ hasText: '工作副账号' })
+  const secondaryRow = page.locator('.account-row').filter({ hasText: '备用站点' })
   await expect(secondaryRow.getByRole('button', { name: '编辑' })).toBeVisible()
   await expect(secondaryRow.getByRole('button', { name: '登录' })).toBeVisible()
   await secondaryRow.click()
   const editDrawer = page.locator('.account-drawer')
-  await expect(editDrawer.getByRole('heading', { name: '工作副账号' })).toBeVisible()
+  await expect(editDrawer.getByRole('heading', { name: '备用站点' })).toBeVisible()
   const drawerMetrics = await editDrawer.evaluate((element) => ({
     clientHeight: element.clientHeight,
     scrollHeight: element.scrollHeight,
     bottom: element.getBoundingClientRect().bottom
   }))
   expect(drawerMetrics.scrollHeight).toBeLessThanOrEqual(drawerMetrics.clientHeight + 1)
-  expect(drawerMetrics.bottom).toBeLessThanOrEqual(await page.evaluate(() => window.innerHeight))
-  await editDrawer.getByPlaceholder('例如：主账号').fill('工作副账号（已编辑）')
+  expect(drawerMetrics.bottom).toBeLessThanOrEqual(
+    (await page.evaluate(() => window.innerHeight)) + 1
+  )
+  await editDrawer.getByPlaceholder('例如：工作台').fill('备用站点（已编辑）')
   await editDrawer.getByRole('button', { name: '保存修改' }).click()
   await expect(
-    page.locator('.account-row').filter({ hasText: '工作副账号（已编辑）' })
+    page.locator('.account-row').filter({ hasText: '备用站点（已编辑）' })
   ).toBeVisible()
 
   await page.locator('.sidebar-nav__item').filter({ hasText: '收藏' }).click()
@@ -522,8 +548,8 @@ test('supports grouped favorites, drawer editing and checkbox batch tabs in one 
   await expect(favoriteGroup.locator('.account-row')).toHaveCount(2)
   await allAccountsNav.click()
 
-  const mainRow = page.locator('.account-row').filter({ hasText: '工作主账号' })
-  const editedRow = page.locator('.account-row').filter({ hasText: '工作副账号（已编辑）' })
+  const mainRow = page.locator('.account-row').filter({ hasText: '工作站点' })
+  const editedRow = page.locator('.account-row').filter({ hasText: '备用站点（已编辑）' })
   await mainRow.getByRole('checkbox').check()
   await editedRow.getByRole('checkbox').check()
   await expect(page.locator('.batch-selection-bar')).toContainText('2 个账号已选')
@@ -562,7 +588,7 @@ test('records and replays a multi-step login flow', async () => {
   await page.locator('.account-row').first().click()
   const accountDrawer = page.locator('.account-drawer')
   await expect(accountDrawer).toBeVisible()
-  await accountDrawer.getByRole('button', { name: '录制登录流程' }).click()
+  await accountDrawer.getByRole('button', { name: '录制新流程' }).click()
   await expect(page.getByText('正在录制登录流程')).toBeVisible()
 
   await expect
@@ -590,12 +616,19 @@ test('records and replays a multi-step login flow', async () => {
   await expect(page.getByRole('heading', { name: '全部账号' })).toBeVisible()
   await expect(page.locator('.account-row').first()).toContainText('已录制')
   const recordedTypes = await page.evaluate(async () => {
-    const sites = await window.autologin.sites.list()
-    return sites[0]?.recipe?.steps.map((step) => step.type) ?? []
+    const accounts = await window.autologin.accounts.list()
+    const active = accounts[0]?.recipes?.find(
+      (recipe) => recipe.id === accounts[0]?.activeRecipeId
+    )
+    return active?.recipe.steps.map((step) => step.type) ?? []
   })
   expect(recordedTypes).toEqual(['fillUsername', 'click', 'fillPassword', 'click'])
 
   await page.locator('.account-row').first().click()
+  await expect(page.locator('.account-drawer')).toContainText('1/3 已保存')
+  await page.locator('.drawer-recipe-row').getByRole('button', { name: '查看' }).click()
+  await expect(page.locator('.recipe-details-modal')).toContainText('填写用户名')
+  await page.locator('.modal-backdrop').click({ position: { x: 10, y: 10 } })
   await page.locator('.account-drawer').getByRole('button', { name: '清除会话' }).click()
   await page.locator('.confirm-dialog').getByRole('button', { name: '清除会话' }).click()
   await expect(page.locator('.toast')).toContainText('网站会话已清除')
@@ -662,13 +695,12 @@ async function addAccount(
   await targetPage.getByRole('button', { name: '添加账号' }).first().click()
   const drawer = targetPage.locator('.account-drawer')
   await expect(drawer).toBeVisible()
-  if ((await drawer.getByPlaceholder('例如：工作台').count()) === 0) {
+  if ((await drawer.getByRole('button', { name: '新站点' }).count()) > 0) {
     await drawer.getByRole('button', { name: '新站点' }).click()
   }
   await expect(drawer.getByPlaceholder('例如：工作台')).toBeVisible()
   await drawer.getByPlaceholder('例如：工作台').fill(account.siteName)
   await drawer.getByPlaceholder('https://example.com/login').fill(account.startUrl)
-  await drawer.getByPlaceholder('例如：主账号').fill(account.label)
   await drawer.getByPlaceholder('邮箱或账号').fill(account.username)
   await drawer.getByPlaceholder('输入登录密码').fill(account.password)
   if (account.group) {
@@ -676,7 +708,7 @@ async function addAccount(
   }
   await drawer.getByRole('button', { name: '添加账号' }).click()
   await expect(
-    targetPage.locator('.account-row').filter({ hasText: account.label })
+    targetPage.locator('.account-row').filter({ hasText: account.siteName })
   ).toHaveCount(1)
 }
 

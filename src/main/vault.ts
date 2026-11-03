@@ -120,7 +120,14 @@ export class VaultManager {
           text: '#1C2521',
           accent: '#0E7567'
         },
-        interfaceScale: 100
+        interfaceScale: 100,
+        proxy: {
+          enabled: false,
+          protocol: 'http',
+          host: '',
+          port: 8080,
+          bypassList: 'localhost, 127.0.0.1, ::1'
+        }
       }
     }
 
@@ -199,11 +206,18 @@ export class VaultManager {
 
   updateSettings(patch: AppSettingsPatch): AppSettings {
     const data = this.requireData()
-    data.settings = { ...data.settings, ...patch }
+    data.settings = {
+      ...data.settings,
+      ...patch,
+      ...(patch.proxy ? { proxy: { ...data.settings.proxy, ...patch.proxy } } : {}),
+      ...(patch.customTheme
+        ? { customTheme: { ...data.settings.customTheme, ...patch.customTheme } }
+        : {})
+    }
     this.autoLockMinutes = data.settings.autoLockMinutes
     this.save()
     this.scheduleLock()
-    return { ...data.settings }
+    return structuredClone(data.settings)
   }
 
   async changePassword(currentPassword: string, nextPassword: string): Promise<void> {

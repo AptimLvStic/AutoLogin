@@ -50,7 +50,11 @@ const api: AutologinApi = {
     delete: (accountId) => invoke('accounts:delete', accountId),
     reveal: (accountId) => invoke('accounts:reveal', accountId),
     copyUsername: (accountId) => invoke('accounts:copy-username', accountId),
-    copy: (accountId) => invoke('accounts:copy', accountId)
+    copy: (accountId) => invoke('accounts:copy', accountId),
+    setActiveRecipe: (accountId, recipeId) =>
+      invoke('accounts:set-active-recipe', accountId, recipeId),
+    deleteRecipe: (accountId, recipeId) =>
+      invoke('accounts:delete-recipe', accountId, recipeId)
   },
   login: {
     start: (input: LoginStartInput) => invoke('login:start', input),
@@ -79,12 +83,23 @@ const api: AutologinApi = {
     chooseDataLocation: () => invoke('app:choose-data-location'),
     openDataLocation: () => invoke('app:open-data-location'),
     openFailureLog: () => invoke('app:open-failure-log'),
-    listLoginLogs: () => invoke('app:list-login-logs'),
+    listLoginLogs: (query) => invoke('app:list-login-logs', query),
     listFailureLogs: () => invoke('app:list-failure-logs'),
+    deleteLoginLogs: (ids) => invoke('app:delete-login-logs', ids),
     restart: () => invoke('app:restart'),
     reportActivity: () => ipcRenderer.send('app:activity'),
     clearAllData: () => invoke('app:clear-all-data'),
     openPrivacy: () => invoke('app:open-privacy')
+  },
+  network: {
+    testProxy: (settings) => invoke('network:test-proxy', settings)
+  },
+  windowControls: {
+    minimize: () => invoke('window:minimize'),
+    toggleMaximize: () => invoke('window:toggle-maximize'),
+    close: () => invoke('window:close'),
+    getState: () => invoke('window:get-state'),
+    onMaximizedChange: (callback) => subscribe('window:maximized-change', callback)
   },
   events: {
     onVaultLocked: (callback) => subscribe('vault:locked', callback),

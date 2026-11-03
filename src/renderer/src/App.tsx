@@ -8,6 +8,7 @@ import { LibraryScreen } from './components/LibraryScreen'
 import { LoginWorkspace } from './components/LoginWorkspace'
 import { ConfirmDialog } from './components/Modal'
 import { Toast, type ToastKind, type ToastState } from './components/Toast'
+import { WindowControls } from './components/WindowControls'
 import { I18nProvider, translate } from './i18n'
 
 type AuthState = 'boot' | 'setup' | 'unlock' | 'ready'
@@ -27,7 +28,7 @@ export default function App(): React.JSX.Element {
   const [accounts, setAccounts] = useState<AccountWithSite[]>([])
   const [sites, setSites] = useState<Site[]>([])
   const [settings, setSettings] = useState<AppSettings>(DEFAULT_SETTINGS)
-  const [appVersion, setAppVersion] = useState('0.2.3')
+  const [appVersion, setAppVersion] = useState('0.3.0')
   const [loginTarget, setLoginTarget] = useState<LoginTarget | null>(null)
   const [batchState, setBatchState] = useState<LoginBatchState | null>(null)
   const [toast, setToast] = useState<ToastState | null>(null)
@@ -246,6 +247,7 @@ export default function App(): React.JSX.Element {
   return (
     <I18nProvider language={settings.language}>
     <>
+      <WindowControls />
       {authState === 'boot' && (
         <main className="boot-screen">
           <BrandMark />

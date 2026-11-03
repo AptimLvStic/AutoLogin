@@ -14,6 +14,23 @@ export const INTERFACE_SCALE_MIN = 80
 export const INTERFACE_SCALE_MAX = 125
 export const INTERFACE_SCALE_STEP = 5
 
+export const PROXY_PROTOCOLS = ['http', 'https', 'socks5'] as const
+export type ProxyProtocol = (typeof PROXY_PROTOCOLS)[number]
+
+export interface ProxySettings {
+  enabled: boolean
+  protocol: ProxyProtocol
+  host: string
+  port: number
+  bypassList: string
+}
+
+export interface ProxyTestResult {
+  ok: boolean
+  message: string
+  latencyMs?: number
+}
+
 export interface ThemeColors {
   background: string
   surface: string
@@ -40,14 +57,17 @@ export interface AppSettings {
   themePreset: ThemePreset
   customTheme: ThemeColors
   interfaceScale: number
+  proxy: ProxySettings
 }
 
 export type AppSettingsPatch = Partial<AppSettings>
 
 export interface LoginLogEntry {
+  id: string
   timestamp: string
   batchId: string
   accountId: string
+  siteId: string
   accountLabel: string
   siteName: string
   groupName: string
@@ -56,6 +76,18 @@ export interface LoginLogEntry {
 }
 
 export type FailureLogEntry = LoginLogEntry
+
+export interface LoginLogQuery {
+  date?: string
+  siteId?: string
+  siteName?: string
+  groupName?: string
+  status?: LoginLogEntry['status']
+}
+
+export interface LoginLogDeleteResult {
+  deleted: number
+}
 
 export interface VaultStatus {
   initialized: boolean
@@ -108,6 +140,12 @@ export interface LoginRecipe {
   updatedAt: string
 }
 
+export interface AccountRecipe {
+  id: string
+  name: string
+  recipe: LoginRecipe
+}
+
 export interface Site {
   id: string
   name: string
@@ -126,6 +164,8 @@ export interface Account {
   label: string
   username: string
   favorite: boolean
+  recipes?: AccountRecipe[]
+  activeRecipeId?: string
   lastUsedAt?: string
   createdAt: string
   updatedAt: string
@@ -186,6 +226,7 @@ export interface AccountUpdateInput {
   username?: string
   password?: string
   favorite?: boolean
+  activeRecipeId?: string
 }
 
 export interface LoginStartInput {
@@ -204,6 +245,7 @@ export type LoginBatchItemStatus =
 
 export interface LoginBatchItem {
   accountId: string
+  siteId: string
   accountLabel: string
   siteName: string
   groupName: string
@@ -232,9 +274,16 @@ export interface PasswordReveal {
 }
 
 export interface RecipeDraftResult {
+  accountId: string
   siteId: string
+  recipeId?: string
   recipe: LoginRecipe
   saved: boolean
+}
+
+export interface AccountRecipeInput {
+  name: string
+  recipe: LoginRecipe
 }
 
 export interface DataLocationInfo {
@@ -285,6 +334,8 @@ export interface AutologinApi {
     reveal: (accountId: string) => Promise<PasswordReveal>
     copyUsername: (accountId: string) => Promise<void>
     copy: (accountId: string) => Promise<void>
+    setActiveRecipe: (accountId: string, recipeId?: string) => Promise<AccountWithSite>
+    deleteRecipe: (accountId: string, recipeId: string) => Promise<AccountWithSite>
   }
   login: {
     start: (input: LoginStartInput) => Promise<LoginViewState>
@@ -313,12 +364,23 @@ export interface AutologinApi {
     chooseDataLocation: () => Promise<DataLocationInfo | null>
     openDataLocation: () => Promise<void>
     openFailureLog: () => Promise<void>
-    listLoginLogs: () => Promise<LoginLogEntry[]>
+    listLoginLogs: (query?: LoginLogQuery) => Promise<LoginLogEntry[]>
     listFailureLogs: () => Promise<LoginLogEntry[]>
+    deleteLoginLogs: (ids: string[]) => Promise<LoginLogDeleteResult>
     restart: () => Promise<void>
     reportActivity: () => void
     clearAllData: () => Promise<void>
     openPrivacy: () => Promise<void>
+  }
+  network: {
+    testProxy: (settings: ProxySettings) => Promise<ProxyTestResult>
+  }
+  windowControls: {
+    minimize: () => Promise<void>
+    toggleMaximize: () => Promise<void>
+    close: () => Promise<void>
+    getState: () => Promise<{ maximized: boolean }>
+    onMaximizedChange: (callback: (maximized: boolean) => void) => () => void
   }
   events: {
     onVaultLocked: (callback: () => void) => () => void

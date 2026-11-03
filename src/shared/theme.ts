@@ -1,6 +1,7 @@
 import type {
   AppSettings,
   ColorMode,
+  ProxySettings,
   ThemeColors,
   ThemePreset
 } from './types'
@@ -12,13 +13,22 @@ export const DEFAULT_THEME_COLORS: ThemeColors = {
   accent: '#0E7567'
 }
 
+export const DEFAULT_PROXY_SETTINGS: ProxySettings = {
+  enabled: false,
+  protocol: 'http',
+  host: '',
+  port: 8080,
+  bypassList: 'localhost, 127.0.0.1, ::1'
+}
+
 export const DEFAULT_APP_SETTINGS: AppSettings = {
   autoLockMinutes: 10,
   colorMode: 'light',
   language: 'zh-CN',
   themePreset: 'warm',
   customTheme: DEFAULT_THEME_COLORS,
-  interfaceScale: 100
+  interfaceScale: 100,
+  proxy: DEFAULT_PROXY_SETTINGS
 }
 
 interface ThemePresetDefinition {

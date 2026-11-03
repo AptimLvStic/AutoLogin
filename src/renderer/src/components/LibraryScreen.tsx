@@ -4,7 +4,6 @@ import {
   Check,
   ChevronDown,
   ChevronRight,
-  Clock3,
   FileText,
   Globe2,
   KeyRound,
@@ -15,7 +14,6 @@ import {
   Plus,
   Search,
   Settings,
-  ShieldCheck,
   Star,
   UserRound
 } from 'lucide-react'
@@ -83,6 +81,19 @@ export function LibraryScreen({
 
   const groups = useMemo<GroupSummary[]>(() => {
     const grouped = new Map<string, GroupSummary>()
+    for (const site of sites) {
+      const actualName = site.group?.trim() || null
+      if (!actualName) continue
+      if (!grouped.has(actualName)) {
+        grouped.set(actualName, {
+          key: actualName,
+          name: actualName,
+          actualName,
+          count: 0,
+          accounts: []
+        })
+      }
+    }
     for (const account of accounts) {
       const actualName = account.site.group?.trim() || null
       const key = actualName ?? UNGROUPED_KEY
@@ -105,7 +116,7 @@ export function LibraryScreen({
         if (right.actualName === null) return -1
         return left.name.localeCompare(right.name, language)
       })
-  }, [accounts, language, tr])
+  }, [accounts, language, sites, tr])
 
   const favoriteGroupSet = useMemo(() => new Set(favoriteGroups), [favoriteGroups])
   const favoriteAccounts = useMemo(
@@ -117,7 +128,6 @@ export function LibraryScreen({
       ),
     [accounts, favoriteGroupSet]
   )
-  const recentAccount = useMemo(() => mostRecentAccount(accounts), [accounts])
   const currentGroup = groupFilter
     ? groups.find((group) => group.key === groupFilter) ?? null
     : null
@@ -498,15 +508,6 @@ export function LibraryScreen({
                 </div>
               </header>
 
-              {view === 'accounts' && recentAccount && (
-                <RecentAccount
-                  account={recentAccount}
-                  formatLastUsed={(value) => formatLastUsed(value, tr, formatDate)}
-                  onOpen={() => void openAccount(recentAccount)}
-                  tr={tr}
-                />
-              )}
-
               <div className="library-toolbar">
                 <label className="search-field">
                   <Search size={17} />
@@ -571,7 +572,7 @@ export function LibraryScreen({
                       onChange={toggleSelectAll}
                       disabled={filteredAccounts.length === 0}
                     />
-                    <span>{tr('账号', 'Account', '帳號')}</span>
+                    <span>{tr('站点', 'Site', '站點')}</span>
                     <span>{tr('用户名', 'Username', '使用者名稱')}</span>
                     <span>{tr('状态', 'Status', '狀態')}</span>
                     <span />
@@ -586,6 +587,7 @@ export function LibraryScreen({
                       tr={tr}
                       formatLastUsed={(value) => formatLastUsed(value, tr, formatDate)}
                       onToggleSelection={() => toggleAccountSelection(account.id)}
+                      onToggleFavorite={() => void toggleAccountFavorite(account)}
                       onEdit={() => setDrawer({ mode: 'edit', accountId: account.id })}
                       onLogin={() => void openAccount(account)}
                     />
@@ -746,7 +748,14 @@ export function LibraryScreen({
             </>
           )}
 
-          {view === 'logs' && <LoginLogsPage notify={notify} />}
+          {view === 'logs' && (
+            <LoginLogsPage
+              sites={sites}
+              accounts={accounts}
+              favoriteGroups={favoriteGroups}
+              notify={notify}
+            />
+          )}
 
           {view === 'settings' && (
             <SettingsPage
@@ -774,53 +783,11 @@ export function LibraryScreen({
           onSaved={handleSaved}
           onDeleted={handleDeleted}
           onRecord={drawerAccount ? () => onRecord(drawerAccount) : undefined}
+          onChanged={refreshAll}
           notify={notify}
         />
       )}
     </div>
-  )
-}
-
-function RecentAccount({
-  account,
-  formatLastUsed,
-  onOpen,
-  tr
-}: {
-  account: AccountWithSite
-  formatLastUsed: (value?: string) => string
-  onOpen: () => void
-  tr: Translate
-}): React.JSX.Element {
-  return (
-    <section className="recent-band">
-      <div className="recent-band__copy">
-        <span className="eyebrow eyebrow--light">CONTINUE WHERE YOU LEFT OFF</span>
-        <h2>{account.label}</h2>
-        <p>
-          {account.site.name} · {account.username}
-        </p>
-      </div>
-      <div className="recent-band__meta">
-        <span>
-          <Clock3 size={15} />
-          {formatLastUsed(account.lastUsedAt)}
-        </span>
-        <span>
-          <ShieldCheck size={15} />
-          {account.site.recipe
-            ? tr('录制流程就绪', 'Recorded flow ready', '錄製流程就緒')
-            : tr('通用识别就绪', 'Auto detection ready', '通用識別就緒')}
-        </span>
-      </div>
-      <button className="recent-login" onClick={onOpen}>
-        {tr('继续登录', 'Continue', '繼續登入')}
-        <ArrowRight size={17} />
-      </button>
-      <span className="recent-band__glyph" aria-hidden="true">
-        {account.site.name.slice(0, 1).toUpperCase()}
-      </span>
-    </section>
   )
 }
 
@@ -829,7 +796,7 @@ function AccountListRow({
   checked,
   index,
   showSelection = true,
-  showFavorite = false,
+  showFavorite = true,
   tr,
   formatLastUsed,
   onToggleSelection,
@@ -861,9 +828,9 @@ function AccountListRow({
         <SelectionCheckbox
           checked={checked}
           label={tr(
-            `选择账号 ${account.label}`,
-            `Select ${account.label}`,
-            `選擇帳號 ${account.label}`
+            `选择站点 ${account.site.name}`,
+            `Select ${account.site.name}`,
+            `選擇站點 ${account.site.name}`
           )}
           onChange={() => onToggleSelection?.()}
         />
@@ -874,11 +841,11 @@ function AccountListRow({
         </span>
         <div>
           <div className="account-name-line">
-            <strong>{account.label}</strong>
+            <strong>{account.site.name}</strong>
             {account.favorite && <Star size={13} fill="currentColor" />}
           </div>
           <span>
-            {account.site.name}
+            {account.username}
             <em>·</em>
             {displayGroup(account, tr)}
           </span>
@@ -892,9 +859,13 @@ function AccountListRow({
         </span>
       </div>
       <div>
-        <span className={`recipe-badge${account.site.recipe ? ' is-recorded' : ''}`}>
+        <span
+          className={`recipe-badge${
+            (account.recipes?.length ?? 0) > 0 || account.site.recipe ? ' is-recorded' : ''
+          }`}
+        >
           <span />
-          {account.site.recipe
+          {(account.recipes?.length ?? 0) > 0 || account.site.recipe
             ? tr('已录制', 'Recorded', '已錄製')
             : tr('自动识别', 'Auto detect', '自動識別')}
         </span>
@@ -1021,17 +992,6 @@ function compareAccounts(left: AccountWithSite, right: AccountWithSite): number 
   return (
     new Date(right.lastUsedAt ?? right.updatedAt).getTime() -
     new Date(left.lastUsedAt ?? left.updatedAt).getTime()
-  )
-}
-
-function mostRecentAccount(accounts: AccountWithSite[]): AccountWithSite | null {
-  return (
-    accounts
-      .filter((account) => account.lastUsedAt)
-      .sort(
-        (left, right) =>
-          new Date(right.lastUsedAt ?? 0).getTime() - new Date(left.lastUsedAt ?? 0).getTime()
-      )[0] ?? null
   )
 }
 

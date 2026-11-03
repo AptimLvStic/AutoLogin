@@ -5,11 +5,15 @@ import { randomUUID } from 'node:crypto'
 import type { IpcMainEvent, IpcMainInvokeEvent } from 'electron'
 import { autoUpdater } from 'electron-updater'
 import {
+  accountBatchStrategyInputSchema,
   accountCreateInputSchema,
+  accountDuplicateInputSchema,
   accountUpdateInputSchema,
   appSettingsPatchSchema,
   changePasswordSchema,
   favoriteGroupInputSchema,
+  groupDeleteInputSchema,
+  groupRenameInputSchema,
   kdbxSelectionImportSchema,
   loginBatchStartSchema,
   loginLogDeleteSchema,
@@ -21,6 +25,7 @@ import {
   siteInputSchema
 } from '@shared/schemas'
 import type {
+  AccountBatchStrategyInput,
   AccountWithSite,
   AboutInfo,
   AppUpdateState,
@@ -29,6 +34,7 @@ import type {
   DataImportResult,
   DataLocationInfo,
   FileOperationResult,
+  GroupRenameInput,
   KdbxSelection,
   LoginLogEntry,
   LoginLogDeleteResult,
@@ -43,6 +49,7 @@ import type {
   SelectorTestResult,
   Site,
   SiteInput,
+  StoredAccount,
   UpdateCheckResult,
   VaultStatus
 } from '@shared/types'
@@ -371,6 +378,22 @@ function registerIpc(): void {
     vault.save()
     return [...data.favoriteGroups]
   })
+  ipcMain.handle('groups:rename', (event, payload: unknown) => {
+    assertTrustedSender(event)
+    const parsed = groupRenameInputSchema.safeParse(payload)
+    if (!parsed.success) {
+      throw new Error(firstIssue(parsed.error))
+    }
+    renameGroup(parsed.data)
+  })
+  ipcMain.handle('groups:delete', (event, payload: unknown) => {
+    assertTrustedSender(event)
+    const parsed = groupDeleteInputSchema.safeParse(payload)
+    if (!parsed.success) {
+      throw new Error(firstIssue(parsed.error))
+    }
+    return deleteGroup(parsed.data.groupName)
+  })
 
   ipcMain.handle('accounts:list', (event) => {
     assertTrustedSender(event)
@@ -392,6 +415,22 @@ function registerIpc(): void {
       throw new Error(firstIssue(parsed.error))
     }
     return updateAccount(id, parsed.data)
+  })
+  ipcMain.handle('accounts:set-strategy-batch', (event, payload: unknown) => {
+    assertTrustedSender(event)
+    const parsed = accountBatchStrategyInputSchema.safeParse(payload)
+    if (!parsed.success) {
+      throw new Error(firstIssue(parsed.error))
+    }
+    return setAccountStrategyBatch(parsed.data)
+  })
+  ipcMain.handle('accounts:duplicate', (event, payload: unknown) => {
+    assertTrustedSender(event)
+    const parsed = accountDuplicateInputSchema.safeParse(payload)
+    if (!parsed.success) {
+      throw new Error(firstIssue(parsed.error))
+    }
+    return duplicateAccounts(parsed.data)
   })
   ipcMain.handle(
     'accounts:set-active-recipe',
@@ -847,6 +886,49 @@ function registerIpc(): void {
 
 }
 
+function renameGroup(input: GroupRenameInput): void {
+  const data = vault.requireData()
+  const fromName = input.fromName.trim()
+  const toName = input.toName.trim()
+  if (fromName === toName) return
+
+  const affected = data.sites.filter((site) => site.group?.trim() === fromName)
+  if (affected.length === 0) {
+    throw new Error('分组不存在')
+  }
+  if (data.sites.some((site) => site.group?.trim() === toName)) {
+    throw new Error('目标分组已存在')
+  }
+
+  const now = new Date().toISOString()
+  for (const site of affected) {
+    site.group = toName
+    site.updatedAt = now
+  }
+  data.favoriteGroups = [
+    ...new Set(
+      data.favoriteGroups.map((groupName) => (groupName === fromName ? toName : groupName))
+    )
+  ]
+  vault.save()
+}
+
+function deleteGroup(groupName: string): number {
+  const data = vault.requireData()
+  const name = groupName.trim()
+  const affected = data.sites.filter((site) => site.group?.trim() === name)
+  if (affected.length === 0) return 0
+
+  const now = new Date().toISOString()
+  for (const site of affected) {
+    site.group = undefined
+    site.updatedAt = now
+  }
+  data.favoriteGroups = data.favoriteGroups.filter((entry) => entry !== name)
+  vault.save()
+  return affected.length
+}
+
 function saveSite(input: SiteInput): Site {
   const data = vault.requireData()
   const now = new Date().toISOString()
@@ -1080,6 +1162,121 @@ function updateAccount(
   account.updatedAt = new Date().toISOString()
   vault.save()
   return toPublicAccount(account, site)
+}
+
+function setAccountStrategyBatch(
+  input: AccountBatchStrategyInput
+): AccountWithSite[] {
+  const data = vault.requireData()
+  const siteMap = new Map(data.sites.map((site) => [site.id, site]))
+  const accounts = input.accountIds.map((accountId) => {
+    const account = data.accounts.find((entry) => entry.id === accountId)
+    if (!account) throw new Error('所选账号中包含不存在的记录')
+    if (!siteMap.has(account.siteId)) throw new Error('所选账号包含失效的站点')
+    return account
+  })
+  const sharedSelectors = normalizeManualSelectors(input.manualSelectors)
+
+  if (
+    input.loginStrategy === 'manual' &&
+    input.manualSelectors &&
+    (!sharedSelectors?.username || !sharedSelectors.password)
+  ) {
+    throw new Error('批量手动配置需要同时填写用户名和密码定位器')
+  }
+  if (input.loginStrategy === 'manual' && !sharedSelectors) {
+    const incomplete = accounts.some(
+      (account) =>
+        !account.manualSelectors?.username || !account.manualSelectors.password
+    )
+    if (incomplete) {
+      throw new Error('部分账号尚无完整定位器，请填写统一定位器后再应用')
+    }
+  }
+
+  const now = new Date().toISOString()
+  for (const account of accounts) {
+    account.loginStrategy = input.loginStrategy
+    if (input.loginStrategy === 'manual' && sharedSelectors) {
+      account.manualSelectors = structuredClone(sharedSelectors)
+    }
+    account.updatedAt = now
+  }
+  vault.save()
+  return accounts.map((account) =>
+    toPublicAccount(account, siteMap.get(account.siteId)!)
+  )
+}
+
+function duplicateAccounts(accountIds: string[]): AccountWithSite[] {
+  const data = vault.requireData()
+  const siteMap = new Map(data.sites.map((site) => [site.id, site]))
+  const originals = accountIds.map((accountId) => {
+    const account = data.accounts.find((entry) => entry.id === accountId)
+    if (!account) throw new Error('所选账号中包含不存在的记录')
+    const site = siteMap.get(account.siteId)
+    if (!site) throw new Error('所选账号包含失效的站点')
+    return { account, site }
+  })
+
+  const takenNames = new Set(data.sites.map((site) => normalizeSiteName(site.name)))
+  const now = new Date().toISOString()
+  const created: Array<{ account: StoredAccount; site: Site }> = []
+
+  for (const original of originals) {
+    const copyName = uniqueCopyName(original.site.name, takenNames)
+    const site: Site = {
+      ...structuredClone(original.site),
+      id: randomUUID(),
+      name: copyName,
+      createdAt: now,
+      updatedAt: now
+    }
+    const recipeIds = new Map<string, string>()
+    const recipes = (original.account.recipes ?? []).map((recipe) => {
+      const id = randomUUID()
+      recipeIds.set(recipe.id, id)
+      return { ...structuredClone(recipe), id }
+    })
+    const account: StoredAccount = {
+      ...structuredClone(original.account),
+      id: randomUUID(),
+      siteId: site.id,
+      label: copyName,
+      recipes,
+      activeRecipeId: original.account.activeRecipeId
+        ? recipeIds.get(original.account.activeRecipeId)
+        : undefined,
+      lastUsedAt: undefined,
+      createdAt: now,
+      updatedAt: now
+    }
+    data.sites.push(site)
+    data.accounts.push(account)
+    created.push({ account, site })
+  }
+
+  vault.save()
+  for (const entry of created) {
+    sessionIndex.add(entry.account.id)
+  }
+  return created.map((entry) => toPublicAccount(entry.account, entry.site))
+}
+
+function uniqueCopyName(baseName: string, takenNames: Set<string>): string {
+  const base = baseName.trim()
+  let sequence = 1
+  while (true) {
+    const suffix = sequence === 1 ? ' 副本' : ` 副本 ${sequence}`
+    const available = Math.max(1, 80 - suffix.length)
+    const candidate = `${base.slice(0, available).trimEnd()}${suffix}`
+    const normalized = normalizeSiteName(candidate)
+    if (!takenNames.has(normalized)) {
+      takenNames.add(normalized)
+      return candidate
+    }
+    sequence += 1
+  }
 }
 
 function listAccounts(): AccountWithSite[] {

@@ -266,6 +266,17 @@ export interface AccountUpdateInput {
   manualSelectors?: ManualLoginSelectors
 }
 
+export interface AccountBatchStrategyInput {
+  accountIds: string[]
+  loginStrategy: LoginStrategy
+  manualSelectors?: ManualLoginSelectors
+}
+
+export interface GroupRenameInput {
+  fromName: string
+  toName: string
+}
+
 export interface LoginStartInput {
   accountId: string
   mode: LoginMode
@@ -418,11 +429,15 @@ export interface AutologinApi {
   groups: {
     listFavorites: () => Promise<string[]>
     setFavorite: (groupName: string, favorite: boolean) => Promise<string[]>
+    rename: (fromName: string, toName: string) => Promise<void>
+    delete: (groupName: string) => Promise<number>
   }
   accounts: {
     list: () => Promise<AccountWithSite[]>
     create: (input: AccountCreateInput) => Promise<AccountWithSite>
     update: (accountId: string, patch: AccountUpdateInput) => Promise<AccountWithSite>
+    setStrategyBatch: (input: AccountBatchStrategyInput) => Promise<AccountWithSite[]>
+    duplicate: (accountIds: string[]) => Promise<AccountWithSite[]>
     delete: (accountId: string) => Promise<void>
     reveal: (accountId: string) => Promise<PasswordReveal>
     copyUsername: (accountId: string) => Promise<void>

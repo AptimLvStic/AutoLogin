@@ -1,8 +1,12 @@
 import { describe, expect, it } from 'vitest'
 import {
+  accountBatchStrategyInputSchema,
+  accountDuplicateInputSchema,
   accountCreateInputSchema,
   appSettingsPatchSchema,
   appSettingsSchema,
+  groupDeleteInputSchema,
+  groupRenameInputSchema,
   masterPasswordSchema,
   siteInputSchema,
   storedAccountSchema
@@ -115,6 +119,34 @@ describe('shared input schemas', () => {
     }))
     expect(storedAccountSchema.safeParse({ ...base, recipes: flows.slice(0, 3) }).success).toBe(true)
     expect(storedAccountSchema.safeParse({ ...base, recipes: flows }).success).toBe(false)
+  })
+
+  it('validates group actions and account batch inputs', () => {
+    expect(
+      groupRenameInputSchema.safeParse({ fromName: 'Work', toName: 'Clients' }).success
+    ).toBe(true)
+    expect(
+      groupRenameInputSchema.safeParse({ fromName: 'Work', toName: '' }).success
+    ).toBe(false)
+    expect(groupDeleteInputSchema.safeParse({ groupName: 'Work' }).success).toBe(true)
+    expect(
+      accountBatchStrategyInputSchema.safeParse({
+        accountIds: ['account-1', 'account-2'],
+        loginStrategy: 'manual',
+        manualSelectors: {
+          username: '#username',
+          password: '#password'
+        }
+      }).success
+    ).toBe(true)
+    expect(
+      accountBatchStrategyInputSchema.safeParse({
+        accountIds: ['account-1', 'account-1'],
+        loginStrategy: 'auto'
+      }).success
+    ).toBe(false)
+    expect(accountDuplicateInputSchema.safeParse(['account-1', 'account-2']).success).toBe(true)
+    expect(accountDuplicateInputSchema.safeParse([]).success).toBe(false)
   })
 
 })

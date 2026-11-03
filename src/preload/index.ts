@@ -41,13 +41,17 @@ const api: AutologinApi = {
   groups: {
     listFavorites: () => invoke('groups:list-favorites'),
     setFavorite: (groupName, favorite) =>
-      invoke('groups:set-favorite', { groupName, favorite })
+      invoke('groups:set-favorite', { groupName, favorite }),
+    rename: (fromName, toName) => invoke('groups:rename', { fromName, toName }),
+    delete: (groupName) => invoke('groups:delete', { groupName })
   },
   accounts: {
     list: () => invoke('accounts:list'),
     create: (input: AccountCreateInput) => invoke('accounts:create', input),
     update: (accountId, patch: AccountUpdateInput) =>
       invoke('accounts:update', accountId, patch),
+    setStrategyBatch: (input) => invoke('accounts:set-strategy-batch', input),
+    duplicate: (accountIds) => invoke('accounts:duplicate', accountIds),
     delete: (accountId) => invoke('accounts:delete', accountId),
     reveal: (accountId) => invoke('accounts:reveal', accountId),
     copyUsername: (accountId) => invoke('accounts:copy-username', accountId),

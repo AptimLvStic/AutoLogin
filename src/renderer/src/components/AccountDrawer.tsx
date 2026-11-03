@@ -487,6 +487,7 @@ export function AccountDrawer({
 
 
           <form className="account-form account-drawer__form" onSubmit={submit}>
+            <div className="account-drawer__body">
             {!account && (
               <div className="segmented-control" aria-label={tr('站点来源', 'Site source', '站點來源')}>
                 <button
@@ -885,6 +886,7 @@ export function AccountDrawer({
                 )}
               </>
             )}
+            </div>
 
             <div className="account-drawer__footer">
               <div className="account-drawer__management">

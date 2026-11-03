@@ -4,6 +4,7 @@ import {
   Check,
   ChevronDown,
   ChevronRight,
+  Copy,
   FileText,
   Globe2,
   KeyRound,
@@ -16,13 +17,23 @@ import {
   Plus,
   Search,
   Settings,
+  SlidersHorizontal,
   Star,
+  Trash2,
   UserRound
 } from 'lucide-react'
-import type { AccountWithSite, AppSettings, LoginBatchState, Site } from '@shared/types'
+import type {
+  AccountWithSite,
+  AppSettings,
+  LoginBatchState,
+  LoginStrategy,
+  ManualLoginSelectors,
+  Site
+} from '@shared/types'
 import { useI18n } from '../i18n'
 import { AccountDrawer } from './AccountDrawer'
 import { LoginLogsPage } from './LoginLogsPage'
+import { ConfirmDialog, Modal } from './Modal'
 import { SettingsPage, type SettingsModule } from './SettingsPage'
 
 type LibraryView = 'accounts' | 'favorites' | 'logs' | 'settings'
@@ -85,6 +96,21 @@ export function LibraryScreen({
   const [selectedIds, setSelectedIds] = useState<Set<string>>(() => new Set())
   const [favoriteGroups, setFavoriteGroups] = useState<string[]>([])
   const [drawer, setDrawer] = useState<DrawerState | null>(null)
+  const [groupMenu, setGroupMenu] = useState<{
+    group: GroupSummary
+    left: number
+    top: number
+  } | null>(null)
+  const [renameGroupTarget, setRenameGroupTarget] = useState<GroupSummary | null>(null)
+  const [renameGroupValue, setRenameGroupValue] = useState('')
+  const [deleteGroupTarget, setDeleteGroupTarget] = useState<GroupSummary | null>(null)
+  const [groupActionBusy, setGroupActionBusy] = useState(false)
+  const [batchStrategyOpen, setBatchStrategyOpen] = useState(false)
+  const [batchStrategy, setBatchStrategy] = useState<LoginStrategy>('auto')
+  const [batchSelectors, setBatchSelectors] = useState<ManualLoginSelectors>({})
+  const [batchStrategyError, setBatchStrategyError] = useState('')
+  const [batchStrategyBusy, setBatchStrategyBusy] = useState(false)
+  const [duplicateBusy, setDuplicateBusy] = useState(false)
   const searchRef = useRef<HTMLInputElement>(null)
   const selectAllRef = useRef<HTMLInputElement>(null)
   const settingsButtonRef = useRef<HTMLButtonElement>(null)
@@ -137,13 +163,12 @@ export function LibraryScreen({
         (account) =>
           account.favorite ||
           Boolean(account.site.group?.trim() && favoriteGroupSet.has(account.site.group.trim()))
-      ),
+      ).sort(compareAccounts),
     [accounts, favoriteGroupSet]
   )
   const currentGroup = groupFilter
     ? groups.find((group) => group.key === groupFilter) ?? null
     : null
-  const favoriteGroupOptions = groups.filter((group) => Boolean(group.actualName))
 
   const filteredAccounts = useMemo(() => {
     const query = search.trim().toLocaleLowerCase(language)
@@ -176,16 +201,6 @@ export function LibraryScreen({
     )
   }, [favoriteAccounts, language, search])
 
-  const favoriteGroupsView = useMemo(() => {
-    const ids = new Set(filteredFavorites.map((account) => account.id))
-    return groups
-      .map((group) => ({
-        ...group,
-        accounts: group.accounts.filter((account) => ids.has(account.id))
-      }))
-      .filter((group) => group.accounts.length > 0)
-  }, [filteredFavorites, groups])
-
   const visibleSelectedIds = useMemo(
     () =>
       filteredAccounts.filter((account) => selectedIds.has(account.id)).map((account) => account.id),
@@ -195,6 +210,10 @@ export function LibraryScreen({
     filteredAccounts.length > 0 && visibleSelectedIds.length === filteredAccounts.length
   const someVisibleSelected = visibleSelectedIds.length > 0 && !allVisibleSelected
   const selectedAccountCount = selectedIds.size
+  const selectedAccounts = useMemo(
+    () => accounts.filter((account) => selectedIds.has(account.id)),
+    [accounts, selectedIds]
+  )
   const drawerAccount =
     drawer?.mode === 'edit'
       ? accounts.find((account) => account.id === drawer.accountId) ?? null
@@ -259,6 +278,31 @@ export function LibraryScreen({
   useEffect(() => {
     if (!sidebarCollapsed) setCollapsedSettingsOpen(false)
   }, [sidebarCollapsed])
+
+  useEffect(() => {
+    if (!groupMenu) return
+    const closeMenu = (): void => setGroupMenu(null)
+    const closeOnPointer = (event: PointerEvent): void => {
+      if (
+        event.target instanceof Element &&
+        event.target.closest('.group-context-menu')
+      ) {
+        return
+      }
+      closeMenu()
+    }
+    const closeOnEscape = (event: KeyboardEvent): void => {
+      if (event.key === 'Escape') setGroupMenu(null)
+    }
+    document.addEventListener('pointerdown', closeOnPointer)
+    document.addEventListener('keydown', closeOnEscape)
+    window.addEventListener('blur', closeMenu)
+    return () => {
+      document.removeEventListener('pointerdown', closeOnPointer)
+      document.removeEventListener('keydown', closeOnEscape)
+      window.removeEventListener('blur', closeMenu)
+    }
+  }, [groupMenu])
 
   useEffect(() => {
     return () => {
@@ -331,7 +375,7 @@ export function LibraryScreen({
     const rect = settingsButtonRef.current?.getBoundingClientRect()
     if (rect) {
       setCollapsedSettingsPosition({
-        top: Math.max(52, Math.min(rect.top, window.innerHeight - 316)),
+        top: Math.max(52, Math.min(rect.top, window.innerHeight - 350)),
         left: rect.right + 10
       })
     }
@@ -401,6 +445,190 @@ export function LibraryScreen({
           ? error.message
           : tr('分组收藏更新失败', 'Could not update group favorite.', '分組收藏更新失敗')
       )
+    }
+  }
+
+  function openGroupMenu(
+    event: React.MouseEvent<HTMLButtonElement>,
+    group: GroupSummary
+  ): void {
+    event.preventDefault()
+    event.stopPropagation()
+    setGroupMenu({
+      group,
+      left: Math.max(8, Math.min(event.clientX, window.innerWidth - 196)),
+      top: Math.max(8, Math.min(event.clientY, window.innerHeight - 158))
+    })
+  }
+
+  function openGroupMenuFromKeyboard(
+    event: React.KeyboardEvent<HTMLButtonElement>,
+    group: GroupSummary
+  ): void {
+    if (event.key !== 'ContextMenu' && !(event.shiftKey && event.key === 'F10')) {
+      return
+    }
+    event.preventDefault()
+    const rect = event.currentTarget.getBoundingClientRect()
+    setGroupMenu({
+      group,
+      left: Math.max(8, Math.min(rect.right + 6, window.innerWidth - 196)),
+      top: Math.max(8, Math.min(rect.top, window.innerHeight - 158))
+    })
+  }
+
+  async function renameSelectedGroup(): Promise<void> {
+    if (!renameGroupTarget?.actualName) return
+    const nextName = renameGroupValue.trim()
+    if (!nextName || nextName === renameGroupTarget.actualName) {
+      setRenameGroupTarget(null)
+      return
+    }
+    setGroupActionBusy(true)
+    try {
+      await window.autologin.groups.rename(renameGroupTarget.actualName, nextName)
+      if (groupFilter === renameGroupTarget.key) setGroupFilter(nextName)
+      await refreshAll()
+      setRenameGroupTarget(null)
+      notify('success', tr('分组已重命名', 'Group renamed.', '分組已重新命名'))
+    } catch (error) {
+      notify(
+        'error',
+        error instanceof Error
+          ? error.message
+          : tr('重命名分组失败', 'Could not rename group.', '重新命名分組失敗')
+      )
+    } finally {
+      setGroupActionBusy(false)
+    }
+  }
+
+  async function deleteSelectedGroup(): Promise<void> {
+    if (!deleteGroupTarget?.actualName) return
+    setGroupActionBusy(true)
+    try {
+      const count = await window.autologin.groups.delete(deleteGroupTarget.actualName)
+      if (groupFilter === deleteGroupTarget.key) setGroupFilter(null)
+      await refreshAll()
+      setDeleteGroupTarget(null)
+      notify(
+        'success',
+        tr(
+          `分组已删除，${count} 个站点已移至未分组`,
+          `Group deleted. ${count} sites moved to Ungrouped.`,
+          `分組已刪除，${count} 個站點已移至未分組`
+        )
+      )
+    } catch (error) {
+      notify(
+        'error',
+        error instanceof Error
+          ? error.message
+          : tr('删除分组失败', 'Could not delete group.', '刪除分組失敗')
+      )
+    } finally {
+      setGroupActionBusy(false)
+    }
+  }
+
+  function openBatchStrategy(): void {
+    if (selectedAccounts.length === 0) return
+    const strategies = new Set(selectedAccounts.map((account) => account.loginStrategy))
+    const sharedStrategy =
+      strategies.size === 1 ? selectedAccounts[0]?.loginStrategy ?? 'auto' : 'auto'
+    const sharedSelector = (field: keyof ManualLoginSelectors): string => {
+      const values = selectedAccounts.map((account) => account.manualSelectors?.[field] ?? '')
+      return values.every((value) => value === values[0]) ? values[0] ?? '' : ''
+    }
+    setBatchStrategy(sharedStrategy)
+    setBatchSelectors({
+      username: sharedSelector('username'),
+      password: sharedSelector('password'),
+      submit: sharedSelector('submit')
+    })
+    setBatchStrategyError('')
+    setBatchStrategyOpen(true)
+  }
+
+  async function applyBatchStrategy(): Promise<void> {
+    const selectors = {
+      username: batchSelectors.username?.trim() || undefined,
+      password: batchSelectors.password?.trim() || undefined,
+      submit: batchSelectors.submit?.trim() || undefined
+    }
+    const selectorsProvided = Object.values(selectors).some(Boolean)
+    if (
+      batchStrategy === 'manual' &&
+      selectorsProvided &&
+      (!selectors.username || !selectors.password)
+    ) {
+      setBatchStrategyError(
+        tr(
+          '填写统一定位器时，用户名和密码均不能为空',
+          'Enter both username and password selectors.',
+          '填寫統一定位器時，使用者名稱和密碼均不能為空'
+        )
+      )
+      return
+    }
+
+    setBatchStrategyBusy(true)
+    setBatchStrategyError('')
+    try {
+      await window.autologin.accounts.setStrategyBatch({
+        accountIds: [...selectedIds],
+        loginStrategy: batchStrategy,
+        ...(batchStrategy === 'manual' && selectorsProvided
+          ? { manualSelectors: selectors }
+          : {})
+      })
+      await onRefresh()
+      setBatchStrategyOpen(false)
+      setSelectedIds(new Set())
+      notify(
+        'success',
+        tr(
+          `已更新 ${selectedAccountCount} 个账号的登录方式`,
+          `Updated the login method for ${selectedAccountCount} accounts.`,
+          `已更新 ${selectedAccountCount} 個帳號的登入方式`
+        )
+      )
+    } catch (error) {
+      setBatchStrategyError(
+        error instanceof Error
+          ? error.message
+          : tr('批量设置失败', 'Could not apply settings.', '批次設定失敗')
+      )
+    } finally {
+      setBatchStrategyBusy(false)
+    }
+  }
+
+  async function duplicateSelectedAccounts(): Promise<void> {
+    if (selectedIds.size === 0) return
+    const count = selectedIds.size
+    setDuplicateBusy(true)
+    try {
+      await window.autologin.accounts.duplicate([...selectedIds])
+      setSelectedIds(new Set())
+      await onRefresh()
+      notify(
+        'success',
+        tr(
+          `已复制 ${count} 个账号`,
+          `Copied ${count} accounts.`,
+          `已複製 ${count} 個帳號`
+        )
+      )
+    } catch (error) {
+      notify(
+        'error',
+        error instanceof Error
+          ? error.message
+          : tr('复制账号失败', 'Could not copy accounts.', '複製帳號失敗')
+      )
+    } finally {
+      setDuplicateBusy(false)
     }
   }
 
@@ -488,7 +716,6 @@ export function LibraryScreen({
 
         <nav className="sidebar-nav sidebar-nav--grouped" aria-label={tr('主导航', 'Main navigation', '主導覽')}>
           <section className="sidebar-section">
-            <span className="sidebar-label">{tr('工作台', 'Workspace', '工作台')}</span>
             <button
               className={`sidebar-nav__item${view === 'accounts' ? ' is-active' : ''}`}
               onClick={chooseAllAccounts}
@@ -521,7 +748,6 @@ export function LibraryScreen({
           </section>
 
           <section className="sidebar-section sidebar-section--preferences">
-            <span className="sidebar-label">{tr('偏好设置', 'Preferences', '偏好設定')}</span>
             <button
               ref={settingsButtonRef}
               className={`sidebar-nav__item sidebar-nav__item--expandable sidebar-nav__item--settings${
@@ -581,6 +807,13 @@ export function LibraryScreen({
                   {tr('数据与备份', 'Data & backups', '資料與備份')}
                 </button>
                 <button
+                  className={`sidebar-child-item${view === 'settings' && settingsModule === 'diary' ? ' is-active' : ''}`}
+                  onClick={() => chooseSettingsModule('diary')}
+                  tabIndex={settingsExpanded ? 0 : -1}
+                >
+                  {tr('软件日记', 'App diary', '軟體日記')}
+                </button>
+                <button
                   className={`sidebar-child-item${view === 'settings' && settingsModule === 'about' ? ' is-active' : ''}`}
                   onClick={() => chooseSettingsModule('about')}
                   tabIndex={settingsExpanded ? 0 : -1}
@@ -615,6 +848,7 @@ export function LibraryScreen({
                 ['network', tr('网络代理', 'Network proxy', '網路代理')],
                 ['security', tr('安全与隐私', 'Security & privacy', '安全性與隱私')],
                 ['data', tr('数据与备份', 'Data & backups', '資料與備份')],
+                ['diary', tr('软件日记', 'App diary', '軟體日記')],
                 ['about', tr('关于与更新', 'About & updates', '關於與更新')]
               ] as const
             ).map(([module, label]) => (
@@ -665,6 +899,276 @@ export function LibraryScreen({
         </div>
       </aside>
 
+      {groupMenu && (
+        <div
+          className="group-context-menu"
+          role="menu"
+          aria-label={tr('分组操作', 'Group actions', '分組操作')}
+          style={{ left: groupMenu.left, top: groupMenu.top }}
+        >
+          <span className="group-context-menu__label">{groupMenu.group.name}</span>
+          <button
+            type="button"
+            role="menuitem"
+            onClick={() => {
+              setRenameGroupTarget(groupMenu.group)
+              setRenameGroupValue(groupMenu.group.name)
+              setGroupMenu(null)
+            }}
+          >
+            <Pencil size={14} />
+            {tr('重命名分组', 'Rename group', '重新命名分組')}
+          </button>
+          <button
+            type="button"
+            role="menuitem"
+            onClick={() => {
+              const group = groupMenu.group
+              setGroupMenu(null)
+              void toggleGroupFavorite(group)
+            }}
+          >
+            <Star
+              size={14}
+              fill={
+                favoriteGroupSet.has(groupMenu.group.actualName ?? '')
+                  ? 'currentColor'
+                  : 'none'
+              }
+            />
+            {favoriteGroupSet.has(groupMenu.group.actualName ?? '')
+              ? tr('取消收藏分组', 'Remove group favorite', '取消收藏分組')
+              : tr('收藏分组', 'Favorite group', '收藏分組')}
+          </button>
+          <button
+            type="button"
+            role="menuitem"
+            className="is-danger"
+            onClick={() => {
+              setDeleteGroupTarget(groupMenu.group)
+              setGroupMenu(null)
+            }}
+          >
+            <Trash2 size={14} />
+            {tr('删除分组', 'Delete group', '刪除分組')}
+          </button>
+        </div>
+      )}
+
+      {batchStrategyOpen && (
+        <Modal
+          title={tr('批量设置登录方式', 'Set login method', '批次設定登入方式')}
+          eyebrow="BATCH LOGIN METHOD"
+          onClose={() => setBatchStrategyOpen(false)}
+          width="560px"
+          className="batch-strategy-modal"
+        >
+          <form
+            className="batch-strategy-form"
+            onSubmit={(event) => {
+              event.preventDefault()
+              void applyBatchStrategy()
+            }}
+          >
+            <p className="modal-description">
+              {tr(
+                `将统一更新所选 ${selectedAccountCount} 个账号的登录方式。`,
+                `Update the login method for ${selectedAccountCount} selected accounts.`,
+                `將統一更新所選 ${selectedAccountCount} 個帳號的登入方式。`
+              )}
+            </p>
+            <div className="proxy-mode-options account-strategy-options">
+              <label
+                className={`proxy-mode-option${batchStrategy === 'auto' ? ' is-active' : ''}`}
+              >
+                <input
+                  type="radio"
+                  name="batch-login-strategy"
+                  value="auto"
+                  checked={batchStrategy === 'auto'}
+                  onChange={() => {
+                    setBatchStrategy('auto')
+                    setBatchStrategyError('')
+                  }}
+                />
+                <span>
+                  <strong>{tr('自动录制', 'Automatic recording', '自動錄製')}</strong>
+                  <small>
+                    {tr(
+                      '优先回放录制流程，失败时自动识别表单',
+                      'Replay recorded flows, then fall back to form detection',
+                      '優先回放錄製流程，失敗時自動辨識表單'
+                    )}
+                  </small>
+                </span>
+              </label>
+              <label
+                className={`proxy-mode-option${batchStrategy === 'manual' ? ' is-active' : ''}`}
+              >
+                <input
+                  type="radio"
+                  name="batch-login-strategy"
+                  value="manual"
+                  checked={batchStrategy === 'manual'}
+                  onChange={() => {
+                    setBatchStrategy('manual')
+                    setBatchStrategyError('')
+                  }}
+                />
+                <span>
+                  <strong>{tr('手动配置', 'Manual configuration', '手動設定')}</strong>
+                  <small>
+                    {tr(
+                      '使用用户名、密码和提交按钮定位器',
+                      'Use username, password and submit selectors',
+                      '使用使用者名稱、密碼和提交按鈕定位器'
+                    )}
+                  </small>
+                </span>
+              </label>
+            </div>
+
+            {batchStrategy === 'manual' && (
+              <div className="batch-selector-fields">
+                <p className="settings-hint">
+                  {tr(
+                    '可填写统一适用的定位器；留空时会检查每个账号是否已有完整配置。',
+                    'Optionally apply shared selectors. Leave blank to keep each account’s existing selectors.',
+                    '可填寫統一適用的定位器；留空時會檢查每個帳號是否已有完整設定。'
+                  )}
+                </p>
+                {(
+                  [
+                    ['username', tr('用户名定位器', 'Username selector', '使用者名稱定位器')],
+                    ['password', tr('密码定位器', 'Password selector', '密碼定位器')],
+                    ['submit', tr('提交按钮定位器', 'Submit selector', '提交按鈕定位器')]
+                  ] as const
+                ).map(([field, label]) => (
+                  <label className="field" key={field}>
+                    <span className="field__label">{label}</span>
+                    <span className="input-shell">
+                      <SlidersHorizontal size={15} />
+                      <input
+                        value={batchSelectors[field] ?? ''}
+                        onChange={(event) =>
+                          setBatchSelectors((current) => ({
+                            ...current,
+                            [field]: event.target.value
+                          }))
+                        }
+                        placeholder={
+                          field === 'username'
+                            ? 'input[name="username"], #username'
+                            : field === 'password'
+                              ? 'input[type="password"], #password'
+                              : 'button[type="submit"], #login'
+                        }
+                        spellCheck={false}
+                        autoComplete="off"
+                      />
+                    </span>
+                  </label>
+                ))}
+              </div>
+            )}
+
+            {batchStrategyError && <p className="form-error">{batchStrategyError}</p>}
+            <div className="modal-actions">
+              <button
+                type="button"
+                className="button button--ghost"
+                onClick={() => setBatchStrategyOpen(false)}
+                disabled={batchStrategyBusy}
+              >
+                {tr('取消', 'Cancel', '取消')}
+              </button>
+              <button type="submit" className="button button--primary" disabled={batchStrategyBusy}>
+                {batchStrategyBusy ? (
+                  <LoaderCircle size={15} className="spin" />
+                ) : (
+                  <Check size={15} />
+                )}
+                {batchStrategyBusy
+                  ? tr('正在应用…', 'Applying…', '正在套用…')
+                  : tr('应用设置', 'Apply', '套用設定')}
+              </button>
+            </div>
+          </form>
+        </Modal>
+      )}
+
+      {renameGroupTarget && (
+        <Modal
+          title={tr('重命名分组', 'Rename group', '重新命名分組')}
+          eyebrow="GROUP NAME"
+          onClose={() => setRenameGroupTarget(null)}
+          width="440px"
+          className="group-rename-modal"
+        >
+          <form
+            className="group-rename-form"
+            onSubmit={(event) => {
+              event.preventDefault()
+              void renameSelectedGroup()
+            }}
+          >
+            <label className="field">
+              <span className="field__label">{tr('分组名称', 'Group name', '分組名稱')}</span>
+              <span className="input-shell">
+                <Layers3 size={16} />
+                <input
+                  data-autofocus
+                  value={renameGroupValue}
+                  onChange={(event) => setRenameGroupValue(event.target.value)}
+                  maxLength={40}
+                  placeholder={tr('输入新的分组名称', 'Enter a new group name', '輸入新的分組名稱')}
+                />
+              </span>
+            </label>
+            <div className="modal-actions">
+              <button
+                type="button"
+                className="button button--ghost"
+                onClick={() => setRenameGroupTarget(null)}
+                disabled={groupActionBusy}
+              >
+                {tr('取消', 'Cancel', '取消')}
+              </button>
+              <button
+                type="submit"
+                className="button button--primary"
+                disabled={
+                  groupActionBusy ||
+                  !renameGroupValue.trim() ||
+                  renameGroupValue.trim() === renameGroupTarget.actualName
+                }
+              >
+                {groupActionBusy ? <LoaderCircle size={15} className="spin" /> : <Check size={15} />}
+                {groupActionBusy
+                  ? tr('正在保存…', 'Saving…', '正在儲存…')
+                  : tr('保存名称', 'Save name', '儲存名稱')}
+              </button>
+            </div>
+          </form>
+        </Modal>
+      )}
+
+      {deleteGroupTarget && (
+        <ConfirmDialog
+          title={tr('删除这个分组？', 'Delete this group?', '刪除這個分組？')}
+          description={tr(
+            `“${deleteGroupTarget.name}”中的站点会移至未分组，账号、密码和录制流程不会被删除。`,
+            `Sites in “${deleteGroupTarget.name}” will move to Ungrouped. Accounts, passwords and recorded flows will be kept.`,
+            `「${deleteGroupTarget.name}」中的站點會移至未分組，帳號、密碼和錄製流程不會被刪除。`
+          )}
+          confirmLabel={tr('删除分组', 'Delete group', '刪除分組')}
+          danger
+          busy={groupActionBusy}
+          onConfirm={() => void deleteSelectedGroup()}
+          onClose={() => setDeleteGroupTarget(null)}
+        />
+      )}
+
       <main className="library-main">
         <div className="library-content-scroll">
           {(view === 'accounts' || view === 'favorites') && (
@@ -696,6 +1200,9 @@ export function LibraryScreen({
                           groupFilter === group.key ? ' is-active' : ''
                         }`}
                         onClick={() => chooseGroup(group)}
+                        onContextMenu={(event) => openGroupMenu(event, group)}
+                        onKeyDown={(event) => openGroupMenuFromKeyboard(event, group)}
+                        aria-haspopup="menu"
                       >
                         <Layers3 size={15} />
                         <span>{group.name}</span>
@@ -812,6 +1319,28 @@ export function LibraryScreen({
                       {tr('取消选择', 'Clear selection', '取消選擇')}
                     </button>
                     <button
+                      className="button button--ghost"
+                      onClick={() => void duplicateSelectedAccounts()}
+                      disabled={duplicateBusy || Boolean(batchState?.active)}
+                    >
+                      {duplicateBusy ? (
+                        <LoaderCircle size={15} className="spin" />
+                      ) : (
+                        <Copy size={15} />
+                      )}
+                      {duplicateBusy
+                        ? tr('正在复制…', 'Copying…', '正在複製…')
+                        : tr('复制账号', 'Copy accounts', '複製帳號')}
+                    </button>
+                    <button
+                      className="button button--ghost"
+                      onClick={openBatchStrategy}
+                      disabled={Boolean(batchState?.active)}
+                    >
+                      <SlidersHorizontal size={15} />
+                      {tr('设置登录方式', 'Set login method', '設定登入方式')}
+                    </button>
+                    <button
                       className="button button--primary"
                       onClick={() => void openSelected()}
                       disabled={Boolean(batchState?.active)}
@@ -888,58 +1417,6 @@ export function LibraryScreen({
                 </section>
               ) : (
                 <div className="favorite-workspace">
-                  {favoriteGroupOptions.length > 0 && (
-                    <section className="favorite-group-picker">
-                      <header className="favorite-group-picker__header">
-                        <div className="favorite-group-picker__heading">
-                          <span className="favorite-group__icon">
-                            <Layers3 size={15} />
-                          </span>
-                          <div>
-                            <h3>{tr('收藏分组', 'Favorite groups', '收藏分組')}</h3>
-                            <p>
-                              {tr(
-                                '收藏整个分组后，组内账号会一并显示在收藏中。',
-                                'Favorite a whole group to include all of its accounts in Favorites.',
-                                '收藏整個分組後，組內帳號會一併顯示在收藏中。'
-                              )}
-                            </p>
-                          </div>
-                        </div>
-                        <span className="favorite-group-picker__count">
-                          {favoriteGroups.length} {tr('个分组已收藏', 'groups favorited', '個分組已收藏')}
-                        </span>
-                      </header>
-                      <div className="favorite-group-picker__list">
-                        {favoriteGroupOptions.map((group) => {
-                          const active = favoriteGroupSet.has(group.actualName!)
-                          return (
-                            <button
-                              type="button"
-                              key={group.key}
-                              className={`favorite-group-picker__row${active ? ' is-active' : ''}`}
-                              aria-pressed={active}
-                              onClick={() => void toggleGroupFavorite(group)}
-                            >
-                              <span className="favorite-group-picker__identity">
-                                <strong>{group.name}</strong>
-                                <small>
-                                  {group.count} {tr('个账号', 'accounts', '個帳號')}
-                                </small>
-                              </span>
-                              <span className="favorite-group-picker__action">
-                                <Star size={15} fill={active ? 'currentColor' : 'none'} />
-                                {active
-                                  ? tr('已收藏', 'Favorited', '已收藏')
-                                  : tr('收藏分组', 'Favorite', '收藏分組')}
-                              </span>
-                            </button>
-                          )
-                        })}
-                      </div>
-                    </section>
-                  )}
-
                   <section className="favorite-accounts">
                     <header className="favorite-accounts__header">
                       <div>
@@ -959,9 +1436,9 @@ export function LibraryScreen({
                       <CompactEmptyState
                         title={tr('还没有收藏账号', 'No favorite accounts yet', '還沒有收藏帳號')}
                         description={tr(
-                          '在账号编辑面板中收藏账号，或在上方收藏一个分组。',
-                          'Favorite an account in its edit panel, or favorite a group above.',
-                          '在帳號編輯面板中收藏帳號，或在上方收藏一個分組。'
+                          '在账号编辑面板中收藏账号，或在账号页右键收藏一个分组。',
+                          'Favorite an account in its edit panel, or right-click a group on the Accounts page.',
+                          '在帳號編輯面板中收藏帳號，或在帳號頁右鍵收藏一個分組。'
                         )}
                       />
                     ) : filteredFavorites.length === 0 ? (
@@ -970,40 +1447,21 @@ export function LibraryScreen({
                         description={tr('尝试更换搜索关键词。', 'Try another search.', '嘗試更換搜尋關鍵字。')}
                       />
                     ) : (
-                      <div className="favorite-groups">
-                        {favoriteGroupsView.map((group) => (
-                          <section className="favorite-group" key={group.key}>
-                            <header className="favorite-group__header">
-                              <div className="favorite-group__identity">
-                                <span className="favorite-group__icon">
-                                  <Layers3 size={15} />
-                                </span>
-                                <div>
-                                  <h3>{group.name}</h3>
-                                  <span>
-                                    {group.accounts.length} {tr('个账号', 'accounts', '個帳號')}
-                                  </span>
-                                </div>
-                              </div>
-                            </header>
-                            <div className="account-list favorite-group__list">
-                              {group.accounts.map((account, index) => (
-                                <AccountListRow
-                                  key={account.id}
-                                  account={account}
-                                  checked={false}
-                                  index={index}
-                                  showSelection={false}
-                                  showFavorite
-                                  tr={tr}
-                                  formatLastUsed={(value) => formatLastUsed(value, tr, formatDate)}
-                                  onToggleFavorite={() => void toggleAccountFavorite(account)}
-                                  onEdit={() => setDrawer({ mode: 'edit', accountId: account.id })}
-                                  onLogin={() => void openAccount(account)}
-                                />
-                              ))}
-                            </div>
-                          </section>
+                      <div className="account-list favorite-account-list">
+                        {filteredFavorites.map((account, index) => (
+                          <AccountListRow
+                            key={account.id}
+                            account={account}
+                            checked={false}
+                            index={index}
+                            showSelection={false}
+                            showFavorite
+                            tr={tr}
+                            formatLastUsed={(value) => formatLastUsed(value, tr, formatDate)}
+                            onToggleFavorite={() => void toggleAccountFavorite(account)}
+                            onEdit={() => setDrawer({ mode: 'edit', accountId: account.id })}
+                            onLogin={() => void openAccount(account)}
+                          />
                         ))}
                       </div>
                     )}

@@ -78,7 +78,9 @@ test.afterAll(async () => {
 })
 
 test('uses the Windows default browser, reuses the session and clears it', async () => {
+  await expect(page.locator('.auth-story .brand-lockup')).toHaveCount(0)
   await createVault(page)
+  await expect(page.locator('.sidebar-label')).toHaveCount(0)
   const titlebarLogo = page.locator('.window-titlebar__logo')
   await expect(titlebarLogo).toBeVisible()
   expect(await titlebarLogo.evaluate((image) => (image as HTMLImageElement).naturalWidth)).toBeGreaterThan(0)
@@ -574,6 +576,10 @@ test('persists dark mode, language, themes and interface scale with separate res
   ).toBeVisible()
   const runtimeVersion = await application.evaluate(({ app }) => app.getVersion())
   await expect(settings.locator('.settings-location code')).toContainText(userDataDirectory)
+  await page.locator('.sidebar-child-item').filter({ hasText: '软件日记' }).click()
+  await expect(settings.getByRole('heading', { name: '软件日记', level: 3 })).toBeVisible()
+  await expect(settings.locator('.app-diary-entry')).toHaveCount(3)
+  await expect(settings.locator('.app-diary-entry__current')).toHaveText('当前版本')
   await page.locator('.sidebar-child-item').filter({ hasText: '关于与更新' }).click()
   await expect(settings.getByRole('heading', { name: '关于 AutoLogin' })).toBeVisible()
   await expect(settings.getByRole('heading', { name: '检查更新' })).toBeVisible()
@@ -621,17 +627,17 @@ test('opens the settings submenu beside the collapsed sidebar', async () => {
 
   const popover = page.locator('.sidebar-settings-popover')
   await expect(popover).toBeVisible()
-  await expect(popover.getByRole('menuitem')).toHaveCount(6)
-  await popover.getByRole('menuitem', { name: '网络代理' }).click()
+  await expect(popover.getByRole('menuitem')).toHaveCount(7)
+  await popover.getByRole('menuitem', { name: '软件日记' }).click()
 
   await expect(
-    page.locator('.settings-page').getByRole('heading', { name: '网络代理' })
+    page.locator('.settings-page').getByRole('heading', { name: '软件日记', level: 3 })
   ).toBeVisible()
   await expect(settingsButton).toHaveClass(/is-active/)
   await expect(popover).toHaveCount(0)
 })
 
-test('supports grouped favorites, drawer editing and checkbox batch tabs in one browser', async () => {
+test('supports group actions, favorite accounts, batch editing and one-browser tabs', async () => {
   await createVault(page)
   await addAccount(page, {
     siteName: '工作站点',
@@ -672,42 +678,138 @@ test('supports grouped favorites, drawer editing and checkbox batch tabs in one 
     page.locator('.sidebar-actions').getByRole('button', { name: '添加账号' })
   ).toHaveCount(0)
 
+  await groupRow.click({ button: 'right' })
+  const groupMenu = page.locator('.group-context-menu')
+  await expect(groupMenu).toBeVisible()
+  await groupMenu.getByRole('menuitem', { name: '重命名分组' }).click()
+  const renameModal = page.locator('.group-rename-modal')
+  await expect(renameModal).toBeVisible()
+  await renameModal.getByLabel('分组名称').fill('工作区')
+  await renameModal.getByRole('button', { name: '保存名称' }).click()
+  await expect(page.locator('.toast')).toContainText('分组已重命名')
+  const renamedGroupRow = page.locator('.account-subnav__item').filter({ hasText: '工作区' })
+  await expect(renamedGroupRow).toContainText('2')
+
+  await renamedGroupRow.click({ button: 'right' })
+  await expect(groupMenu).toBeVisible()
+  await groupMenu.getByRole('menuitem', { name: '收藏分组' }).click()
+  await expect
+    .poll(() => page.evaluate(() => window.autologin.groups.listFavorites()))
+    .toEqual(['工作区'])
+
+  await application.evaluate(({ BrowserWindow }) => {
+    BrowserWindow.getAllWindows()[0]?.setSize(960, 640)
+  })
+  await page.waitForTimeout(250)
   const secondaryRow = page.locator('.account-row').filter({ hasText: '备用站点' })
   await expect(secondaryRow.getByRole('button', { name: '编辑' })).toBeVisible()
   await expect(secondaryRow.getByRole('button', { name: '登录' })).toBeVisible()
   await secondaryRow.click()
   const editDrawer = page.locator('.account-drawer')
   await expect(editDrawer.getByRole('heading', { name: '备用站点' })).toBeVisible()
-  const drawerMetrics = await editDrawer.evaluate((element) => ({
-    clientHeight: element.clientHeight,
-    scrollHeight: element.scrollHeight,
-    bottom: element.getBoundingClientRect().bottom
-  }))
-  expect(drawerMetrics.scrollHeight).toBeLessThanOrEqual(drawerMetrics.clientHeight + 1)
-  expect(drawerMetrics.bottom).toBeLessThanOrEqual(
+  await editDrawer.getByRole('radio', { name: /手动配置/ }).check()
+  const drawerLayout = await editDrawer.evaluate((element) => {
+    const body = element.querySelector<HTMLElement>('.account-drawer__body')
+    const footer = element.querySelector<HTMLElement>('.account-drawer__footer')
+    return {
+      drawerBottom: element.getBoundingClientRect().bottom,
+      bodyOverflow: body ? getComputedStyle(body).overflowY : '',
+      bodyBottom: body?.getBoundingClientRect().bottom ?? 0,
+      footerTop: footer?.getBoundingClientRect().top ?? 0,
+      footerBottom: footer?.getBoundingClientRect().bottom ?? 0
+    }
+  })
+  expect(drawerLayout.bodyOverflow).toBe('auto')
+  expect(drawerLayout.bodyBottom).toBeLessThanOrEqual(drawerLayout.footerTop + 1)
+  expect(drawerLayout.footerBottom).toBeLessThanOrEqual(
     (await page.evaluate(() => window.innerHeight)) + 1
   )
+  expect(drawerLayout.drawerBottom).toBeLessThanOrEqual(
+    (await page.evaluate(() => window.innerHeight)) + 1
+  )
+  await editDrawer.locator('.account-drawer__body').evaluate((element) => {
+    element.scrollTop = element.scrollHeight
+  })
+  await expect(
+    editDrawer.locator('.selector-config-row').filter({ hasText: '提交按钮' }).getByRole('textbox')
+  ).toBeVisible()
+  await editDrawer.getByRole('radio', { name: /自动录制/ }).check()
   await editDrawer.getByPlaceholder('例如：工作台').fill('备用站点（已编辑）')
   await editDrawer.getByRole('button', { name: '保存修改' }).click()
   await expect(
     page.locator('.account-row').filter({ hasText: '备用站点（已编辑）' })
   ).toBeVisible()
+  await application.evaluate(({ BrowserWindow }) => {
+    BrowserWindow.getAllWindows()[0]?.setSize(1180, 760)
+  })
+  await page.waitForTimeout(250)
 
   await page.locator('.sidebar-nav__item').filter({ hasText: '收藏' }).click()
-  const favoriteGroupRow = page.locator('.favorite-group-picker__row').filter({ hasText: '工作' })
-  await expect(favoriteGroupRow).toBeVisible()
-  await favoriteGroupRow.click()
-  await expect(favoriteGroupRow).toHaveAttribute('aria-pressed', 'true')
-  const favoriteGroup = page.locator('.favorite-group').filter({ hasText: '工作' })
-  await expect(favoriteGroup).toBeVisible()
-  await expect(favoriteGroup.locator('.account-row')).toHaveCount(2)
+  await expect(page.getByRole('heading', { name: '收藏账号' })).toBeVisible()
+  await expect(page.locator('.favorite-group-picker')).toHaveCount(0)
+  await expect(page.locator('.favorite-group')).toHaveCount(0)
+  const favoriteRows = page.locator('.favorite-account-list .account-row')
+  await expect(favoriteRows).toHaveCount(2)
+  await expect(favoriteRows.first()).toContainText('工作区')
+  for (const row of await favoriteRows.all()) {
+    await expect(row.getByRole('button', { name: '编辑' })).toBeVisible()
+    await expect(row.getByRole('button', { name: '登录' })).toBeVisible()
+  }
+  await favoriteRows.filter({ hasText: '备用站点（已编辑）' }).getByRole('button', { name: '编辑' }).click()
+  await expect(page.locator('.account-drawer').getByRole('heading', { name: '备用站点（已编辑）' })).toBeVisible()
+  await page.locator('.drawer-backdrop').click({ position: { x: 10, y: 10 } })
   await page.locator('.sidebar-nav__item').filter({ hasText: '账号' }).click()
 
   const mainRow = page.locator('.account-row').filter({ hasText: '工作站点' })
   const editedRow = page.locator('.account-row').filter({ hasText: '备用站点（已编辑）' })
+  await page.getByRole('checkbox', { name: '选择站点 工作站点', exact: true }).check()
+  await page
+    .getByRole('checkbox', { name: '选择站点 备用站点（已编辑）', exact: true })
+    .check()
+  await expect(page.locator('.work-bulk-bar')).toContainText('2 个账号已选')
+
+  await page.locator('.work-bulk-bar').getByRole('button', { name: '设置登录方式' }).click()
+  const batchModal = page.locator('.batch-strategy-modal')
+  await expect(batchModal).toBeVisible()
+  await batchModal.getByRole('radio', { name: /手动配置/ }).check()
+  await batchModal.getByLabel('用户名定位器').fill('input[name="username"]')
+  await batchModal.getByLabel('密码定位器').fill('input[name="password"]')
+  await batchModal.getByRole('button', { name: '应用设置' }).click()
+  await expect(batchModal).toHaveCount(0)
+  await expect
+    .poll(() =>
+      page.evaluate(async () =>
+        (await window.autologin.accounts.list()).map((account) => account.loginStrategy)
+      )
+    )
+    .toEqual(['manual', 'manual'])
+
   await mainRow.getByRole('checkbox').check()
   await editedRow.getByRole('checkbox').check()
-  await expect(page.locator('.work-bulk-bar')).toContainText('2 个账号已选')
+  await page.locator('.work-bulk-bar').getByRole('button', { name: '设置登录方式' }).click()
+  await batchModal.getByRole('radio', { name: /自动录制/ }).check()
+  await batchModal.getByRole('button', { name: '应用设置' }).click()
+  await expect(batchModal).toHaveCount(0)
+  await expect
+    .poll(() =>
+      page.evaluate(async () =>
+        (await window.autologin.accounts.list()).map((account) => account.loginStrategy)
+      )
+    )
+    .toEqual(['auto', 'auto'])
+
+  await mainRow.getByRole('checkbox').check()
+  await editedRow.getByRole('checkbox').check()
+  await page.locator('.work-bulk-bar').getByRole('button', { name: '复制账号' }).click()
+  await expect(page.locator('.toast')).toContainText('已复制 2 个账号')
+  await expect(page.locator('.account-row')).toHaveCount(4)
+  await expect(page.locator('.account-row').filter({ hasText: '副本' })).toHaveCount(2)
+  await expect(renamedGroupRow).toContainText('4')
+
+  await page.getByRole('checkbox', { name: '选择站点 工作站点', exact: true }).check()
+  await page
+    .getByRole('checkbox', { name: '选择站点 备用站点（已编辑）', exact: true })
+    .check()
 
   const previousBatchId = await currentBatchId(page)
   await page.locator('.work-bulk-bar').getByRole('button', { name: '打开已选' }).click()
@@ -728,6 +830,16 @@ test('supports grouped favorites, drawer editing and checkbox batch tabs in one 
     )
   ).toHaveLength(2)
   expect(externalBrowserProfileNames()).toEqual(['batch'])
+
+  await renamedGroupRow.click({ button: 'right' })
+  await groupMenu.getByRole('menuitem', { name: '删除分组' }).click()
+  const deleteGroupDialog = page.locator('.confirm-dialog')
+  await expect(deleteGroupDialog).toContainText('站点会移至未分组')
+  await deleteGroupDialog.getByRole('button', { name: '删除分组' }).click()
+  await expect(page.locator('.toast')).toContainText('分组已删除')
+  await expect(renamedGroupRow).toHaveCount(0)
+  await expect(page.locator('.account-row')).toHaveCount(4)
+  await expect(page.locator('.account-row').filter({ hasText: '未分组' })).toHaveCount(4)
 })
 
 test('records and replays a multi-step login flow', async () => {

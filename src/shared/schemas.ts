@@ -273,6 +273,24 @@ export const accountUpdateInputSchema = z.object({
   manualSelectors: manualLoginSelectorsSchema.optional()
 })
 
+export const accountBatchStrategyInputSchema = z
+  .object({
+    accountIds: z
+      .array(idSchema)
+      .min(1)
+      .max(100)
+      .refine((ids) => new Set(ids).size === ids.length, '账号标识不能重复'),
+    loginStrategy: z.enum(LOGIN_STRATEGIES),
+    manualSelectors: manualLoginSelectorsSchema.optional()
+  })
+  .strict()
+
+export const accountDuplicateInputSchema = z
+  .array(idSchema)
+  .min(1)
+  .max(100)
+  .refine((ids) => new Set(ids).size === ids.length, '账号标识不能重复')
+
 export const loginStartSchema = z.object({
   accountId: idSchema,
   mode: z.enum(['login', 'record'])
@@ -293,6 +311,19 @@ export const favoriteGroupInputSchema = z.object({
   groupName: groupNameSchema,
   favorite: z.boolean()
 })
+
+export const groupRenameInputSchema = z
+  .object({
+    fromName: groupNameSchema,
+    toName: groupNameSchema
+  })
+  .strict()
+
+export const groupDeleteInputSchema = z
+  .object({
+    groupName: groupNameSchema
+  })
+  .strict()
 
 export const changePasswordSchema = z.object({
   currentPassword: z.string().min(1),

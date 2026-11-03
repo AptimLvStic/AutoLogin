@@ -11,7 +11,6 @@ import {
   ShieldCheck
 } from 'lucide-react'
 import { useI18n } from '../i18n'
-import { BrandMark } from './Brand'
 import { PasswordStrength, passwordStrength } from './PasswordStrength'
 
 function AuthShell({
@@ -25,7 +24,6 @@ function AuthShell({
   return (
     <main className={`auth-shell auth-shell--${mode}`}>
       <section className="auth-story">
-        <BrandMark />
         <div className="auth-story__content">
           <span className="eyebrow eyebrow--light">PRIVATE BY DEFAULT</span>
           <h1>

@@ -22,7 +22,7 @@ import { useI18n } from '../i18n'
 import { AccountDrawer } from './AccountDrawer'
 import { BrandMark } from './Brand'
 import { LoginLogsPage } from './LoginLogsPage'
-import { SettingsPage } from './SettingsPage'
+import { SettingsPage, type SettingsModule } from './SettingsPage'
 
 type LibraryView = 'accounts' | 'favorites' | 'logs' | 'settings'
 type DrawerState = { mode: 'create'; siteId?: string } | { mode: 'edit'; accountId: string }
@@ -40,7 +40,6 @@ interface GroupSummary {
   count: number
   accounts: AccountWithSite[]
 }
-
 const UNGROUPED_KEY = '__ungrouped__'
 
 export function LibraryScreen({
@@ -71,7 +70,8 @@ export function LibraryScreen({
   const { tr, language, formatDate } = useI18n()
   const [view, setView] = useState<LibraryView>('accounts')
   const [groupFilter, setGroupFilter] = useState<string | null>(null)
-  const [allAccountsExpanded, setAllAccountsExpanded] = useState(true)
+  const [settingsExpanded, setSettingsExpanded] = useState(false)
+  const [settingsModule, setSettingsModule] = useState<SettingsModule>('general')
   const [search, setSearch] = useState('')
   const [selectedIds, setSelectedIds] = useState<Set<string>>(() => new Set())
   const [favoriteGroups, setFavoriteGroups] = useState<string[]>([])
@@ -249,11 +249,6 @@ export function LibraryScreen({
   }
 
   function chooseAllAccounts(): void {
-    if (view === 'accounts' && groupFilter === null) {
-      setAllAccountsExpanded((value) => !value)
-    } else {
-      setAllAccountsExpanded(true)
-    }
     setView('accounts')
     setGroupFilter(null)
     setSearch('')
@@ -263,7 +258,23 @@ export function LibraryScreen({
   function chooseGroup(group: GroupSummary): void {
     setView('accounts')
     setGroupFilter(group.key)
-    setAllAccountsExpanded(true)
+    setSearch('')
+    setSelectedIds(new Set())
+  }
+
+  function toggleSettings(): void {
+    if (view !== 'settings') {
+      setView('settings')
+      setSettingsExpanded(true)
+      return
+    }
+    setSettingsExpanded((value) => !value)
+  }
+
+  function chooseSettingsModule(next: SettingsModule): void {
+    setView('settings')
+    setSettingsModule(next)
+    setSettingsExpanded(true)
     setSearch('')
     setSelectedIds(new Set())
   }
@@ -371,70 +382,97 @@ export function LibraryScreen({
       <aside className="sidebar">
         <BrandMark />
 
-        <nav className="sidebar-nav" aria-label={tr('主导航', 'Main navigation', '主導覽')}>
-          <span className="sidebar-label">{tr('工作台', 'Workspace', '工作台')}</span>
-          <button
-            className={`sidebar-nav__item sidebar-nav__item--expandable${
-              view === 'accounts' && groupFilter === null ? ' is-active' : ''
-            }`}
-            onClick={chooseAllAccounts}
-            aria-expanded={allAccountsExpanded}
-          >
-            <KeyRound size={17} />
-            <span>{tr('全部账号', 'All accounts', '全部帳號')}</span>
-            <small>{accounts.length}</small>
-            {allAccountsExpanded ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
-          </button>
-
-          {allAccountsExpanded && (
-            <div
-              className="sidebar-submenu sidebar-submenu--groups"
-              aria-label={tr('账号分组', 'Account groups', '帳號分組')}
+        <nav className="sidebar-nav sidebar-nav--grouped" aria-label={tr('主导航', 'Main navigation', '主導覽')}>
+          <section className="sidebar-section">
+            <span className="sidebar-label">{tr('工作台', 'Workspace', '工作台')}</span>
+            <button
+              className={`sidebar-nav__item${view === 'accounts' ? ' is-active' : ''}`}
+              onClick={chooseAllAccounts}
             >
-              {groups.length === 0 ? (
-                <span className="sidebar-submenu__empty">
-                  {tr('暂无分组', 'No groups yet', '暫無分組')}
-                </span>
-              ) : (
-                groups.map((group) => (
-                  <button
-                    key={group.key}
-                    className={`sidebar-group-row${
-                      view === 'accounts' && groupFilter === group.key ? ' is-active' : ''
-                    }`}
-                    onClick={() => chooseGroup(group)}
-                  >
-                    <Layers3 size={13} />
-                    <span>{group.name}</span>
-                    <small>{group.count}</small>
-                  </button>
-                ))
-              )}
-            </div>
-          )}
+              <KeyRound size={17} />
+              <span>{tr('账号', 'Accounts', '帳號')}</span>
+              <small>{accounts.length}</small>
+            </button>
+            <button
+              className={`sidebar-nav__item${view === 'favorites' ? ' is-active' : ''}`}
+              onClick={() => switchView('favorites')}
+            >
+              <Star size={17} />
+              <span>{tr('收藏', 'Favorites', '收藏')}</span>
+              <small>{favoriteAccounts.length}</small>
+            </button>
+            <button
+              className={`sidebar-nav__item${view === 'logs' ? ' is-active' : ''}`}
+              onClick={() => switchView('logs')}
+            >
+              <FileText size={17} />
+              <span>{tr('登录日志', 'Login history', '登入日誌')}</span>
+            </button>
+          </section>
 
-          <button
-            className={`sidebar-nav__item${view === 'favorites' ? ' is-active' : ''}`}
-            onClick={() => switchView('favorites')}
-          >
-            <Star size={17} />
-            <span>{tr('收藏', 'Favorites', '收藏')}</span>
-            <small>{favoriteAccounts.length}</small>
-          </button>
-          <button
-            className={`sidebar-nav__item${view === 'logs' ? ' is-active' : ''}`}
-            onClick={() => switchView('logs')}
-          >
-            <FileText size={17} />
-            <span>{tr('登录日志', 'Login history', '登入日誌')}</span>
-          </button>
-          <button
-            className={`sidebar-nav__item${view === 'settings' ? ' is-active' : ''}`}
-            onClick={() => switchView('settings')}
-          >
-            <Settings size={17} />
-            <span>{tr('设置', 'Settings', '設定')}</span>
-          </button>
+          <section className="sidebar-section sidebar-section--preferences">
+            <span className="sidebar-label">{tr('偏好设置', 'Preferences', '偏好設定')}</span>
+            <button
+              className={`sidebar-nav__item sidebar-nav__item--expandable sidebar-nav__item--settings${
+                view === 'settings' ? ' is-active' : ''
+              }`}
+              onClick={toggleSettings}
+              aria-expanded={settingsExpanded}
+            >
+              <Settings size={17} />
+              <span>{tr('设置', 'Settings', '設定')}</span>
+              {settingsExpanded ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
+            </button>
+            <div
+              className={`sidebar-accordion${settingsExpanded ? ' is-expanded' : ''}`}
+              aria-hidden={!settingsExpanded}
+            >
+              <div className="sidebar-accordion__inner">
+                <button
+                  className={`sidebar-child-item${view === 'settings' && settingsModule === 'general' ? ' is-active' : ''}`}
+                  onClick={() => chooseSettingsModule('general')}
+                  tabIndex={settingsExpanded ? 0 : -1}
+                >
+                  {tr('通用设置', 'General', '一般設定')}
+                </button>
+                <button
+                  className={`sidebar-child-item${view === 'settings' && settingsModule === 'appearance' ? ' is-active' : ''}`}
+                  onClick={() => chooseSettingsModule('appearance')}
+                  tabIndex={settingsExpanded ? 0 : -1}
+                >
+                  {tr('外观主题', 'Appearance', '外觀主題')}
+                </button>
+                <button
+                  className={`sidebar-child-item${view === 'settings' && settingsModule === 'network' ? ' is-active' : ''}`}
+                  onClick={() => chooseSettingsModule('network')}
+                  tabIndex={settingsExpanded ? 0 : -1}
+                >
+                  {tr('网络代理', 'Network proxy', '網路代理')}
+                </button>
+                <button
+                  className={`sidebar-child-item${view === 'settings' && settingsModule === 'security' ? ' is-active' : ''}`}
+                  onClick={() => chooseSettingsModule('security')}
+                  tabIndex={settingsExpanded ? 0 : -1}
+                >
+                  {tr('安全与隐私', 'Security & privacy', '安全性與隱私')}
+                </button>
+                <button
+                  className={`sidebar-child-item${view === 'settings' && settingsModule === 'data' ? ' is-active' : ''}`}
+                  onClick={() => chooseSettingsModule('data')}
+                  tabIndex={settingsExpanded ? 0 : -1}
+                >
+                  {tr('数据与备份', 'Data & backups', '資料與備份')}
+                </button>
+                <button
+                  className={`sidebar-child-item${view === 'settings' && settingsModule === 'about' ? ' is-active' : ''}`}
+                  onClick={() => chooseSettingsModule('about')}
+                  tabIndex={settingsExpanded ? 0 : -1}
+                >
+                  {tr('关于与更新', 'About & updates', '關於與更新')}
+                </button>
+              </div>
+            </div>
+          </section>
         </nav>
 
         <div className="sidebar-bottom">
@@ -463,7 +501,63 @@ export function LibraryScreen({
       <main className="library-main">
         <div className="library-content-scroll">
           {(view === 'accounts' || view === 'favorites') && (
-            <>
+            <div className={`library-view-layout${view === 'accounts' ? ' library-view-layout--accounts' : ''}`}>
+              {view === 'accounts' && (
+                <aside
+                  className="account-subnav"
+                  aria-label={tr('账号分组', 'Account groups', '帳號分組')}
+                >
+                  <span className="account-subnav__label">
+                    {tr('账号', 'Accounts', '帳號')}
+                  </span>
+                  <button
+                    type="button"
+                    className={`account-subnav__item${groupFilter === null ? ' is-active' : ''}`}
+                    onClick={chooseAllAccounts}
+                  >
+                    <KeyRound size={15} />
+                    <span>{tr('全部账号', 'All accounts', '全部帳號')}</span>
+                    <small>{accounts.length}</small>
+                  </button>
+                  {groups
+                    .filter((group) => group.actualName)
+                    .map((group) => (
+                      <button
+                        type="button"
+                        key={group.key}
+                        className={`account-subnav__item${
+                          groupFilter === group.key ? ' is-active' : ''
+                        }`}
+                        onClick={() => chooseGroup(group)}
+                      >
+                        <Layers3 size={15} />
+                        <span>{group.name}</span>
+                        <small>{group.count}</small>
+                      </button>
+                    ))}
+                  <button
+                    type="button"
+                    className={`account-subnav__item${
+                      groupFilter === UNGROUPED_KEY ? ' is-active' : ''
+                    }`}
+                    onClick={() => {
+                      const ungrouped = groups.find((group) => group.key === UNGROUPED_KEY)
+                      if (ungrouped) chooseGroup(ungrouped)
+                      else {
+                        setView('accounts')
+                        setGroupFilter(UNGROUPED_KEY)
+                      }
+                    }}
+                  >
+                    <Globe2 size={15} />
+                    <span>{tr('未分组', 'Ungrouped', '未分組')}</span>
+                    <small>
+                      {groups.find((group) => group.key === UNGROUPED_KEY)?.count ?? 0}
+                    </small>
+                  </button>
+                </aside>
+              )}
+              <div className="library-view-main">
               <header className="library-header">
                 <div>
                   <span className="eyebrow">
@@ -537,7 +631,7 @@ export function LibraryScreen({
               </div>
 
               {view === 'accounts' && selectedAccountCount > 0 && (
-                <div className="batch-selection-bar" aria-live="polite">
+                <div className="log-bulk-bar work-bulk-bar" aria-live="polite">
                   <span>
                     <strong>{selectedAccountCount}</strong>{' '}
                     {tr('个账号已选', 'accounts selected', '個帳號已選')}
@@ -745,7 +839,8 @@ export function LibraryScreen({
                   </section>
                 </div>
               )}
-            </>
+              </div>
+            </div>
           )}
 
           {view === 'logs' && (
@@ -759,13 +854,14 @@ export function LibraryScreen({
 
           {view === 'settings' && (
             <SettingsPage
+              module={settingsModule}
               settings={settings}
               appVersion={appVersion}
               onSettingsChange={async (patch) => {
                 await window.autologin.settings.update(patch)
                 await onRefresh()
               }}
-              onOpenLogs={() => switchView('logs')}
+              onRefresh={onRefresh}
               onClearAllData={clearAllData}
               notify={notify}
             />

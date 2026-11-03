@@ -15,6 +15,7 @@ import { randomBytes } from 'node:crypto'
 import { createCipheriv, createDecipheriv } from 'node:crypto'
 import { argon2id } from 'hash-wasm'
 import { vaultDataSchema } from '@shared/schemas'
+import { DEFAULT_APP_SETTINGS } from '@shared/theme'
 import type {
   AppSettings,
   AppSettingsPatch,
@@ -109,26 +110,7 @@ export class VaultManager {
       sites: [],
       accounts: [],
       favoriteGroups: [],
-      settings: {
-        autoLockMinutes: 10,
-        colorMode: 'light',
-        language: 'zh-CN',
-        themePreset: 'warm',
-        customTheme: {
-          background: '#F4F1EA',
-          surface: '#FBF9F4',
-          text: '#1C2521',
-          accent: '#0E7567'
-        },
-        interfaceScale: 100,
-        proxy: {
-          enabled: false,
-          protocol: 'http',
-          host: '',
-          port: 8080,
-          bypassList: 'localhost, 127.0.0.1, ::1'
-        }
-      }
+      settings: structuredClone(DEFAULT_APP_SETTINGS)
     }
 
     const salt = randomBytes(SALT_LENGTH)
@@ -243,6 +225,45 @@ export class VaultManager {
     // with the newly encrypted vault to prevent the old key from unlocking it.
     copyFileSync(this.vaultPath, this.backupPath)
     this.scheduleLock()
+  }
+
+  copyEncryptedTo(destination: string): void {
+    this.requireData()
+    this.readEnvelope(this.vaultPath)
+    copyFileSync(this.vaultPath, destination)
+  }
+
+  restoreEncryptedFrom(sourcePath: string): VaultStatus {
+    this.readEnvelope(sourcePath)
+    this.clearLockTimer()
+    if (this.key) {
+      this.key.fill(0)
+    }
+    this.key = null
+    this.salt = null
+    this.data = null
+
+    const tempPath = `${this.vaultPath}.${process.pid}.restore.tmp`
+    mkdirSync(dirname(this.vaultPath), { recursive: true })
+    copyFileSync(sourcePath, tempPath)
+    try {
+      const file = openSync(tempPath, 'r+')
+      try {
+        fsyncSync(file)
+      } finally {
+        closeSync(file)
+      }
+      if (existsSync(this.vaultPath)) {
+        rmSync(this.vaultPath, { force: true })
+      }
+      renameSync(tempPath, this.vaultPath)
+      copyFileSync(this.vaultPath, this.backupPath)
+    } catch (error) {
+      rmSync(tempPath, { force: true })
+      throw error
+    }
+    this.onLocked()
+    return this.status()
   }
 
   clearAllFiles(): void {

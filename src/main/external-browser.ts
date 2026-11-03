@@ -716,7 +716,7 @@ export class ExternalBrowserPage {
 }
 
 function proxyArguments(proxy: ProxySettings | undefined): string[] {
-  if (!proxy?.enabled || !proxy.host.trim()) {
+  if (!proxy || proxy.mode === 'system' || !proxy.enabled || !proxy.host.trim()) {
     return []
   }
   const bypass = proxy.bypassList

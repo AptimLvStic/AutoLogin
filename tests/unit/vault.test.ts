@@ -115,7 +115,7 @@ describe('VaultManager', () => {
         autoLockMinutes: 15,
         colorMode: 'light',
         language: 'zh-CN',
-        themePreset: 'warm',
+        themePreset: 'magpie',
         interfaceScale: 100
       })
     )
@@ -151,6 +151,7 @@ describe('VaultManager', () => {
         accent: '#176B7A'
       },
       proxy: {
+        mode: 'custom',
         enabled: false,
         protocol: 'http',
         host: '',
@@ -172,5 +173,26 @@ describe('VaultManager', () => {
     await expect(manager.unlock('correct horse battery staple')).rejects.toBeInstanceOf(VaultError)
     await manager.unlock('a different long master password')
     expect(manager.status().unlocked).toBe(true)
+  })
+
+  it('exports and restores an encrypted snapshot without exposing plaintext', async () => {
+    const { manager, directory, onLocked } = createManager()
+    await manager.create('correct horse battery staple')
+    addDemoAccount(manager)
+    const exported = join(directory, 'export.autologin')
+    manager.copyEncryptedTo(exported)
+
+    const exportedRaw = readFileSync(exported, 'utf8')
+    expect(exportedRaw).toContain('"format":"autologin-vault"')
+    expect(exportedRaw).not.toContain('never-write-this-in-plaintext')
+
+    manager.requireData().accounts[0]!.username = 'changed@example.test'
+    manager.save()
+    manager.restoreEncryptedFrom(exported)
+    expect(onLocked).toHaveBeenCalled()
+    expect(manager.status().unlocked).toBe(false)
+
+    await manager.unlock('correct horse battery staple')
+    expect(manager.requireData().accounts[0]?.username).toBe('tester@example.test')
   })
 })

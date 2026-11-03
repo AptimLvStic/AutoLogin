@@ -1,7 +1,7 @@
 export const AUTO_LOCK_OPTIONS = [5, 10, 15, 30] as const
 export type AutoLockMinutes = (typeof AUTO_LOCK_OPTIONS)[number]
 
-export const THEME_PRESETS = ['warm', 'sage', 'ocean', 'rose'] as const
+export const THEME_PRESETS = ['magpie', 'warm', 'sage', 'ocean', 'rose'] as const
 export type ThemePreset = (typeof THEME_PRESETS)[number] | 'custom'
 
 export const COLOR_MODES = ['light', 'dark'] as const
@@ -17,7 +17,11 @@ export const INTERFACE_SCALE_STEP = 5
 export const PROXY_PROTOCOLS = ['http', 'https', 'socks5'] as const
 export type ProxyProtocol = (typeof PROXY_PROTOCOLS)[number]
 
+export const PROXY_MODES = ['custom', 'system'] as const
+export type ProxyMode = (typeof PROXY_MODES)[number]
+
 export interface ProxySettings {
+  mode: ProxyMode
   enabled: boolean
   protocol: ProxyProtocol
   host: string
@@ -293,6 +297,37 @@ export interface DataLocationInfo {
   restartRequired?: boolean
 }
 
+export interface FileOperationResult {
+  canceled: boolean
+  fileName?: string
+}
+
+export interface KdbxSelection {
+  token: string
+  fileName: string
+  size: number
+}
+
+export interface KdbxImportInput {
+  token: string
+  password: string
+}
+
+export interface DataImportResult {
+  source: 'csv' | 'kdbx'
+  sitesCreated: number
+  accountsCreated: number
+  skipped: number
+  warnings: string[]
+}
+
+export interface BackupRecord {
+  id: string
+  fileName: string
+  createdAt: string
+  size: number
+}
+
 export interface AboutInfo {
   version: string
   electronVersion: string
@@ -375,12 +410,21 @@ export interface AutologinApi {
   network: {
     testProxy: (settings: ProxySettings) => Promise<ProxyTestResult>
   }
+  data: {
+    exportVault: () => Promise<FileOperationResult>
+    exportCsvTemplate: () => Promise<FileOperationResult>
+    importCsv: () => Promise<DataImportResult | null>
+    chooseKdbx: () => Promise<KdbxSelection | null>
+    importKdbx: (input: KdbxImportInput) => Promise<DataImportResult>
+    listBackups: () => Promise<BackupRecord[]>
+    restoreBackup: (backupId: string) => Promise<void>
+  }
   windowControls: {
-    minimize: () => Promise<void>
-    toggleMaximize: () => Promise<void>
-    close: () => Promise<void>
-    getState: () => Promise<{ maximized: boolean }>
-    onMaximizedChange: (callback: (maximized: boolean) => void) => () => void
+    updateTheme: (theme: {
+      backgroundColor: string
+      symbolColor: string
+      height?: number
+    }) => Promise<void>
   }
   events: {
     onVaultLocked: (callback: () => void) => () => void

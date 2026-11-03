@@ -8,7 +8,6 @@ import { LibraryScreen } from './components/LibraryScreen'
 import { LoginWorkspace } from './components/LoginWorkspace'
 import { ConfirmDialog } from './components/Modal'
 import { Toast, type ToastKind, type ToastState } from './components/Toast'
-import { WindowControls } from './components/WindowControls'
 import { I18nProvider, translate } from './i18n'
 
 type AuthState = 'boot' | 'setup' | 'unlock' | 'ready'
@@ -28,7 +27,7 @@ export default function App(): React.JSX.Element {
   const [accounts, setAccounts] = useState<AccountWithSite[]>([])
   const [sites, setSites] = useState<Site[]>([])
   const [settings, setSettings] = useState<AppSettings>(DEFAULT_SETTINGS)
-  const [appVersion, setAppVersion] = useState('0.3.0')
+  const [appVersion, setAppVersion] = useState('0.4.0')
   const [loginTarget, setLoginTarget] = useState<LoginTarget | null>(null)
   const [batchState, setBatchState] = useState<LoginBatchState | null>(null)
   const [toast, setToast] = useState<ToastState | null>(null)
@@ -106,27 +105,69 @@ export default function App(): React.JSX.Element {
       settings.customTheme
     )
     const root = document.documentElement.style
-    const raisedTarget = settings.colorMode === 'dark' ? colors.text : 'white'
+    const isDark = settings.colorMode === 'dark'
+    const isMagpie = settings.themePreset === 'magpie'
+    const sidebarBackground = isDark
+      ? isMagpie
+        ? '#1A1C21'
+        : colors.background
+      : isMagpie
+        ? '#F7F8FA'
+        : colors.background
+    const cardBackground = isDark
+      ? isMagpie
+        ? '#202329'
+        : colors.surface
+      : '#FFFFFF'
     root.setProperty('--canvas', colors.background)
     root.setProperty('--surface', colors.surface)
-    root.setProperty('--ink', colors.text)
+    root.setProperty('--sidebar-bg', sidebarBackground)
+    root.setProperty('--card', cardBackground)
+    root.setProperty('--ink', isDark ? '#F2F3F5' : '#17191C')
     root.setProperty('--accent', colors.accent)
     root.setProperty('--canvas-deep', `color-mix(in srgb, ${colors.background} 88%, ${colors.text})`)
-    root.setProperty('--surface-raised', `color-mix(in srgb, ${colors.surface} 94%, ${raisedTarget})`)
-    root.setProperty('--ink-soft', `color-mix(in srgb, ${colors.text} 82%, ${colors.background})`)
-    root.setProperty('--muted', `color-mix(in srgb, ${colors.text} 66%, ${colors.background})`)
-    root.setProperty('--muted-light', `color-mix(in srgb, ${colors.text} 58%, ${colors.background})`)
-    root.setProperty('--line', `color-mix(in srgb, ${colors.text} 14%, ${colors.background})`)
-    root.setProperty('--line-strong', `color-mix(in srgb, ${colors.text} 25%, ${colors.background})`)
+    root.setProperty('--surface-raised', cardBackground)
+    root.setProperty('--ink-soft', isDark ? '#D7DAE0' : '#30343A')
+    root.setProperty('--muted', isDark ? '#A4A9B3' : '#6B7280')
+    root.setProperty('--muted-light', isDark ? '#8B919B' : '#7A828D')
+    root.setProperty('--line', isDark ? 'rgba(255, 255, 255, 0.09)' : '#E5E7EB')
+    root.setProperty(
+      '--line-strong',
+      isDark ? 'rgba(255, 255, 255, 0.16)' : '#D5D9E0'
+    )
+    root.setProperty('--card-border', isDark ? 'rgba(255, 255, 255, 0.09)' : '#E8EAED')
+    root.setProperty(
+      '--card-shadow',
+      isDark
+        ? '0 1px 2px rgba(0, 0, 0, 0.32)'
+        : '0 1px 2px rgba(31, 35, 40, 0.04), 0 8px 24px rgba(31, 35, 40, 0.035)'
+    )
+    root.setProperty('--content-divider', isDark ? 'rgba(255, 255, 255, 0.08)' : '#E9EBEF')
     root.setProperty('--accent-strong', `color-mix(in srgb, ${colors.accent} 82%, ${settings.colorMode === 'dark' ? 'white' : 'black'})`)
     root.setProperty('--accent-soft', `color-mix(in srgb, ${colors.accent} 16%, ${colors.surface})`)
     root.setProperty('--accent-pale', `color-mix(in srgb, ${colors.accent} 8%, ${colors.surface})`)
-    root.setProperty('--ink-panel', settings.colorMode === 'dark' ? '#13211D' : `color-mix(in srgb, ${colors.text} 82%, ${colors.accent})`)
-    root.setProperty('--ink-panel-deep', settings.colorMode === 'dark' ? '#0C1411' : `color-mix(in srgb, ${colors.text} 90%, black)`)
+    root.setProperty('--accent-contrast', isDark && isMagpie ? '#15161A' : '#FFFFFF')
+    root.setProperty(
+      '--ink-panel',
+      isMagpie ? (isDark ? '#242631' : '#25273E') : isDark ? '#191C21' : `color-mix(in srgb, ${colors.text} 82%, ${colors.accent})`
+    )
+    root.setProperty(
+      '--ink-panel-deep',
+      isMagpie ? (isDark ? '#181920' : '#191A2A') : isDark ? '#121419' : `color-mix(in srgb, ${colors.text} 90%, black)`
+    )
+    root.setProperty('--cream', isMagpie ? '#F5F5FC' : '#F8F1E4')
     root.setProperty('--focus-ring', `color-mix(in srgb, ${colors.accent} 72%, transparent)`)
     document.documentElement.dataset.colorMode = settings.colorMode
+    document.documentElement.dataset.themePreset = settings.themePreset
     document.documentElement.style.colorScheme = settings.colorMode
     document.documentElement.lang = settings.language
+    void window.autologin.windowControls
+      .updateTheme({
+        backgroundColor: sidebarBackground,
+        symbolColor: isDark ? '#F2F3F5' : '#1F2328',
+        height: 40
+      })
+      .catch(() => undefined)
   }, [settings.colorMode, settings.customTheme, settings.language, settings.themePreset])
 
   useEffect(() => {
@@ -247,7 +288,9 @@ export default function App(): React.JSX.Element {
   return (
     <I18nProvider language={settings.language}>
     <>
-      <WindowControls />
+      <div className="window-titlebar" aria-hidden="true">
+        <span>AutoLogin</span>
+      </div>
       {authState === 'boot' && (
         <main className="boot-screen">
           <BrandMark />

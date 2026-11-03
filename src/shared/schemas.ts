@@ -5,6 +5,7 @@ import {
   COLOR_MODES,
   INTERFACE_SCALE_MAX,
   INTERFACE_SCALE_MIN,
+  PROXY_MODES,
   PROXY_PROTOCOLS,
   THEME_PRESETS
 } from './types'
@@ -146,6 +147,7 @@ const interfaceScaleSchema = z
 
 export const proxySettingsSchema = z
   .object({
+    mode: z.enum(PROXY_MODES).default('custom'),
     enabled: z.boolean(),
     protocol: z.enum(PROXY_PROTOCOLS),
     host: z.string().trim().max(255),
@@ -153,12 +155,13 @@ export const proxySettingsSchema = z
     bypassList: z.string().trim().max(1000)
   })
   .superRefine((value, context) => {
-    if (value.enabled && !value.host) {
+    if (value.mode === 'custom' && value.enabled && !value.host) {
       context.addIssue({ code: 'custom', path: ['host'], message: '请输入代理服务器地址' })
     }
   })
 
 const defaultProxySettings = {
+  mode: 'custom' as const,
   enabled: false,
   protocol: 'http' as const,
   host: '',
@@ -167,17 +170,17 @@ const defaultProxySettings = {
 }
 
 const defaultThemeColors = {
-  background: '#F4F1EA',
-  surface: '#FBF9F4',
-  text: '#1C2521',
-  accent: '#0E7567'
+  background: '#F7F8FA',
+  surface: '#FFFFFF',
+  text: '#1F2328',
+  accent: '#5C6BFF'
 }
 
 export const appSettingsSchema = z.object({
   autoLockMinutes: autoLockMinutesSchema.default(10),
   colorMode: colorModeSchema.default('light'),
   language: languageSchema.default('zh-CN'),
-  themePreset: themePresetSchema.default('warm'),
+  themePreset: themePresetSchema.default('magpie'),
   customTheme: themeColorsSchema.default(defaultThemeColors),
   interfaceScale: interfaceScaleSchema.default(100),
   proxy: proxySettingsSchema.default(defaultProxySettings)
@@ -268,3 +271,10 @@ export const loginLogDeleteSchema = z
   .refine((ids) => new Set(ids).size === ids.length, { message: '日志标识不能重复' })
 
 export const proxyTestInputSchema = proxySettingsSchema
+
+export const kdbxSelectionImportSchema = z
+  .object({
+    token: z.string().regex(/^[a-f0-9-]{36}$/),
+    password: z.string().min(1, '请输入 KeePassXC 数据库主密码').max(256)
+  })
+  .strict()

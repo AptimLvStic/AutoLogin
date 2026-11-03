@@ -7,13 +7,14 @@ import type {
 } from './types'
 
 export const DEFAULT_THEME_COLORS: ThemeColors = {
-  background: '#F4F1EA',
-  surface: '#FBF9F4',
-  text: '#1C2521',
-  accent: '#0E7567'
+  background: '#F7F8FA',
+  surface: '#FFFFFF',
+  text: '#1F2328',
+  accent: '#5C6BFF'
 }
 
 export const DEFAULT_PROXY_SETTINGS: ProxySettings = {
+  mode: 'custom',
   enabled: false,
   protocol: 'http',
   host: '',
@@ -25,7 +26,7 @@ export const DEFAULT_APP_SETTINGS: AppSettings = {
   autoLockMinutes: 10,
   colorMode: 'light',
   language: 'zh-CN',
-  themePreset: 'warm',
+  themePreset: 'magpie',
   customTheme: DEFAULT_THEME_COLORS,
   interfaceScale: 100,
   proxy: DEFAULT_PROXY_SETTINGS
@@ -38,28 +39,48 @@ interface ThemePresetDefinition {
 }
 
 export const THEME_PRESETS: Record<Exclude<ThemePreset, 'custom'>, ThemePresetDefinition> = {
+  magpie: {
+    label: 'Magpie',
+    colors: {
+      background: '#FFFFFF',
+      surface: '#F7F8FA',
+      text: '#1F2328',
+      accent: '#5C6BFF'
+    },
+    darkColors: {
+      background: '#151619',
+      surface: '#1E2025',
+      text: '#F1F2F4',
+      accent: '#8D98FF'
+    }
+  },
   warm: {
     label: '暖砂',
-    colors: DEFAULT_THEME_COLORS,
+    colors: {
+      background: '#F4F1EA',
+      surface: '#FFFFFF',
+      text: '#1B1E1C',
+      accent: '#0E7567'
+    },
     darkColors: {
-      background: '#111714',
-      surface: '#18211D',
-      text: '#F2EEE4',
-      accent: '#4DB8A4'
+      background: '#121416',
+      surface: '#1D2023',
+      text: '#F3F4F5',
+      accent: '#5AC8B3'
     }
   },
   sage: {
     label: '鼠尾草',
     colors: {
       background: '#EEF1E9',
-      surface: '#F8FAF4',
-      text: '#1E2921',
+      surface: '#FFFFFF',
+      text: '#1B211D',
       accent: '#4E735A'
     },
     darkColors: {
-      background: '#101710',
-      surface: '#172017',
-      text: '#EFF3EA',
+      background: '#121512',
+      surface: '#1D221D',
+      text: '#F1F3F0',
       accent: '#82AE8F'
     }
   },
@@ -67,14 +88,14 @@ export const THEME_PRESETS: Record<Exclude<ThemePreset, 'custom'>, ThemePresetDe
     label: '海盐',
     colors: {
       background: '#EEF2F3',
-      surface: '#F8FAFA',
-      text: '#17262B',
+      surface: '#FFFFFF',
+      text: '#171E21',
       accent: '#176B7A'
     },
     darkColors: {
-      background: '#0D171A',
-      surface: '#142126',
-      text: '#EAF2F3',
+      background: '#111619',
+      surface: '#1C2327',
+      text: '#EEF2F4',
       accent: '#56ACBA'
     }
   },
@@ -82,14 +103,14 @@ export const THEME_PRESETS: Record<Exclude<ThemePreset, 'custom'>, ThemePresetDe
     label: '陶粉',
     colors: {
       background: '#F4EDEA',
-      surface: '#FCF8F5',
-      text: '#2B211F',
+      surface: '#FFFFFF',
+      text: '#241B19',
       accent: '#9A4F55'
     },
     darkColors: {
-      background: '#1A1213',
-      surface: '#241A1C',
-      text: '#F5EBE8',
+      background: '#171214',
+      surface: '#231C1F',
+      text: '#F4EEED',
       accent: '#C98288'
     }
   }

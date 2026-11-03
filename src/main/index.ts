@@ -1,6 +1,6 @@
 import { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, net, session, shell } from 'electron'
-import { existsSync, mkdirSync, rmSync } from 'node:fs'
-import { join, resolve } from 'node:path'
+import { existsSync, mkdirSync, rmSync, statSync, writeFileSync } from 'node:fs'
+import { basename, join, resolve } from 'node:path'
 import { randomUUID } from 'node:crypto'
 import type { IpcMainEvent, IpcMainInvokeEvent } from 'electron'
 import {
@@ -9,6 +9,7 @@ import {
   appSettingsPatchSchema,
   changePasswordSchema,
   favoriteGroupInputSchema,
+  kdbxSelectionImportSchema,
   loginBatchStartSchema,
   loginLogDeleteSchema,
   loginLogQuerySchema,
@@ -21,7 +22,11 @@ import type {
   AccountWithSite,
   AboutInfo,
   AppSettings,
+  BackupRecord,
+  DataImportResult,
   DataLocationInfo,
+  FileOperationResult,
+  KdbxSelection,
   LoginLogEntry,
   LoginLogDeleteResult,
   LoginLogQuery,
@@ -36,6 +41,14 @@ import type {
   UpdateCheckResult,
   VaultStatus
 } from '@shared/types'
+import { BackupManager } from './backups'
+import {
+  CSV_TEMPLATE,
+  mergeImportedLogins,
+  parseCsvImport,
+  parseKdbxImport,
+  type ParsedImport
+} from './data-transfer'
 import { migrateDataDirectory, readDataDirectory } from './data-location'
 import {
   deleteLoginLogs,
@@ -69,10 +82,15 @@ let mainWindow: BrowserWindow | null = null
 let loginManager: LoginSessionManager | null = null
 let batchManager: LoginBatchManager | null = null
 let vault: VaultManager
+let backupManager: BackupManager
 let sessionIndex: SessionIndex
 let clipboardClearTimer: NodeJS.Timeout | null = null
 let configDirectory = ''
 let dataDirectory = ''
+const pendingKdbxSelections = new Map<
+  string,
+  { path: string; fileName: string; size: number; expiresAt: number }
+>()
 
 const REPOSITORY_URL = ['https:', '//github.com', '/AptimLvStic/autologin'].join('')
 const RELEASES_URL = `${REPOSITORY_URL}/releases`
@@ -95,6 +113,11 @@ app.whenReady().then(() => {
   configDirectory = app.getPath('userData')
   dataDirectory = readDataDirectory(configDirectory)
   initializeDataStores()
+  try {
+    backupManager.createFromVault(vault.path)
+  } catch {
+    // Startup backups are best-effort and must never block unlocking the app.
+  }
   createWindow()
   ensureLoginManagers()
 
@@ -132,10 +155,15 @@ function createWindow(): void {
     minWidth: 960,
     minHeight: 640,
     show: false,
-    frame: false,
     thickFrame: true,
-    backgroundColor: '#f4f1ea',
+    backgroundColor: '#F7F8FA',
     title: 'AutoLogin',
+    titleBarStyle: 'hidden',
+    titleBarOverlay: {
+      color: '#F7F8FA',
+      symbolColor: '#1F2328',
+      height: 40
+    },
     autoHideMenuBar: true,
     webPreferences: {
       preload: join(__dirname, '../preload/index.js'),
@@ -162,14 +190,6 @@ function createWindow(): void {
     void closeLoginManagers()
     mainWindow = null
   })
-
-  const publishMaximizedState = (): void => {
-    if (!window.isDestroyed()) {
-      window.webContents.send('window:maximized-change', window.isMaximized())
-    }
-  }
-  window.on('maximize', publishMaximizedState)
-  window.on('unmaximize', publishMaximizedState)
 
   window.webContents.on('will-navigate', (event) => {
     event.preventDefault()
@@ -200,6 +220,7 @@ function initializeDataStores(): void {
     void closeLoginManagers()
     sendToRenderer('vault:locked')
   })
+  backupManager = new BackupManager(dataDirectory)
   sessionIndex = new SessionIndex(dataDirectory)
 }
 
@@ -503,26 +524,135 @@ function registerIpc(): void {
     return testProxy(parsed.data)
   })
 
-  ipcMain.handle('window:minimize', (event) => {
+  ipcMain.handle('data:export-vault', async (event): Promise<FileOperationResult> => {
     assertTrustedSender(event)
-    mainWindow?.minimize()
-  })
-  ipcMain.handle('window:toggle-maximize', (event) => {
-    assertTrustedSender(event)
-    if (!mainWindow) return
-    if (mainWindow.isMaximized()) {
-      mainWindow.unmaximize()
-    } else {
-      mainWindow.maximize()
+    vault.requireData()
+    if (!mainWindow) {
+      return { canceled: true }
     }
+    const defaultName = `AutoLogin-v${app.getVersion()}-${fileDateStamp()}.autologin`
+    const selection = await dialog.showSaveDialog(mainWindow, {
+      title: '导出 AutoLogin 加密配置',
+      buttonLabel: '导出',
+      defaultPath: join(app.getPath('documents'), defaultName),
+      filters: [{ name: 'AutoLogin 加密配置', extensions: ['autologin'] }]
+    })
+    if (selection.canceled || !selection.filePath) {
+      return { canceled: true }
+    }
+    vault.copyEncryptedTo(selection.filePath)
+    return { canceled: false, fileName: basename(selection.filePath) }
   })
-  ipcMain.handle('window:close', (event) => {
+  ipcMain.handle('data:export-csv-template', async (event): Promise<FileOperationResult> => {
     assertTrustedSender(event)
-    mainWindow?.close()
+    if (!mainWindow) {
+      return { canceled: true }
+    }
+    const selection = await dialog.showSaveDialog(mainWindow, {
+      title: '保存 CSV 导入模板',
+      buttonLabel: '保存模板',
+      defaultPath: join(app.getPath('documents'), 'AutoLogin-import-template.csv'),
+      filters: [{ name: 'CSV 模板', extensions: ['csv'] }]
+    })
+    if (selection.canceled || !selection.filePath) {
+      return { canceled: true }
+    }
+    writeFileSync(selection.filePath, `\uFEFF${CSV_TEMPLATE}\r\n`, {
+      encoding: 'utf8',
+      mode: 0o600
+    })
+    return { canceled: false, fileName: basename(selection.filePath) }
   })
-  ipcMain.handle('window:get-state', (event) => {
+  ipcMain.handle('data:import-csv', async (event): Promise<DataImportResult | null> => {
     assertTrustedSender(event)
-    return { maximized: mainWindow?.isMaximized() ?? false }
+    if (!mainWindow) return null
+    const selection = await dialog.showOpenDialog(mainWindow, {
+      title: '导入标准 CSV 账号',
+      buttonLabel: '导入',
+      properties: ['openFile'],
+      filters: [{ name: 'CSV 文件', extensions: ['csv'] }]
+    })
+    const path = selection.filePaths[0]
+    if (selection.canceled || !path) {
+      return null
+    }
+    const parsed = await parseCsvImport(path)
+    return applyDataImport(parsed, 'csv')
+  })
+  ipcMain.handle('data:choose-kdbx', async (event): Promise<KdbxSelection | null> => {
+    assertTrustedSender(event)
+    if (!mainWindow) return null
+    cleanExpiredKdbxSelections()
+    const selection = await dialog.showOpenDialog(mainWindow, {
+      title: '选择 KeePassXC 数据库',
+      buttonLabel: '选择数据库',
+      properties: ['openFile'],
+      filters: [{ name: 'KeePassXC 数据库', extensions: ['kdbx'] }]
+    })
+    const path = selection.filePaths[0]
+    if (selection.canceled || !path) {
+      return null
+    }
+    if (!path.toLocaleLowerCase().endsWith('.kdbx')) {
+      throw new Error('请选择 .kdbx 格式的 KeePassXC 数据库')
+    }
+    const stats = statSync(path)
+    const token = randomUUID()
+    const fileName = basename(path)
+    pendingKdbxSelections.set(token, {
+      path,
+      fileName,
+      size: stats.size,
+      expiresAt: Date.now() + 10 * 60 * 1000
+    })
+    return { token, fileName, size: stats.size }
+  })
+  ipcMain.handle(
+    'data:import-kdbx',
+    async (event, payload: unknown): Promise<DataImportResult> => {
+      assertTrustedSender(event)
+      const parsed = kdbxSelectionImportSchema.safeParse(payload)
+      if (!parsed.success) {
+        throw new Error(firstIssue(parsed.error))
+      }
+      cleanExpiredKdbxSelections()
+      const selection = pendingKdbxSelections.get(parsed.data.token)
+      if (!selection) {
+        throw new Error('KeePassXC 数据库选择已过期，请重新选择文件')
+      }
+      const imported = await parseKdbxImport(selection.path, parsed.data.password)
+      const result = applyDataImport(imported, 'kdbx')
+      pendingKdbxSelections.delete(parsed.data.token)
+      return result
+    }
+  )
+  ipcMain.handle('data:list-backups', (event): BackupRecord[] => {
+    assertTrustedSender(event)
+    return backupManager.list()
+  })
+  ipcMain.handle('data:restore-backup', async (event, backupId: unknown) => {
+    assertTrustedSender(event)
+    if (typeof backupId !== 'string') {
+      throw new Error('备份文件标识无效')
+    }
+    const backupPath = backupManager.resolve(backupId)
+    await closeLoginManagers()
+    vault.lock()
+    vault.restoreEncryptedFrom(backupPath)
+    sessionIndex.clear()
+    ensureLoginManagers()
+  })
+
+  ipcMain.handle('window:update-theme', (event, payload: unknown) => {
+    assertTrustedSender(event)
+    if (!mainWindow || !isTitleBarTheme(payload)) {
+      throw new Error('窗口主题参数无效')
+    }
+    mainWindow.setTitleBarOverlay({
+      color: payload.backgroundColor,
+      symbolColor: payload.symbolColor,
+      height: payload.height ?? 40
+    })
   })
 
   ipcMain.handle('app:get-version', (event) => {
@@ -638,6 +768,7 @@ function registerIpc(): void {
     )
     sessionIndex.clear()
     vault.clearAllFiles()
+    backupManager.clear()
     ensureLoginManagers()
   })
   ipcMain.handle('app:open-privacy', async (event) => {
@@ -868,6 +999,16 @@ function deleteAccountRecipe(accountId: string, recipeId: string): AccountWithSi
   return toPublicAccount(account, site)
 }
 
+function applyDataImport(parsed: ParsedImport, source: 'csv' | 'kdbx'): DataImportResult {
+  const data = vault.requireData()
+  const merged = mergeImportedLogins(data, source, parsed)
+  data.sites = merged.data.sites
+  data.accounts = merged.data.accounts
+  vault.save()
+  sessionIndex.replace(data.accounts.map((account) => account.id))
+  return merged.result
+}
+
 async function copySecret(value: string): Promise<void> {
   clipboard.writeText(value)
   if (clipboardClearTimer) {
@@ -879,6 +1020,34 @@ async function copySecret(value: string): Promise<void> {
     }
   }, 30_000)
   clipboardClearTimer.unref()
+}
+
+function cleanExpiredKdbxSelections(): void {
+  const now = Date.now()
+  for (const [token, selection] of pendingKdbxSelections) {
+    if (selection.expiresAt <= now) {
+      pendingKdbxSelections.delete(token)
+    }
+  }
+}
+
+function fileDateStamp(): string {
+  return new Date().toISOString().replace(/\D/g, '').slice(0, 14)
+}
+
+function isTitleBarTheme(
+  value: unknown
+): value is { backgroundColor: string; symbolColor: string; height?: number } {
+  if (!value || typeof value !== 'object') return false
+  const record = value as Record<string, unknown>
+  return (
+    typeof record.backgroundColor === 'string' &&
+    /^#[0-9a-fA-F]{6}$/.test(record.backgroundColor) &&
+    typeof record.symbolColor === 'string' &&
+    /^#[0-9a-fA-F]{6}$/.test(record.symbolColor) &&
+    (record.height === undefined ||
+      (typeof record.height === 'number' && record.height >= 32 && record.height <= 64))
+  )
 }
 
 function assertTrustedSender(event: IpcMainInvokeEvent | IpcMainEvent): void {
@@ -1153,7 +1322,9 @@ function normalizeSiteName(value: string): string {
 }
 
 async function applySystemProxy(proxy: ProxySettings): Promise<void> {
-  if (proxy.enabled && proxy.host.trim()) {
+  if (proxy.mode === 'system') {
+    await session.defaultSession.setProxy({ mode: 'system' })
+  } else if (proxy.enabled && proxy.host.trim()) {
     await session.defaultSession.setProxy({
       mode: 'fixed_servers',
       proxyRules: `${proxy.protocol}://${proxy.host.trim()}:${proxy.port}`,
@@ -1166,6 +1337,46 @@ async function applySystemProxy(proxy: ProxySettings): Promise<void> {
 }
 
 async function testProxy(settings: ProxySettings): Promise<ProxyTestResult> {
+  if (settings.mode === 'system') {
+    const testSession = session.fromPartition(`autologin-proxy-test-${randomUUID()}`)
+    const controller = new AbortController()
+    const timer = setTimeout(() => controller.abort(), 8_000)
+    const startedAt = Date.now()
+    try {
+      await testSession.setProxy({ mode: 'system' })
+      const response = await testSession.fetch('https://api.github.com/zen', {
+        headers: {
+          Accept: 'text/plain',
+          'User-Agent': `AutoLogin/${app.getVersion()}`
+        },
+        signal: controller.signal
+      })
+      const latencyMs = Date.now() - startedAt
+      if (!response.ok) {
+        return {
+          ok: false,
+          latencyMs,
+          message: `已使用系统代理，但测试请求返回 HTTP ${response.status}`
+        }
+      }
+      return {
+        ok: true,
+        latencyMs,
+        message: `系统代理连接正常，延迟 ${latencyMs} ms`
+      }
+    } catch (error) {
+      const message =
+        error instanceof Error && error.name === 'AbortError'
+          ? '系统代理连接超时'
+          : error instanceof Error
+            ? `系统代理连接失败：${error.message}`
+            : '系统代理连接失败'
+      return { ok: false, message }
+    } finally {
+      clearTimeout(timer)
+      await testSession.closeAllConnections().catch(() => undefined)
+    }
+  }
   if (!settings.enabled) {
     return { ok: false, message: '请先启用代理配置' }
   }

@@ -230,7 +230,7 @@ test('pauses on a captcha and resumes after manual verification', async () => {
   await logsPage.getByLabel('状态').selectOption('manual')
   await logsPage.getByLabel('每页条数').selectOption('10')
   await expect(logsPage.locator('.log-table__row')).toHaveCount(1)
-  await page.locator('.sidebar-nav__item').filter({ hasText: '全部账号' }).click()
+  await page.locator('.sidebar-nav__item').filter({ hasText: '账号' }).click()
 
   const failureLog = join(userDataDirectory, 'logs', 'login-failures.jsonl')
   await expect
@@ -349,7 +349,7 @@ test('searches accounts and filters favorites', async () => {
   await expect(alphaRow).toBeVisible()
   await expect(page.locator('.account-row').filter({ hasText: '搜索站点 B' })).toHaveCount(0)
 
-  await page.locator('.sidebar-nav__item').filter({ hasText: '全部账号' }).click()
+  await page.locator('.sidebar-nav__item').filter({ hasText: '账号' }).click()
   await page.getByRole('textbox', { name: '搜索账号' }).fill('beta@example.test')
   await expect(page.locator('.account-row')).toHaveCount(1)
   await expect(page.locator('.account-row')).toContainText('搜索站点 B')
@@ -367,14 +367,19 @@ test('persists dark mode, language, themes and interface scale with separate res
 
   const settingsNav = page.locator('.sidebar-nav__item').filter({ hasText: '设置' })
   await expect(settingsNav).toBeVisible()
+  await expect(page.locator('.window-titlebar')).toBeVisible()
+  await expect(page.locator('.window-controls')).toHaveCount(0)
   await expect(
     page.locator('.sidebar-action').filter({ hasText: '设置' })
   ).toHaveCount(0)
   await settingsNav.click()
 
   const settings = page.locator('.settings-page')
-  await settings.locator('.settings-subnav__item').filter({ hasText: '外观主题' }).click()
-  await expect(settings.getByRole('heading', { name: '外观主题' })).toBeVisible()
+  const appearanceNav = page.locator('.sidebar-child-item').filter({ hasText: '外观主题' })
+  await appearanceNav.click()
+  await expect(settings.locator('.settings-page__header h2')).toHaveText('外观主题')
+  await expect(settingsNav).toHaveClass(/is-active/)
+  await expect(appearanceNav).toHaveClass(/is-active/)
 
   await settings.getByRole('button', { name: '暗色' }).click()
   await expect
@@ -385,11 +390,11 @@ test('persists dark mode, language, themes and interface scale with separate res
     .toBe('dark')
 
   await settings.getByRole('button', { name: 'English' }).click()
-  await expect(page.getByRole('heading', { name: 'Settings', exact: true })).toBeVisible()
+  await expect(settings.locator('.settings-page__header h2')).toHaveText('Appearance')
   await settings.getByRole('button', { name: '繁體中文' }).click()
-  await expect(page.getByRole('heading', { name: '設定', exact: true })).toBeVisible()
+  await expect(settings.locator('.settings-page__header h2')).toHaveText('外觀主題')
   await settings.getByRole('button', { name: '简体中文' }).click()
-  await expect(page.getByRole('heading', { name: '设置', exact: true })).toBeVisible()
+  await expect(settings.locator('.settings-page__header h2')).toHaveText('外观主题')
 
   await settings.getByRole('button', { name: '海盐' }).click()
   await expect
@@ -425,14 +430,14 @@ test('persists dark mode, language, themes and interface scale with separate res
   await settings.getByRole('button', { name: '恢复默认主题' }).click()
   await expect
     .poll(() => page.evaluate(() => window.autologin.settings.get()))
-    .toMatchObject({ themePreset: 'warm' })
+    .toMatchObject({ themePreset: 'magpie' })
 
-  await settings.locator('.settings-subnav__item').filter({ hasText: '通用设置' }).click()
+  await page.locator('.sidebar-child-item').filter({ hasText: '通用设置' }).click()
   await settings.getByRole('slider', { name: '界面比例' }).fill('125')
   await expect
     .poll(() => page.evaluate(() => window.autologin.settings.get()))
     .toMatchObject({ interfaceScale: 125 })
-  await page.locator('.sidebar-nav__item').filter({ hasText: '全部账号' }).click()
+  await page.locator('.sidebar-nav__item').filter({ hasText: '账号' }).click()
 
   await page.locator('.account-row').first().click()
   const editDrawer = page.locator('.account-drawer')
@@ -456,23 +461,35 @@ test('persists dark mode, language, themes and interface scale with separate res
     .poll(() => page.evaluate(() => window.autologin.settings.get()))
     .toMatchObject({ interfaceScale: 100 })
 
-  await settings.locator('.settings-subnav__item').filter({ hasText: '数据与关于' }).click()
+  await page.locator('.sidebar-child-item').filter({ hasText: '数据与备份' }).click()
+  await expect(settings.getByRole('heading', { name: '数据保存位置' })).toBeVisible()
+  await expect(settings.getByRole('heading', { name: '自动备份' })).toBeVisible()
+  await expect(
+    settings.getByRole('button', { name: '导出加密配置' })
+  ).toBeVisible()
+  await expect(settings.getByRole('button', { name: '导入标准 CSV' })).toBeVisible()
+  await expect(
+    settings.getByRole('button', { name: '导入 KeePassXC (.kdbx)' })
+  ).toBeVisible()
+  const runtimeVersion = await application.evaluate(({ app }) => app.getVersion())
+  await expect(settings.locator('.settings-location code')).toContainText(userDataDirectory)
+  await page.locator('.sidebar-child-item').filter({ hasText: '关于与更新' }).click()
   await expect(settings.getByRole('heading', { name: '关于 AutoLogin' })).toBeVisible()
   await expect(settings.getByRole('heading', { name: '检查更新' })).toBeVisible()
-  await expect(settings.getByRole('heading', { name: '数据保存位置' })).toBeVisible()
-  const runtimeVersion = await application.evaluate(({ app }) => app.getVersion())
   await expect(settings.locator('.settings-about-grid')).toContainText(`v${runtimeVersion}`)
-  await expect(settings.locator('.settings-location code')).toContainText(userDataDirectory)
   await settings.getByRole('button', { name: '检查更新' }).click()
   await expect(settings.locator('.settings-update-status')).toBeVisible({ timeout: 12000 })
 
-  await settings.locator('.settings-subnav__item').filter({ hasText: '网络代理' }).click()
+  await page.locator('.sidebar-child-item').filter({ hasText: '网络代理' }).click()
   await expect(settings.getByRole('heading', { name: '网络代理' })).toBeVisible()
   await expect(settings.getByRole('button', { name: '测试连接' })).toBeVisible()
+  await settings.getByRole('radio', { name: /跟随系统/ }).check()
+  await expect(settings.getByRole('textbox', { name: '服务器' })).toBeDisabled()
+  await expect(settings.getByRole('spinbutton', { name: '端口' })).toBeDisabled()
   await settings.getByRole('button', { name: '保存代理配置' }).click()
   await expect
     .poll(() => page.evaluate(() => window.autologin.settings.get()))
-    .toMatchObject({ proxy: { enabled: false, protocol: 'http', port: 8080 } })
+    .toMatchObject({ proxy: { mode: 'system', protocol: 'http', port: 8080 } })
 })
 
 test('supports grouped favorites, drawer editing and checkbox batch tabs in one browser', async () => {
@@ -504,13 +521,12 @@ test('supports grouped favorites, drawer editing and checkbox batch tabs in one 
     group: '工作'
   })
   await expect(page.locator('.account-row')).toHaveCount(2)
-  const groupRow = page.locator('.sidebar-group-row').filter({ hasText: '工作' })
+  const groupRow = page.locator('.account-subnav__item').filter({ hasText: '工作' })
   await expect(groupRow).toBeVisible()
   await expect(groupRow).toContainText('2')
   await expect(groupRow).not.toContainText('工作主账号')
-  const allAccountsNav = page.locator('.sidebar-nav__item').filter({ hasText: '全部账号' })
-  await allAccountsNav.click()
-  await expect(groupRow).toHaveCount(0)
+  const allAccountsNav = page.locator('.account-subnav__item').filter({ hasText: '全部账号' })
+  await expect(page.locator('.sidebar-group-row')).toHaveCount(0)
   await allAccountsNav.click()
   await expect(groupRow).toBeVisible()
   await expect(
@@ -546,16 +562,16 @@ test('supports grouped favorites, drawer editing and checkbox batch tabs in one 
   const favoriteGroup = page.locator('.favorite-group').filter({ hasText: '工作' })
   await expect(favoriteGroup).toBeVisible()
   await expect(favoriteGroup.locator('.account-row')).toHaveCount(2)
-  await allAccountsNav.click()
+  await page.locator('.sidebar-nav__item').filter({ hasText: '账号' }).click()
 
   const mainRow = page.locator('.account-row').filter({ hasText: '工作站点' })
   const editedRow = page.locator('.account-row').filter({ hasText: '备用站点（已编辑）' })
   await mainRow.getByRole('checkbox').check()
   await editedRow.getByRole('checkbox').check()
-  await expect(page.locator('.batch-selection-bar')).toContainText('2 个账号已选')
+  await expect(page.locator('.work-bulk-bar')).toContainText('2 个账号已选')
 
   const previousBatchId = await currentBatchId(page)
-  await page.locator('.batch-selection-bar').getByRole('button', { name: '打开已选' }).click()
+  await page.locator('.work-bulk-bar').getByRole('button', { name: '打开已选' }).click()
   await waitForNewBatch(page, previousBatchId, {
     active: false,
     success: 2,

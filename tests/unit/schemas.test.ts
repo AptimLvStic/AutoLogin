@@ -45,15 +45,16 @@ describe('shared input schemas', () => {
       autoLockMinutes: 15,
       colorMode: 'light',
       language: 'zh-CN',
-      themePreset: 'warm',
+      themePreset: 'magpie',
       customTheme: {
-        background: '#F4F1EA',
-        surface: '#FBF9F4',
-        text: '#1C2521',
-        accent: '#0E7567'
+        background: '#F7F8FA',
+        surface: '#FFFFFF',
+        text: '#1F2328',
+        accent: '#5C6BFF'
       },
       interfaceScale: 100,
       proxy: {
+        mode: 'custom',
         enabled: false,
         protocol: 'http',
         host: '',

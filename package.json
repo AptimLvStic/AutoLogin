@@ -1,6 +1,6 @@
 {
   "name": "autologin",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "description": "A calm, local-first login workspace for Windows.",
   "main": "./out/main/index.js",
   "author": "AutoLogin",
@@ -82,5 +82,9 @@
       "shortcutName": "AutoLogin",
       "uninstallDisplayName": "AutoLogin"
     }
+  },
+  "dependencies": {
+    "csv-parse": "^7.0.3",
+    "kdbxweb": "^2.1.1"
   }
 }

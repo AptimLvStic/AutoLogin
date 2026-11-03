@@ -13,6 +13,7 @@ const LOCATION_FILE = 'data-location.json'
 const MANAGED_DATA_ENTRIES = [
   'vault.enc',
   'vault.enc.bak',
+  'backups',
   'session-index.json',
   'BrowserProfiles',
   'Partitions',

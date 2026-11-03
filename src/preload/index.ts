@@ -94,12 +94,17 @@ const api: AutologinApi = {
   network: {
     testProxy: (settings) => invoke('network:test-proxy', settings)
   },
+  data: {
+    exportVault: () => invoke('data:export-vault'),
+    exportCsvTemplate: () => invoke('data:export-csv-template'),
+    importCsv: () => invoke('data:import-csv'),
+    chooseKdbx: () => invoke('data:choose-kdbx'),
+    importKdbx: (input) => invoke('data:import-kdbx', input),
+    listBackups: () => invoke('data:list-backups'),
+    restoreBackup: (backupId) => invoke('data:restore-backup', backupId)
+  },
   windowControls: {
-    minimize: () => invoke('window:minimize'),
-    toggleMaximize: () => invoke('window:toggle-maximize'),
-    close: () => invoke('window:close'),
-    getState: () => invoke('window:get-state'),
-    onMaximizedChange: (callback) => subscribe('window:maximized-change', callback)
+    updateTheme: (theme) => invoke('window:update-theme', theme)
   },
   events: {
     onVaultLocked: (callback) => subscribe('vault:locked', callback),

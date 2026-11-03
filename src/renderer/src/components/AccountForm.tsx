@@ -1,11 +1,13 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import {
   ArrowRight,
   Check,
+  ChevronDown,
   Eye,
   EyeOff,
   Globe2,
   KeyRound,
+  Layers3,
   Star,
   UserRound
 } from 'lucide-react'
@@ -37,6 +39,8 @@ export function AccountForm({
   const [siteName, setSiteName] = useState('')
   const [startUrl, setStartUrl] = useState('https://')
   const [autoSubmit, setAutoSubmit] = useState(initialSite?.autoSubmit ?? true)
+  const [siteGroup, setSiteGroup] = useState(initialSite?.group ?? '')
+  const [sitePickerOpen, setSitePickerOpen] = useState(false)
   const [label, setLabel] = useState(account?.label ?? '')
   const [username, setUsername] = useState(account?.username ?? '')
   const [password, setPassword] = useState('')
@@ -44,11 +48,34 @@ export function AccountForm({
   const [showPassword, setShowPassword] = useState(false)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
+  const sitePickerRef = useRef<HTMLDivElement>(null)
 
   const selectedSite = useMemo(
     () => sites.find((site) => site.id === selectedSiteId),
     [selectedSiteId, sites]
   )
+
+  useEffect(() => {
+    if (!sitePickerOpen) {
+      return
+    }
+    const closeOnPointerDown = (event: PointerEvent): void => {
+      if (!sitePickerRef.current?.contains(event.target as Node)) {
+        setSitePickerOpen(false)
+      }
+    }
+    const closeOnEscape = (event: KeyboardEvent): void => {
+      if (event.key === 'Escape') {
+        setSitePickerOpen(false)
+      }
+    }
+    document.addEventListener('pointerdown', closeOnPointerDown)
+    document.addEventListener('keydown', closeOnEscape)
+    return () => {
+      document.removeEventListener('pointerdown', closeOnPointerDown)
+      document.removeEventListener('keydown', closeOnEscape)
+    }
+  }, [sitePickerOpen])
 
   function chooseExisting(): void {
     setSiteMode('existing')
@@ -56,12 +83,14 @@ export function AccountForm({
     if (site) {
       setSelectedSiteId(site.id)
       setAutoSubmit(site.autoSubmit)
+      setSiteGroup(site.group ?? '')
     }
   }
 
   function chooseNew(): void {
     setSiteMode('new')
     setAutoSubmit(true)
+    setSiteGroup('')
   }
 
   function handleSiteChange(siteId: string): void {
@@ -69,6 +98,8 @@ export function AccountForm({
     const site = sites.find((entry) => entry.id === siteId)
     if (site) {
       setAutoSubmit(site.autoSubmit)
+      setSiteGroup(site.group ?? '')
+      setSitePickerOpen(false)
     }
   }
 
@@ -114,21 +145,24 @@ export function AccountForm({
         site = await window.autologin.sites.save({
           name: siteName.trim(),
           startUrl: startUrl.trim(),
-          autoSubmit
+          autoSubmit,
+          group: siteGroup.trim() || undefined
         })
       } else {
         if (!selectedSite) {
           throw new Error('请选择站点')
         }
+        const groupChanged = (selectedSite.group ?? '') !== siteGroup.trim()
         site =
-          selectedSite.autoSubmit === autoSubmit
+          selectedSite.autoSubmit === autoSubmit && !groupChanged
             ? selectedSite
             : await window.autologin.sites.save({
                 id: selectedSite.id,
                 name: selectedSite.name,
                 startUrl: selectedSite.startUrl,
                 allowedOrigins: selectedSite.allowedOrigins,
-                autoSubmit
+                autoSubmit,
+                group: siteGroup.trim() || undefined
               })
       }
 
@@ -205,20 +239,50 @@ export function AccountForm({
             <div className="field-row field-row--single">
               <label className="field">
                 <span className="field__label">选择站点</span>
-                <span className="select-shell">
-                  <Globe2 size={17} />
-                  <select
-                    value={selectedSiteId}
-                    onChange={(event) => handleSiteChange(event.target.value)}
+                <div className="site-picker" ref={sitePickerRef}>
+                  <button
+                    type="button"
+                    className={`site-picker__trigger${sitePickerOpen ? ' is-open' : ''}`}
+                    onClick={() => setSitePickerOpen((open) => !open)}
                     disabled={Boolean(account)}
+                    aria-haspopup="listbox"
+                    aria-expanded={sitePickerOpen}
                   >
-                    {sites.map((site) => (
-                      <option key={site.id} value={site.id}>
-                        {site.name}
-                      </option>
-                    ))}
-                  </select>
-                </span>
+                    <Globe2 size={17} />
+                    <span>
+                      <strong>{selectedSite?.name ?? '选择站点'}</strong>
+                      <small>
+                        {selectedSite ? safeHostname(selectedSite.startUrl) : '请选择已有站点'}
+                      </small>
+                    </span>
+                    <ChevronDown size={16} className={sitePickerOpen ? 'is-open' : ''} />
+                  </button>
+                  {sitePickerOpen && !account && (
+                    <div className="site-picker__menu" role="listbox" aria-label="选择站点">
+                      {sites.map((site) => (
+                        <button
+                          key={site.id}
+                          type="button"
+                          role="option"
+                          aria-selected={site.id === selectedSiteId}
+                          className={site.id === selectedSiteId ? 'is-selected' : ''}
+                          onClick={() => handleSiteChange(site.id)}
+                        >
+                          <span className="monogram monogram--small">
+                            {site.name.slice(0, 1).toUpperCase()}
+                          </span>
+                          <span>
+                            <strong>{site.name}</strong>
+                            <small>
+                              {site.group?.trim() || '未分组'} · {safeHostname(site.startUrl)}
+                            </small>
+                          </span>
+                          {site.id === selectedSiteId && <Check size={15} />}
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </div>
               </label>
               {selectedSite && (
                 <div className="site-preview">
@@ -261,6 +325,19 @@ export function AccountForm({
               </label>
             </div>
           )}
+
+          <label className="field">
+            <span className="field__label">站点分组（可选）</span>
+            <span className="input-shell">
+              <Layers3 size={17} />
+              <input
+                value={siteGroup}
+                onChange={(event) => setSiteGroup(event.target.value)}
+                placeholder="例如：工作、财务、个人"
+                maxLength={40}
+              />
+            </span>
+          </label>
 
           <div className="field-row">
             <label className="field">

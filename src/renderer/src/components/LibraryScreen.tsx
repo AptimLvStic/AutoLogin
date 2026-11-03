@@ -5,6 +5,8 @@ import {
   Clock3,
   Globe2,
   KeyRound,
+  Layers3,
+  LoaderCircle,
   LockKeyhole,
   Plus,
   Search,
@@ -13,8 +15,9 @@ import {
   Star,
   UserRound
 } from 'lucide-react'
-import type { AccountWithSite, AppSettings, Site } from '@shared/types'
+import type { AccountWithSite, AppSettings, LoginBatchState, Site } from '@shared/types'
 import { AccountForm } from './AccountForm'
+import { BatchLoginModal } from './BatchLoginModal'
 import { BrandMark } from './Brand'
 import { DetailsDrawer } from './DetailsDrawer'
 import { SettingsModal } from './SettingsModal'
@@ -26,9 +29,11 @@ export function LibraryScreen({
   sites,
   settings,
   appVersion,
+  batchState,
   onRefresh,
   onLock,
-  onLogin,
+  onStartBatch,
+  onRecord,
   onCleared,
   notify
 }: {
@@ -36,9 +41,11 @@ export function LibraryScreen({
   sites: Site[]
   settings: AppSettings
   appVersion: string
+  batchState: LoginBatchState | null
   onRefresh: () => Promise<void>
   onLock: () => Promise<void>
-  onLogin: (account: AccountWithSite) => void
+  onStartBatch: (accountIds: string[]) => Promise<boolean>
+  onRecord: (account: AccountWithSite) => void
   onCleared: () => void
   notify: (kind: 'success' | 'error' | 'info', message: string) => void
 }): React.JSX.Element {
@@ -50,6 +57,7 @@ export function LibraryScreen({
     { mode: 'create'; siteId?: string } | { mode: 'edit'; account: AccountWithSite } | null
   >(null)
   const [settingsOpen, setSettingsOpen] = useState(false)
+  const [batchOpen, setBatchOpen] = useState(false)
 
   const accountSites = useMemo(() => {
     const counts = new Map<string, number>()
@@ -60,6 +68,21 @@ export function LibraryScreen({
       .filter((site) => counts.has(site.id))
       .map((site) => ({ site, count: counts.get(site.id) ?? 0 }))
   }, [accounts, sites])
+
+  const groupedSites = useMemo(() => {
+    const groups = new Map<string, Array<{ site: Site; count: number }>>()
+    for (const entry of accountSites) {
+      const group = entry.site.group?.trim() || '未分组'
+      const current = groups.get(group) ?? []
+      current.push(entry)
+      groups.set(group, current)
+    }
+    return [...groups.entries()].sort(([left], [right]) => {
+      if (left === '未分组') return 1
+      if (right === '未分组') return -1
+      return left.localeCompare(right, 'zh-CN')
+    })
+  }, [accountSites])
 
   const filtered = useMemo(() => {
     const query = search.trim().toLowerCase()
@@ -132,13 +155,6 @@ export function LibraryScreen({
     <div className="app-shell">
       <aside className="sidebar">
         <BrandMark />
-        <button
-          className="button button--primary sidebar-add"
-          onClick={() => setFormState({ mode: 'create' })}
-        >
-          <Plus size={17} />
-          添加账号
-        </button>
 
         <nav className="sidebar-nav" aria-label="账号筛选">
           <span className="sidebar-label">工作台</span>
@@ -166,21 +182,29 @@ export function LibraryScreen({
             <span>{accountSites.length}</span>
           </div>
           <div className="sidebar-sites__list">
-            {accountSites.map(({ site, count }) => (
-              <button
-                key={site.id}
-                className={`sidebar-site${filter === `site:${site.id}` ? ' is-active' : ''}`}
-                onClick={() => setFilter(`site:${site.id}`)}
-              >
-                <span className={`monogram monogram--small ${toneClass(site.id)}`}>
-                  {site.name.slice(0, 1).toUpperCase()}
-                </span>
-                <span>
-                  <strong>{site.name}</strong>
-                  <small>{safeHostname(site.startUrl)}</small>
-                </span>
-                <em>{count}</em>
-              </button>
+            {groupedSites.map(([group, groupEntries]) => (
+              <div className="sidebar-site-group" key={group}>
+                <div className="sidebar-site-group__heading">
+                  <Layers3 size={12} />
+                  <span>{group}</span>
+                </div>
+                {groupEntries.map(({ site, count }) => (
+                  <button
+                    key={site.id}
+                    className={`sidebar-site${filter === `site:${site.id}` ? ' is-active' : ''}`}
+                    onClick={() => setFilter(`site:${site.id}`)}
+                  >
+                    <span className={`monogram monogram--small ${toneClass(site.id)}`}>
+                      {site.name.slice(0, 1).toUpperCase()}
+                    </span>
+                    <span>
+                      <strong>{site.name}</strong>
+                      <small>{safeHostname(site.startUrl)}</small>
+                    </span>
+                    <em>{count}</em>
+                  </button>
+                ))}
+              </div>
             ))}
           </div>
         </div>
@@ -217,13 +241,42 @@ export function LibraryScreen({
                 : `${accountSites.length} 个站点 · ${accounts.length} 个账号，全部保存在本机`}
             </p>
           </div>
-          <button
-            className="button button--primary"
-            onClick={() => setFormState({ mode: 'create' })}
-          >
-            <Plus size={17} />
-            添加账号
-          </button>
+          <div className="library-header__actions">
+            {batchState && batchState.total > 0 && (
+              <div
+                className={`batch-status${batchState.active ? ' is-active' : ''}${
+                  batchState.failed > 0 ? ' has-failures' : ''
+                }`}
+                role="status"
+                aria-live="polite"
+              >
+                {batchState.active ? (
+                  <LoaderCircle size={14} className="spin" />
+                ) : (
+                  <span className="batch-status__dot" />
+                )}
+                <span>
+                  成功 {batchState.success} / 失败 {batchState.failed}
+                  {batchState.manual > 0 ? ` · 待处理 ${batchState.manual}` : ''}
+                </span>
+              </div>
+            )}
+            <button
+              className="button button--ghost"
+              onClick={() => setBatchOpen(true)}
+              disabled={accounts.length === 0 || Boolean(batchState?.active)}
+            >
+              <Layers3 size={17} />
+              批量打开
+            </button>
+            <button
+              className="button button--primary"
+              onClick={() => setFormState({ mode: 'create' })}
+            >
+              <Plus size={17} />
+              添加账号
+            </button>
+          </div>
         </header>
 
         {accounts.length > 0 && recent && !search && filter === 'all' && (
@@ -245,7 +298,7 @@ export function LibraryScreen({
                 {recent.site.recipe ? '录制流程就绪' : '通用识别就绪'}
               </span>
             </div>
-            <button className="recent-login" onClick={() => onLogin(recent)}>
+            <button className="recent-login" onClick={() => void onStartBatch([recent.id])}>
               继续登录
               <ArrowUpRight size={18} />
             </button>
@@ -329,7 +382,7 @@ export function LibraryScreen({
                   className="row-login-button"
                   onClick={(event) => {
                     event.stopPropagation()
-                    onLogin(account)
+                    void onStartBatch([account.id])
                   }}
                 >
                   登录
@@ -375,8 +428,15 @@ export function LibraryScreen({
         <DetailsDrawer
           account={selected}
           onClose={() => setSelectedId(null)}
-          onEdit={() => setFormState({ mode: 'edit', account: selected })}
-          onLogin={() => onLogin(selected)}
+          onEdit={() => {
+            setSelectedId(null)
+            setFormState({ mode: 'edit', account: selected })
+          }}
+          onLogin={() => void onStartBatch([selected.id])}
+          onRecord={() => {
+            setSelectedId(null)
+            onRecord(selected)
+          }}
           onDelete={() => {
             setSelectedId(null)
             void onRefresh()
@@ -385,6 +445,15 @@ export function LibraryScreen({
           onFavorite={() => toggleFavorite(selected)}
           onSiteUpdated={() => void onRefresh()}
           notify={notify}
+        />
+      )}
+
+      {batchOpen && (
+        <BatchLoginModal
+          accounts={accounts}
+          sites={sites}
+          onClose={() => setBatchOpen(false)}
+          onStart={onStartBatch}
         />
       )}
 

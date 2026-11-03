@@ -74,6 +74,7 @@ export interface Site {
   startUrl: string
   allowedOrigins: string[]
   autoSubmit: boolean
+  group?: string
   recipe?: LoginRecipe
   createdAt: string
   updatedAt: string
@@ -128,6 +129,7 @@ export interface SiteInput {
   startUrl: string
   allowedOrigins?: string[]
   autoSubmit: boolean
+  group?: string
 }
 
 export interface AccountCreateInput {
@@ -150,6 +152,38 @@ export interface LoginStartInput {
   mode: LoginMode
 }
 
+export type LoginBatchItemStatus =
+  | 'queued'
+  | 'opening'
+  | 'filling'
+  | 'submitting'
+  | 'manual'
+  | 'success'
+  | 'failed'
+
+export interface LoginBatchItem {
+  accountId: string
+  accountLabel: string
+  siteName: string
+  status: LoginBatchItemStatus
+  message: string
+  startedAt?: string
+  completedAt?: string
+}
+
+export interface LoginBatchState {
+  batchId: string
+  active: boolean
+  total: number
+  pending: number
+  success: number
+  failed: number
+  manual: number
+  items: LoginBatchItem[]
+  startedAt: string
+  finishedAt?: string
+}
+
 export interface PasswordReveal {
   password: string
   expiresAt: number
@@ -159,6 +193,29 @@ export interface RecipeDraftResult {
   siteId: string
   recipe: LoginRecipe
   saved: boolean
+}
+
+export interface DataLocationInfo {
+  directory: string
+  defaultDirectory: string
+  isDefault: boolean
+  restartRequired?: boolean
+}
+
+export interface AboutInfo {
+  version: string
+  electronVersion: string
+  platform: string
+  repositoryUrl: string
+  dataDirectory: string
+}
+
+export interface UpdateCheckResult {
+  status: 'available' | 'up-to-date' | 'unavailable'
+  currentVersion: string
+  latestVersion?: string
+  releaseUrl?: string
+  message: string
 }
 
 export interface AutologinApi {
@@ -185,6 +242,8 @@ export interface AutologinApi {
   }
   login: {
     start: (input: LoginStartInput) => Promise<LoginViewState>
+    startBatch: (accountIds: string[]) => Promise<LoginBatchState>
+    getBatchState: () => Promise<LoginBatchState | null>
     close: () => Promise<void>
     retry: () => Promise<void>
     trustCurrentOrigin: () => Promise<void>
@@ -200,6 +259,15 @@ export interface AutologinApi {
   }
   app: {
     getVersion: () => Promise<string>
+    getAbout: () => Promise<AboutInfo>
+    checkForUpdates: () => Promise<UpdateCheckResult>
+    openRepository: () => Promise<void>
+    openReleases: () => Promise<void>
+    getDataLocation: () => Promise<DataLocationInfo>
+    chooseDataLocation: () => Promise<DataLocationInfo | null>
+    openDataLocation: () => Promise<void>
+    openFailureLog: () => Promise<void>
+    restart: () => Promise<void>
     reportActivity: () => void
     clearAllData: () => Promise<void>
     openPrivacy: () => Promise<void>
@@ -207,5 +275,6 @@ export interface AutologinApi {
   events: {
     onVaultLocked: (callback: () => void) => () => void
     onLoginState: (callback: (state: LoginViewState) => void) => () => void
+    onLoginBatchState: (callback: (state: LoginBatchState) => void) => () => void
   }
 }

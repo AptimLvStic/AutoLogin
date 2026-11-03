@@ -286,13 +286,10 @@ export class LoginSessionManager {
   }
 
   async clearSession(accountId: string): Promise<void> {
-    await this.dispose()
-    removeManagedDirectory(this.userDataPath, 'BrowserProfiles', accountId)
-    try {
-      removeManagedDirectory(this.userDataPath, 'Partitions', `autologin-${accountId}`)
-    } catch {
-      // Legacy Electron partitions may still be locked by an older process.
+    if (this.account?.id === accountId) {
+      await this.dispose()
     }
+    clearManagedSessionDirectories(this.userDataPath, accountId)
   }
 
   private async dispose(): Promise<void> {
@@ -802,6 +799,18 @@ function removeManagedDirectory(
     throw new Error('拒绝删除保险库之外的目录')
   }
   rmSync(target, { recursive: true, force: true, maxRetries: 8, retryDelay: 200 })
+}
+
+export function clearManagedSessionDirectories(
+  userDataPath: string,
+  accountId: string
+): void {
+  removeManagedDirectory(userDataPath, 'BrowserProfiles', accountId)
+  try {
+    removeManagedDirectory(userDataPath, 'Partitions', `autologin-${accountId}`)
+  } catch {
+    // Legacy Electron partitions may still be locked by an older process.
+  }
 }
 
 function delay(milliseconds: number): Promise<void> {

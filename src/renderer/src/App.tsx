@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { LoaderCircle, LockKeyhole } from 'lucide-react'
-import type { AccountWithSite, AppSettings, LoginMode, Site } from '@shared/types'
+import type { AccountWithSite, AppSettings, LoginBatchState, Site } from '@shared/types'
 import { SetupScreen, UnlockScreen } from './components/AuthScreens'
 import { BrandMark } from './components/Brand'
 import { LibraryScreen } from './components/LibraryScreen'
@@ -12,7 +12,7 @@ type AuthState = 'boot' | 'setup' | 'unlock' | 'ready'
 
 interface LoginTarget {
   account: AccountWithSite
-  mode: LoginMode
+  mode: 'record'
 }
 
 const DEFAULT_SETTINGS: AppSettings = { autoLockMinutes: 10 }
@@ -22,8 +22,9 @@ export default function App(): React.JSX.Element {
   const [accounts, setAccounts] = useState<AccountWithSite[]>([])
   const [sites, setSites] = useState<Site[]>([])
   const [settings, setSettings] = useState<AppSettings>(DEFAULT_SETTINGS)
-  const [appVersion, setAppVersion] = useState('0.2.0')
+  const [appVersion, setAppVersion] = useState('0.2.1')
   const [loginTarget, setLoginTarget] = useState<LoginTarget | null>(null)
+  const [batchState, setBatchState] = useState<LoginBatchState | null>(null)
   const [toast, setToast] = useState<ToastState | null>(null)
   const [resetOpen, setResetOpen] = useState(false)
   const [resetBusy, setResetBusy] = useState(false)
@@ -61,17 +62,24 @@ export default function App(): React.JSX.Element {
         if (!cancelled) setAuthState('setup')
       })
 
-    const unsubscribe = window.autologin.events.onVaultLocked(() => {
+    const unsubscribeLocked = window.autologin.events.onVaultLocked(() => {
       if (!cancelled) {
         setLoginTarget(null)
+        setBatchState(null)
         setAccounts([])
         setSites([])
         setAuthState('unlock')
       }
     })
+    const unsubscribeBatch = window.autologin.events.onLoginBatchState((state) => {
+      if (!cancelled) {
+        setBatchState(state)
+      }
+    })
     return () => {
       cancelled = true
-      unsubscribe()
+      unsubscribeLocked()
+      unsubscribeBatch()
     }
   }, [])
 
@@ -113,6 +121,7 @@ export default function App(): React.JSX.Element {
     const status = await window.autologin.vault.create(password)
     setSettings({ autoLockMinutes: status.autoLockMinutes })
     await loadData()
+    setBatchState(await window.autologin.login.getBatchState())
     setAuthState('ready')
     notify('success', '保险库已创建')
   }
@@ -121,12 +130,14 @@ export default function App(): React.JSX.Element {
     const status = await window.autologin.vault.unlock(password)
     setSettings({ autoLockMinutes: status.autoLockMinutes })
     await loadData()
+    setBatchState(await window.autologin.login.getBatchState())
     setAuthState('ready')
   }
 
   async function lockVault(): Promise<void> {
     await window.autologin.vault.lock()
     setLoginTarget(null)
+    setBatchState(null)
     setAccounts([])
     setSites([])
     setAuthState('unlock')
@@ -139,6 +150,7 @@ export default function App(): React.JSX.Element {
       setAccounts([])
       setSites([])
       setLoginTarget(null)
+      setBatchState(null)
       setResetOpen(false)
       setAuthState('setup')
       notify('success', '本地数据已清除，可以重新创建保险库')
@@ -149,8 +161,20 @@ export default function App(): React.JSX.Element {
     }
   }
 
-  function openLogin(account: AccountWithSite): void {
-    setLoginTarget({ account, mode: 'login' })
+  function openRecording(account: AccountWithSite): void {
+    setLoginTarget({ account, mode: 'record' })
+  }
+
+  async function startBatch(accountIds: string[]): Promise<boolean> {
+    try {
+      const next = await window.autologin.login.startBatch(accountIds)
+      setBatchState(next)
+      notify('info', `正在默认浏览器中打开 ${next.total} 个账号`)
+      return true
+    } catch (error) {
+      notify('error', error instanceof Error ? error.message : '批量打开失败')
+      return false
+    }
   }
 
   return (
@@ -190,9 +214,11 @@ export default function App(): React.JSX.Element {
           sites={sites}
           settings={settings}
           appVersion={appVersion}
+          batchState={batchState}
           onRefresh={loadData}
           onLock={lockVault}
-          onLogin={openLogin}
+          onStartBatch={startBatch}
+          onRecord={openRecording}
           onCleared={() => {
             setAccounts([])
             setSites([])

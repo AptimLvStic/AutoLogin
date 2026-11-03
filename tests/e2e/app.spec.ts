@@ -77,7 +77,7 @@ test.afterAll(async () => {
   await Promise.all([server.close(), untrustedServer.close()])
 })
 
-test('creates a vault, logs in, locks, reuses the session and clears it', async () => {
+test('uses the Windows default browser, reuses the session and clears it', async () => {
   await createVault(page)
   await addAccount(page, {
     siteName: '标准登录',
@@ -101,13 +101,24 @@ test('creates a vault, logs in, locks, reuses the session and clears it', async 
   )
   await page.locator('.drawer-backdrop').click({ position: { x: 10, y: 10 } })
 
+  const accountId = await page.evaluate(async () => {
+    const accounts = await window.autologin.accounts.list()
+    return accounts[0]!.id
+  })
+  const firstBatchId = await currentBatchId(page)
   await page.locator('.account-row').first().getByRole('button', { name: '登录' }).click()
-  await expect(page.locator('.workspace-header .workspace-status')).toContainText('已登录', { timeout: 15000 })
+  await waitForNewBatch(page, firstBatchId, {
+    active: false,
+    success: 1,
+    failed: 0,
+    manual: 0
+  })
   await expect.poll(() => targetSnapshot(application, server.baseUrl)).toMatchObject({
     found: true,
     pathname: '/home',
     welcome: 'Welcome back'
   })
+  expect(existsSync(join(userDataDirectory, 'BrowserProfiles', accountId))).toBe(true)
   expect(
     await application.evaluate(
       ({ webContents }, baseUrl) =>
@@ -131,7 +142,6 @@ test('creates a vault, logs in, locks, reuses the session and clears it', async 
     autologinType: 'undefined'
   })
 
-  await page.getByRole('button', { name: '返回账号库' }).click()
   await page.getByRole('button', { name: '立即锁定' }).click()
   await expect(page.getByRole('heading', { name: '保险库已锁定' })).toBeVisible()
 
@@ -139,11 +149,17 @@ test('creates a vault, logs in, locks, reuses the session and clears it', async 
   await page.getByRole('button', { name: '解锁保险库' }).click()
   await expect(page.getByRole('heading', { name: '你的登录入口' })).toBeVisible()
 
+  const secondBatchId = await currentBatchId(page)
   await page.locator('.account-row').first().getByRole('button', { name: '登录' }).click()
+  await waitForNewBatch(page, secondBatchId, {
+    active: false,
+    success: 1,
+    failed: 0,
+    manual: 0
+  })
   await expect
     .poll(() => targetSnapshot(application, server.baseUrl), { timeout: 15000 })
     .toMatchObject({ found: true, pathname: '/home' })
-  await page.getByRole('button', { name: '返回账号库' }).click()
 
   await page.locator('.account-row').first().click()
   const drawer = page.locator('.details-drawer')
@@ -152,13 +168,21 @@ test('creates a vault, logs in, locks, reuses the session and clears it', async 
   const confirm = page.locator('.confirm-dialog')
   await expect(confirm).toBeVisible()
   await confirm.getByRole('button', { name: '清除会话' }).click()
-  await expect(page.getByRole('status')).toContainText('网站会话已清除')
+  await expect(page.locator('.toast')).toContainText('网站会话已清除')
+  expect(existsSync(join(userDataDirectory, 'BrowserProfiles', accountId))).toBe(false)
   await page.locator('.drawer-backdrop').click({ position: { x: 10, y: 10 } })
 
+  const thirdBatchId = await currentBatchId(page)
   await page.locator('.account-row').first().getByRole('button', { name: '登录' }).click()
+  await waitForNewBatch(page, thirdBatchId, {
+    active: false,
+    success: 1,
+    failed: 0,
+    manual: 0
+  })
   await expect
     .poll(() => targetSnapshot(application, server.baseUrl), { timeout: 15000 })
-    .toMatchObject({ found: true, pathname: '/login' })
+    .toMatchObject({ found: true, pathname: '/home' })
 })
 
 test('pauses on a captcha and resumes after manual verification', async () => {
@@ -171,9 +195,13 @@ test('pauses on a captcha and resumes after manual verification', async () => {
     password: 'secret-password'
   })
 
+  const previousBatchId = await currentBatchId(page)
   await page.locator('.account-row').first().getByRole('button', { name: '登录' }).click()
-  await expect(page.locator('.workspace-header .workspace-status')).toContainText('等待人工验证', {
-    timeout: 15000
+  await waitForNewBatch(page, previousBatchId, {
+    active: false,
+    success: 0,
+    failed: 1,
+    manual: 1
   })
   await expect
     .poll(() => targetSnapshot(application, server.baseUrl), { timeout: 15000 })
@@ -184,6 +212,18 @@ test('pauses on a captcha and resumes after manual verification', async () => {
       password: 'secret-password',
       activeName: 'verificationCode'
     })
+  await expect(page.locator('.batch-status')).toContainText('成功 0 / 失败 1 · 待处理 1')
+
+  const failureLog = join(userDataDirectory, 'logs', 'login-failures.jsonl')
+  await expect
+    .poll(() => (existsSync(failureLog) ? readFileSync(failureLog, 'utf8') : ''), {
+      timeout: 5000
+    })
+    .toContain('"status":"manual"')
+  const logContents = readFileSync(failureLog, 'utf8')
+  expect(logContents).not.toContain('secret-password')
+  expect(logContents).not.toContain('tester@example.test')
+  expect(logContents).not.toContain(server.baseUrl)
 
   await executeInTarget(
     application,
@@ -200,7 +240,13 @@ test('pauses on a captcha and resumes after manual verification', async () => {
     found: true,
     pathname: '/home'
   })
-  await expect(page.locator('.workspace-header .workspace-status')).toContainText('已登录', { timeout: 15000 })
+  await waitForBatch(page, {
+    active: false,
+    success: 1,
+    failed: 0,
+    manual: 0
+  })
+  await expect(page.locator('.batch-status')).toContainText('成功 1 / 失败 0')
 })
 
 test('stops automation when a site redirects outside trusted origins', async () => {
@@ -216,16 +262,24 @@ test('stops automation when a site redirects outside trusted origins', async () 
     password: 'secret-password'
   })
 
+  const previousBatchId = await currentBatchId(page)
   await page.locator('.account-row').first().getByRole('button', { name: '登录' }).click()
-  await expect(page.locator('.workspace-header .workspace-status')).toContainText('需要确认', {
-    timeout: 15000
+  await waitForNewBatch(page, previousBatchId, {
+    active: false,
+    success: 0,
+    failed: 1,
+    manual: 1
   })
-  const state = await page.evaluate(() => window.autologin.login.getState())
-  expect(state).toMatchObject({
-    currentOrigin: new URL(untrustedServer.baseUrl).origin,
-    originTrusted: false
-  })
-  expect(state?.message).toContain('未授权域名')
+  const batchState = await page.evaluate(() => window.autologin.login.getBatchState())
+  expect(batchState?.items[0]?.message).toContain('未授权域名')
+  await expect(page.locator('.batch-status')).toContainText('成功 0 / 失败 1 · 待处理 1')
+  const failureLog = join(userDataDirectory, 'logs', 'login-failures.jsonl')
+  await expect
+    .poll(() => (existsSync(failureLog) ? readFileSync(failureLog, 'utf8') : ''), {
+      timeout: 5000
+    })
+    .toContain('"status":"manual"')
+  expect(readFileSync(failureLog, 'utf8')).not.toContain(untrustedServer.baseUrl)
   await expect
     .poll(() => targetSnapshot(application, untrustedServer.baseUrl), { timeout: 15000 })
     .toMatchObject({
@@ -265,6 +319,84 @@ test('searches accounts and filters favorites', async () => {
   await expect(page.locator('.account-row')).toContainText('Beta 账号')
 })
 
+test('supports grouped batch open, custom site picker, modal editing and settings', async () => {
+  await createVault(page)
+  await addAccount(page, {
+    siteName: '工作站点',
+    startUrl: `${server.baseUrl}/login`,
+    label: '工作主账号',
+    username: 'tester@example.test',
+    password: 'secret-password',
+    group: '工作'
+  })
+
+  await page.getByRole('button', { name: '添加账号' }).first().click()
+  const accountModal = page.locator('.account-form-modal')
+  await expect(accountModal).toBeVisible()
+  await accountModal.getByRole('button', { name: '已有站点' }).click()
+  await expect(accountModal.locator('select')).toHaveCount(0)
+  await accountModal.locator('.site-picker__trigger').click()
+  await expect(accountModal.getByRole('listbox', { name: '选择站点' })).toBeVisible()
+  await accountModal.getByRole('option', { name: /工作站点/ }).click()
+  await accountModal.getByPlaceholder('例如：主账号').fill('工作副账号')
+  await accountModal.getByPlaceholder('邮箱或账号').fill('tester@example.test')
+  await accountModal.getByPlaceholder('输入登录密码').fill('secret-password')
+  await accountModal.getByRole('button', { name: '添加账号' }).click()
+  await expect(page.locator('.account-row')).toHaveCount(2)
+  await expect(
+    page.locator('.sidebar-site-group__heading').filter({ hasText: '工作' })
+  ).toBeVisible()
+  await expect(
+    page.locator('.sidebar-actions').getByRole('button', { name: '添加账号' })
+  ).toHaveCount(0)
+  await page.locator('.drawer-backdrop').click({ position: { x: 10, y: 10 } })
+
+  await page.locator('.account-row').filter({ hasText: '工作副账号' }).click()
+  const drawer = page.locator('.details-drawer')
+  await drawer.getByRole('button', { name: '编辑账号' }).click()
+  const editModal = page.locator('.account-form-modal')
+  await expect(editModal.getByRole('heading', { name: '编辑账号' })).toBeVisible()
+  await expect(editModal.locator('.form-sheet')).toBeVisible()
+  await editModal.getByPlaceholder('例如：主账号').fill('工作副账号（已编辑）')
+  await editModal.getByRole('button', { name: '保存修改' }).click()
+  await expect(
+    page.locator('.account-row').filter({ hasText: '工作副账号（已编辑）' })
+  ).toBeVisible()
+  await page.locator('.drawer-backdrop').click({ position: { x: 10, y: 10 } })
+
+  await page.locator('.sidebar-action').filter({ hasText: '设置' }).click()
+  const settings = page.locator('.settings-modal')
+  await expect(settings.getByRole('heading', { name: '关于 AutoLogin' })).toBeVisible()
+  await expect(settings.getByRole('heading', { name: '检查更新' })).toBeVisible()
+  await expect(settings.getByRole('heading', { name: '数据保存位置' })).toBeVisible()
+  const runtimeVersion = await application.evaluate(({ app }) => app.getVersion())
+  await expect(settings.locator('.settings-about-grid')).toContainText(`v${runtimeVersion}`)
+  await expect(settings.locator('.settings-location code')).toContainText(userDataDirectory)
+  await settings.getByRole('button', { name: '检查更新' }).click()
+  await expect(settings.locator('.settings-update-status')).toBeVisible({ timeout: 12000 })
+  await settings.locator('.modal-header').getByRole('button', { name: '关闭' }).click()
+
+  const previousBatchId = await currentBatchId(page)
+  await page.getByRole('button', { name: '批量打开' }).click()
+  const batchModal = page.locator('.batch-login-modal')
+  await expect(batchModal).toBeVisible()
+  await expect(
+    batchModal.locator('.batch-picker__group-heading').filter({ hasText: '工作' })
+  ).toBeVisible()
+  const siteRow = batchModal.locator('.batch-site-row').filter({ hasText: '工作站点' })
+  await expect(siteRow).toContainText('2 个账号')
+  await siteRow.click()
+  await expect(batchModal.locator('.batch-picker__footer')).toContainText('已选 1 个站点，2 个账号')
+  await batchModal.getByRole('button', { name: '打开所选站点' }).click()
+  await waitForNewBatch(page, previousBatchId, {
+    active: false,
+    success: 2,
+    failed: 0,
+    manual: 0
+  })
+  await expect(page.locator('.batch-status')).toContainText('成功 2 / 失败 0')
+})
+
 test('records and replays a multi-step login flow', async () => {
   await createVault(page)
   await addAccount(page, {
@@ -275,9 +407,8 @@ test('records and replays a multi-step login flow', async () => {
     password: 'secret-password'
   })
 
-  await page.locator('.account-row').first().getByRole('button', { name: '登录' }).click()
-  await expect(page.locator('.workspace-header .workspace-status')).toContainText('需要确认', { timeout: 15000 })
-  await page.getByRole('button', { name: '重新录制' }).click()
+  await page.locator('.account-row').first().click()
+  await page.locator('.details-drawer').getByRole('button', { name: '录制登录流程' }).click()
   await expect(page.getByText('正在录制登录流程')).toBeVisible()
 
   await expect
@@ -313,13 +444,20 @@ test('records and replays a multi-step login flow', async () => {
   await page.locator('.account-row').first().click()
   await page.locator('.details-drawer').getByRole('button', { name: '清除会话' }).click()
   await page.locator('.confirm-dialog').getByRole('button', { name: '清除会话' }).click()
+  await expect(page.locator('.toast')).toContainText('网站会话已清除')
   await page.locator('.drawer-backdrop').click({ position: { x: 10, y: 10 } })
 
+  const previousBatchId = await currentBatchId(page)
   await page.locator('.account-row').first().getByRole('button', { name: '登录' }).click()
+  await waitForNewBatch(page, previousBatchId, {
+    active: false,
+    success: 1,
+    failed: 0,
+    manual: 0
+  })
   await expect
     .poll(() => targetSnapshot(application, server.baseUrl), { timeout: 15000 })
     .toMatchObject({ found: true, pathname: '/home' })
-  await expect(page.locator('.workspace-header .workspace-status')).toContainText('已登录', { timeout: 15000 })
 })
 
 test('can clear all local data while the vault is locked', async () => {
@@ -331,9 +469,14 @@ test('can clear all local data while the vault is locked', async () => {
     username: 'tester@example.test',
     password: 'secret-password'
   })
+  const previousBatchId = await currentBatchId(page)
   await page.locator('.account-row').first().getByRole('button', { name: '登录' }).click()
-  await expect(page.locator('.workspace-header .workspace-status')).toContainText('已登录', { timeout: 15000 })
-  await page.getByRole('button', { name: '返回账号库' }).click()
+  await waitForNewBatch(page, previousBatchId, {
+    active: false,
+    success: 1,
+    failed: 0,
+    manual: 0
+  })
   await page.getByRole('button', { name: '立即锁定' }).click()
   await page.getByRole('button', { name: '忘记主密码？' }).click()
   const confirm = page.locator('.confirm-dialog')
@@ -359,6 +502,7 @@ async function addAccount(
     label: string
     username: string
     password: string
+    group?: string
   }
 ): Promise<void> {
   await targetPage.getByRole('button', { name: '添加账号' }).first().click()
@@ -369,9 +513,68 @@ async function addAccount(
   await modal.getByPlaceholder('例如：主账号').fill(account.label)
   await modal.getByPlaceholder('邮箱或账号').fill(account.username)
   await modal.getByPlaceholder('输入登录密码').fill(account.password)
+  if (account.group) {
+    await modal.getByPlaceholder('例如：工作、财务、个人').fill(account.group)
+  }
   await modal.getByRole('button', { name: '添加账号' }).click()
   await expect(targetPage.locator('.account-row').first()).toContainText(account.label)
   await targetPage.locator('.drawer-backdrop').click({ position: { x: 10, y: 10 } })
+}
+
+async function currentBatchId(targetPage: Page): Promise<string | null> {
+  return targetPage.evaluate(async () => {
+    const state = await window.autologin.login.getBatchState()
+    return state?.batchId ?? null
+  })
+}
+
+async function waitForNewBatch(
+  targetPage: Page,
+  previousBatchId: string | null,
+  expected: {
+    active: boolean
+    success: number
+    failed: number
+    manual: number
+  }
+): Promise<void> {
+  await expect
+    .poll(
+      () =>
+        targetPage.evaluate(async (previousId) => {
+          const state = await window.autologin.login.getBatchState()
+          return Boolean(state?.batchId && state.batchId !== previousId)
+        }, previousBatchId),
+      { timeout: 35000 }
+    )
+    .toBe(true)
+  await waitForBatch(targetPage, expected)
+}
+
+async function waitForBatch(
+  targetPage: Page,
+  expected: {
+    active: boolean
+    success: number
+    failed: number
+    manual: number
+  }
+): Promise<void> {
+  await expect
+    .poll(
+      () =>
+        targetPage.evaluate(async () => {
+          const state = await window.autologin.login.getBatchState()
+          return {
+            active: state?.active ?? null,
+            success: state?.success ?? null,
+            failed: state?.failed ?? null,
+            manual: state?.manual ?? null
+          }
+        }),
+      { timeout: 35000 }
+    )
+    .toMatchObject(expected)
 }
 
 async function targetSnapshot(

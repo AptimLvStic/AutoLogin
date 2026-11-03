@@ -14,6 +14,7 @@ import {
   Star,
   Trash2,
   UserRound,
+  Video,
   X
 } from 'lucide-react'
 import type { AccountWithSite, Site } from '@shared/types'
@@ -24,6 +25,7 @@ export function DetailsDrawer({
   onClose,
   onEdit,
   onLogin,
+  onRecord,
   onDelete,
   onClearSession,
   onFavorite,
@@ -34,6 +36,7 @@ export function DetailsDrawer({
   onClose: () => void
   onEdit: () => void
   onLogin: () => void
+  onRecord: () => void
   onDelete: () => void
   onClearSession: () => Promise<void>
   onFavorite: () => Promise<void>
@@ -95,7 +98,8 @@ export function DetailsDrawer({
         name: account.site.name,
         startUrl: account.site.startUrl,
         allowedOrigins: account.site.allowedOrigins,
-        autoSubmit: !account.site.autoSubmit
+        autoSubmit: !account.site.autoSubmit,
+        group: account.site.group
       })
       onSiteUpdated(updated)
       notify('success', updated.autoSubmit ? '已开启自动提交' : '已关闭自动提交')
@@ -174,6 +178,15 @@ export function DetailsDrawer({
                 <small>在 Windows 默认浏览器中打开并自动填充</small>
               </span>
               <ArrowUpRight size={18} className="drawer-login-button__arrow" />
+            </button>
+
+            <button className="drawer-record-button" onClick={onRecord}>
+              <Video size={17} />
+              <span>
+                <strong>{account.site.recipe ? '重新录制登录流程' : '录制登录流程'}</strong>
+                <small>在默认浏览器中记录字段位置和点击，不保存输入值</small>
+              </span>
+              <ArrowUpRight size={16} />
             </button>
 
             <section className="details-section">

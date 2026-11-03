@@ -81,6 +81,7 @@ export const siteSchema = z.object({
   startUrl: httpUrl,
   allowedOrigins: z.array(originSchema).min(1),
   autoSubmit: z.boolean(),
+  group: z.string().trim().max(40).optional(),
   recipe: loginRecipeSchema.optional(),
   createdAt: z.string(),
   updatedAt: z.string()
@@ -121,7 +122,8 @@ export const siteInputSchema = z.object({
   name: z.string().trim().min(1, '请输入站点名称').max(80),
   startUrl: httpUrl,
   allowedOrigins: z.array(originSchema).optional(),
-  autoSubmit: z.boolean()
+  autoSubmit: z.boolean(),
+  group: z.string().trim().max(40).optional()
 })
 
 export const accountCreateInputSchema = z.object({
@@ -143,6 +145,8 @@ export const loginStartSchema = z.object({
   accountId: idSchema,
   mode: z.enum(['login', 'record'])
 })
+
+export const loginBatchStartSchema = z.array(idSchema).min(1).max(100)
 
 export const changePasswordSchema = z.object({
   currentPassword: z.string().min(1),

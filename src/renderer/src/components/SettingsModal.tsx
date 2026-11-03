@@ -1,12 +1,26 @@
 import { useEffect, useState } from 'react'
 import {
   Check,
+  Download,
+  ExternalLink,
+  FolderOpen,
+  Info,
   KeyRound,
+  LoaderCircle,
   LockKeyhole,
+  RefreshCw,
   ShieldCheck,
-  Trash2
+  Trash2,
+  TriangleAlert
 } from 'lucide-react'
-import { AUTO_LOCK_OPTIONS, type AppSettings, type AutoLockMinutes } from '@shared/types'
+import {
+  AUTO_LOCK_OPTIONS,
+  type AboutInfo,
+  type AppSettings,
+  type AutoLockMinutes,
+  type DataLocationInfo,
+  type UpdateCheckResult
+} from '@shared/types'
 import { Modal, ConfirmDialog } from './Modal'
 import { PasswordStrength } from './PasswordStrength'
 
@@ -32,10 +46,37 @@ export function SettingsModal({
   const [changingPassword, setChangingPassword] = useState(false)
   const [clearOpen, setClearOpen] = useState(false)
   const [clearBusy, setClearBusy] = useState(false)
+  const [about, setAbout] = useState<AboutInfo | null>(null)
+  const [dataLocation, setDataLocation] = useState<DataLocationInfo | null>(null)
+  const [locationBusy, setLocationBusy] = useState(false)
+  const [updateResult, setUpdateResult] = useState<UpdateCheckResult | null>(null)
+  const [checkingUpdates, setCheckingUpdates] = useState(false)
 
   useEffect(() => {
     setAutoLock(settings.autoLockMinutes)
   }, [settings.autoLockMinutes])
+
+  useEffect(() => {
+    let cancelled = false
+    void Promise.all([
+      window.autologin.app.getAbout(),
+      window.autologin.app.getDataLocation()
+    ])
+      .then(([nextAbout, nextLocation]) => {
+        if (!cancelled) {
+          setAbout(nextAbout)
+          setDataLocation(nextLocation)
+        }
+      })
+      .catch((error) => {
+        if (!cancelled) {
+          notify('error', error instanceof Error ? error.message : '无法读取应用信息')
+        }
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [notify])
 
   async function changeAutoLock(value: AutoLockMinutes): Promise<void> {
     setAutoLock(value)
@@ -72,6 +113,36 @@ export function SettingsModal({
     }
   }
 
+  async function chooseLocation(): Promise<void> {
+    setLocationBusy(true)
+    try {
+      const next = await window.autologin.app.chooseDataLocation()
+      if (next) {
+        setDataLocation(next)
+        notify('success', '数据目录已迁移，重启 AutoLogin 后继续使用')
+      }
+    } catch (error) {
+      notify('error', error instanceof Error ? error.message : '数据目录迁移失败')
+    } finally {
+      setLocationBusy(false)
+    }
+  }
+
+  async function checkUpdates(): Promise<void> {
+    setCheckingUpdates(true)
+    try {
+      setUpdateResult(await window.autologin.app.checkForUpdates())
+    } catch (error) {
+      setUpdateResult({
+        status: 'unavailable',
+        currentVersion: appVersion,
+        message: error instanceof Error ? error.message : '检查更新失败'
+      })
+    } finally {
+      setCheckingUpdates(false)
+    }
+  }
+
   async function clearAll(): Promise<void> {
     setClearBusy(true)
     try {
@@ -90,7 +161,7 @@ export function SettingsModal({
         title="设置"
         eyebrow="PREFERENCES & SECURITY"
         onClose={onClose}
-        width="720px"
+        width="760px"
         className="settings-modal"
       >
         <div className="settings-stack">
@@ -180,21 +251,153 @@ export function SettingsModal({
             </form>
           </section>
 
+          <section className="settings-section">
+            <div className="settings-section__heading">
+              <span className="settings-icon">
+                <FolderOpen size={18} />
+              </span>
+              <div>
+                <h3>数据保存位置</h3>
+                <p>保险库、账号配置、失败日志和浏览器会话都保存在此目录。</p>
+              </div>
+            </div>
+            <div className="settings-location">
+              <code>{dataLocation?.directory ?? '正在读取…'}</code>
+              <span className="settings-location__badge">
+                {dataLocation?.isDefault ? '默认位置' : '自定义位置'}
+              </span>
+            </div>
+            {dataLocation?.restartRequired && (
+              <div className="settings-notice">
+                <TriangleAlert size={16} />
+                <span>数据已迁移，需要重启应用完成切换。</span>
+                <button className="text-button" onClick={() => void window.autologin.app.restart()}>
+                  立即重启
+                </button>
+              </div>
+            )}
+            <div className="settings-inline-actions">
+              <button
+                className="button button--soft"
+                onClick={() => void chooseLocation()}
+                disabled={locationBusy}
+              >
+                {locationBusy ? <LoaderCircle size={15} className="spin" /> : <FolderOpen size={15} />}
+                {locationBusy ? '正在迁移…' : '更改位置'}
+              </button>
+              <button
+                className="button button--ghost"
+                onClick={() => void window.autologin.app.openDataLocation()}
+              >
+                打开目录
+              </button>
+            </div>
+          </section>
+
+          <section className="settings-section">
+            <div className="settings-section__heading">
+              <span className="settings-icon">
+                <Info size={18} />
+              </span>
+              <div>
+                <h3>关于 AutoLogin</h3>
+                <p>本地优先的 Windows 登录入口管理工具。</p>
+              </div>
+            </div>
+            <div className="settings-about-grid">
+              <span>版本</span>
+              <strong>v{about?.version ?? appVersion}</strong>
+              <span>Electron</span>
+              <strong>{about?.electronVersion ?? '—'}</strong>
+              <span>平台</span>
+              <strong>{about ? platformLabel(about.platform) : 'Windows'}</strong>
+            </div>
+            <div className="settings-inline-actions">
+              <button
+                className="text-button"
+                onClick={() => void window.autologin.app.openRepository()}
+              >
+                源代码仓库 <ExternalLink size={13} />
+              </button>
+              <button
+                className="text-button"
+                onClick={() => void window.autologin.app.openPrivacy()}
+              >
+                隐私说明
+              </button>
+            </div>
+          </section>
+
+          <section className="settings-section">
+            <div className="settings-section__heading">
+              <span className="settings-icon">
+                <Download size={18} />
+              </span>
+              <div>
+                <h3>检查更新</h3>
+                <p>从 GitHub Releases 获取版本信息，不会上传任何本地数据。</p>
+              </div>
+            </div>
+            <div className="settings-update-row">
+              <button
+                className="button button--soft"
+                onClick={() => void checkUpdates()}
+                disabled={checkingUpdates}
+              >
+                {checkingUpdates ? <LoaderCircle size={15} className="spin" /> : <RefreshCw size={15} />}
+                {checkingUpdates ? '正在检查…' : '检查更新'}
+              </button>
+              <button
+                className="button button--ghost"
+                onClick={() => void window.autologin.app.openReleases()}
+              >
+                打开发布页
+              </button>
+            </div>
+            {updateResult && (
+              <div className={`settings-update-status is-${updateResult.status}`}>
+                {updateResult.status === 'available' ? (
+                  <Download size={16} />
+                ) : updateResult.status === 'up-to-date' ? (
+                  <Check size={16} />
+                ) : (
+                  <TriangleAlert size={16} />
+                )}
+                <span>
+                  <strong>{updateResult.message}</strong>
+                  {updateResult.latestVersion && (
+                    <small>
+                      当前 v{updateResult.currentVersion} · 最新 v{updateResult.latestVersion}
+                    </small>
+                  )}
+                </span>
+                {updateResult.status === 'available' && (
+                  <button
+                    className="text-button"
+                    onClick={() => void window.autologin.app.openReleases()}
+                  >
+                    查看发布
+                  </button>
+                )}
+              </div>
+            )}
+          </section>
+
           <section className="settings-section settings-section--split">
             <div className="settings-section__heading">
               <span className="settings-icon">
                 <ShieldCheck size={18} />
               </span>
               <div>
-                <h3>隐私与本地数据</h3>
-                <p>AutoLogin 不包含账号系统、云同步或遥测追踪。</p>
+                <h3>隐私与本地日志</h3>
+                <p>失败日志仅记录账号名称、站点名称和脱敏原因，不记录密码、Cookie、验证码或完整 URL。</p>
               </div>
             </div>
             <button
               className="text-button text-button--inline"
-              onClick={() => void window.autologin.app.openPrivacy()}
+              onClick={() => void window.autologin.app.openFailureLog()}
             >
-              查看隐私说明
+              打开失败日志
             </button>
           </section>
 
@@ -234,4 +437,11 @@ export function SettingsModal({
       )}
     </>
   )
+}
+
+function platformLabel(platform: string): string {
+  if (platform === 'win32') return 'Windows x64'
+  if (platform === 'darwin') return 'macOS'
+  if (platform === 'linux') return 'Linux'
+  return platform
 }

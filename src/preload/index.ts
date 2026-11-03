@@ -4,6 +4,7 @@ import type {
   AccountUpdateInput,
   AppSettings,
   AutologinApi,
+  LoginBatchState,
   LoginStartInput,
   LoginViewState,
   SiteInput
@@ -47,6 +48,8 @@ const api: AutologinApi = {
   },
   login: {
     start: (input: LoginStartInput) => invoke('login:start', input),
+    startBatch: (accountIds) => invoke('login:start-batch', accountIds),
+    getBatchState: () => invoke('login:get-batch-state'),
     close: () => invoke('login:close'),
     retry: () => invoke('login:retry'),
     trustCurrentOrigin: () => invoke('login:trust-origin'),
@@ -62,6 +65,15 @@ const api: AutologinApi = {
   },
   app: {
     getVersion: () => invoke('app:get-version'),
+    getAbout: () => invoke('app:get-about'),
+    checkForUpdates: () => invoke('app:check-for-updates'),
+    openRepository: () => invoke('app:open-repository'),
+    openReleases: () => invoke('app:open-releases'),
+    getDataLocation: () => invoke('app:get-data-location'),
+    chooseDataLocation: () => invoke('app:choose-data-location'),
+    openDataLocation: () => invoke('app:open-data-location'),
+    openFailureLog: () => invoke('app:open-failure-log'),
+    restart: () => invoke('app:restart'),
     reportActivity: () => ipcRenderer.send('app:activity'),
     clearAllData: () => invoke('app:clear-all-data'),
     openPrivacy: () => invoke('app:open-privacy')
@@ -69,7 +81,9 @@ const api: AutologinApi = {
   events: {
     onVaultLocked: (callback) => subscribe('vault:locked', callback),
     onLoginState: (callback: (state: LoginViewState) => void) =>
-      subscribe('login:state', callback)
+      subscribe('login:state', callback),
+    onLoginBatchState: (callback: (state: LoginBatchState) => void) =>
+      subscribe('login:batch-state', callback)
   }
 }
 

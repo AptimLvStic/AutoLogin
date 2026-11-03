@@ -1,5 +1,5 @@
-import { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, session, shell } from 'electron'
-import { rmSync } from 'node:fs'
+import { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, net, session, shell } from 'electron'
+import { existsSync, mkdirSync, rmSync } from 'node:fs'
 import { join, resolve } from 'node:path'
 import { randomUUID } from 'node:crypto'
 import type { IpcMainEvent, IpcMainInvokeEvent } from 'electron'
@@ -8,26 +8,31 @@ import {
   accountUpdateInputSchema,
   appSettingsSchema,
   changePasswordSchema,
+  loginBatchStartSchema,
   loginStartSchema,
   masterPasswordSchema,
   siteInputSchema
 } from '@shared/schemas'
 import type {
   AccountWithSite,
+  AboutInfo,
   AppSettings,
+  DataLocationInfo,
   LoginMode,
+  LoginBatchState,
   LoginViewState,
   PasswordReveal,
   Site,
   SiteInput,
+  UpdateCheckResult,
   VaultStatus
 } from '@shared/types'
-import { LoginSessionManager } from './login-session'
+import { migrateDataDirectory, readDataDirectory } from './data-location'
+import { failureLogPath, LoginBatchManager } from './login-batch'
+import { clearManagedSessionDirectories, LoginSessionManager } from './login-session'
 import {
-  browserProfileDirectory,
   discoverManagedBrowserProfileIds,
   discoverManagedPartitionIds,
-  partitionDirectory,
   SessionIndex
 } from './session-index'
 import { VaultManager } from './vault'
@@ -48,9 +53,20 @@ if (allowDevelopmentOverrides && process.env.AUTOLOGIN_USER_DATA_DIR) {
 
 let mainWindow: BrowserWindow | null = null
 let loginManager: LoginSessionManager | null = null
+let batchManager: LoginBatchManager | null = null
 let vault: VaultManager
 let sessionIndex: SessionIndex
 let clipboardClearTimer: NodeJS.Timeout | null = null
+let configDirectory = ''
+let dataDirectory = ''
+
+const REPOSITORY_URL = ['https:', '//github.com', '/AptimLvStic/autologin'].join('')
+const RELEASES_URL = `${REPOSITORY_URL}/releases`
+const RELEASES_API_URL = [
+  'https:',
+  '//api.github.com',
+  '/repos/AptimLvStic/autologin/releases?per_page=10'
+].join('')
 
 const gotLock = app.requestSingleInstanceLock()
 if (!gotLock) {
@@ -62,12 +78,11 @@ app.whenReady().then(() => {
   session.defaultSession.setPermissionRequestHandler((_contents, _permission, callback) => {
     callback(false)
   })
-  vault = new VaultManager(app.getPath('userData'), () => {
-    void loginManager?.close()
-    sendToRenderer('vault:locked')
-  })
-  sessionIndex = new SessionIndex(app.getPath('userData'))
+  configDirectory = app.getPath('userData')
+  dataDirectory = readDataDirectory(configDirectory)
+  initializeDataStores()
   createWindow()
+  ensureLoginManagers()
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) {
@@ -86,12 +101,13 @@ app.on('second-instance', () => {
 })
 
 app.on('window-all-closed', () => {
+  void closeLoginManagers()
   vault?.lock()
   app.quit()
 })
 
 app.on('before-quit', () => {
-  void loginManager?.close()
+  void closeLoginManagers()
   vault?.lock()
 })
 
@@ -123,8 +139,7 @@ function createWindow(): void {
   })
 
   window.on('closed', () => {
-    void loginManager?.close()
-    loginManager = null
+    void closeLoginManagers()
     mainWindow = null
   })
 
@@ -141,13 +156,7 @@ function createWindow(): void {
     return { action: 'deny' }
   })
 
-  loginManager = new LoginSessionManager(
-    vault,
-    app.getPath('userData'),
-    allowDevelopmentOverrides ? process.env.AUTOLOGIN_BROWSER_EXECUTABLE : undefined,
-    allowDevelopmentOverrides && process.env.AUTOLOGIN_BROWSER_HEADLESS === '1',
-    (state) => sendToRenderer('login:state', state)
-  )
+  ensureLoginManagers()
 
   if (allowDevelopmentOverrides && process.env.ELECTRON_RENDERER_URL) {
     void window.loadURL(process.env.ELECTRON_RENDERER_URL)
@@ -156,6 +165,46 @@ function createWindow(): void {
   }
 
   registerIpc()
+}
+
+function initializeDataStores(): void {
+  vault = new VaultManager(dataDirectory, () => {
+    void closeLoginManagers()
+    sendToRenderer('vault:locked')
+  })
+  sessionIndex = new SessionIndex(dataDirectory)
+}
+
+function ensureLoginManagers(): void {
+  if (!loginManager) {
+    loginManager = new LoginSessionManager(
+      vault,
+      dataDirectory,
+      allowDevelopmentOverrides ? process.env.AUTOLOGIN_BROWSER_EXECUTABLE : undefined,
+      allowDevelopmentOverrides && process.env.AUTOLOGIN_BROWSER_HEADLESS === '1',
+      (state) => sendToRenderer('login:state', state)
+    )
+  }
+  if (!batchManager) {
+    batchManager = new LoginBatchManager(
+      vault,
+      dataDirectory,
+      allowDevelopmentOverrides ? process.env.AUTOLOGIN_BROWSER_EXECUTABLE : undefined,
+      allowDevelopmentOverrides && process.env.AUTOLOGIN_BROWSER_HEADLESS === '1',
+      (state) => sendToRenderer('login:batch-state', state)
+    )
+  }
+}
+
+async function closeLoginManagers(): Promise<void> {
+  const currentLoginManager = loginManager
+  const currentBatchManager = batchManager
+  loginManager = null
+  batchManager = null
+  await Promise.allSettled([
+    currentLoginManager?.close() ?? Promise.resolve(),
+    currentBatchManager?.close() ?? Promise.resolve()
+  ])
 }
 
 function registerIpc(): void {
@@ -171,6 +220,7 @@ function registerIpc(): void {
     }
     const status = await vault.create(parsed.data)
     sessionIndex.replace([])
+    ensureLoginManagers()
     return status
   })
   ipcMain.handle('vault:unlock', async (event, password: unknown) => {
@@ -181,10 +231,12 @@ function registerIpc(): void {
     }
     const status = await vault.unlock(parsed.data)
     sessionIndex.replace(vault.requireData().accounts.map((account) => account.id))
+    ensureLoginManagers()
     return status
   })
   ipcMain.handle('vault:lock', (event) => {
     assertTrustedSender(event)
+    void closeLoginManagers()
     return vault.lock()
   })
   ipcMain.handle('vault:change-password', async (event, payload: unknown) => {
@@ -248,7 +300,9 @@ function registerIpc(): void {
     if (!account) {
       throw new Error('账号不存在')
     }
+    await batchManager?.clearSession(id)
     await loginManager?.clearSession(id)
+    clearManagedSessionDirectories(dataDirectory, id)
     data.accounts = data.accounts.filter((entry) => entry.id !== id)
     vault.save()
     sessionIndex.remove(id)
@@ -287,14 +341,42 @@ function registerIpc(): void {
     if (!parsed.success) {
       throw new Error(firstIssue(parsed.error))
     }
+    if (parsed.data.mode !== 'record') {
+      throw new Error('普通登录已改为批量打开默认浏览器，请使用批量登录入口')
+    }
+    if (batchManager?.getState()?.active) {
+      throw new Error('批量打开进行中，请等待任务结束后再录制')
+    }
+    await batchManager?.closeAccount(parsed.data.accountId)
+    ensureLoginManagers()
     if (!loginManager) {
       throw new Error('登录窗口尚未准备好')
     }
     return loginManager.start(parsed.data.accountId, parsed.data.mode as LoginMode)
   })
+  ipcMain.handle('login:start-batch', async (event, payload: unknown): Promise<LoginBatchState> => {
+    assertTrustedSender(event)
+    const parsed = loginBatchStartSchema.safeParse(payload)
+    if (!parsed.success) {
+      throw new Error(firstIssue(parsed.error))
+    }
+    if (loginManager?.getState().active) {
+      throw new Error('录制进行中，请先结束录制')
+    }
+    ensureLoginManagers()
+    if (!batchManager) {
+      throw new Error('批量登录尚未准备好')
+    }
+    return batchManager.start(parsed.data)
+  })
+  ipcMain.handle('login:get-batch-state', (event) => {
+    assertTrustedSender(event)
+    return batchManager?.getState() ?? null
+  })
   ipcMain.handle('login:close', async (event) => {
     assertTrustedSender(event)
-    await loginManager?.close()
+    await closeRecordingManager()
+    ensureLoginManagers()
   })
   ipcMain.handle('login:retry', async (event) => {
     assertTrustedSender(event)
@@ -322,7 +404,9 @@ function registerIpc(): void {
   ipcMain.handle('login:clear-session', async (event, accountId: unknown) => {
     assertTrustedSender(event)
     const id = requireId(accountId)
+    await batchManager?.clearSession(id)
     await loginManager?.clearSession(id)
+    clearManagedSessionDirectories(dataDirectory, id)
   })
   ipcMain.handle('login:get-state', (event) => {
     assertTrustedSender(event)
@@ -346,6 +430,73 @@ function registerIpc(): void {
     assertTrustedSender(event)
     return app.getVersion()
   })
+  ipcMain.handle('app:get-about', (event): AboutInfo => {
+    assertTrustedSender(event)
+    return {
+      version: app.getVersion(),
+      electronVersion: process.versions.electron ?? '',
+      platform: process.platform,
+      repositoryUrl: REPOSITORY_URL,
+      dataDirectory
+    }
+  })
+  ipcMain.handle('app:check-for-updates', async (event): Promise<UpdateCheckResult> => {
+    assertTrustedSender(event)
+    return checkForUpdates()
+  })
+  ipcMain.handle('app:open-repository', async (event) => {
+    assertTrustedSender(event)
+    await openExternalUrl(REPOSITORY_URL)
+  })
+  ipcMain.handle('app:open-releases', async (event) => {
+    assertTrustedSender(event)
+    await openExternalUrl(RELEASES_URL)
+  })
+  ipcMain.handle('app:get-data-location', (event): DataLocationInfo => {
+    assertTrustedSender(event)
+    return dataLocationInfo()
+  })
+  ipcMain.handle('app:choose-data-location', async (event): Promise<DataLocationInfo | null> => {
+    assertTrustedSender(event)
+    return chooseDataLocation()
+  })
+  ipcMain.handle('app:open-data-location', async (event) => {
+    assertTrustedSender(event)
+    mkdirSync(dataDirectory, { recursive: true })
+    const error = await shell.openPath(dataDirectory)
+    if (error) {
+      throw new Error(`无法打开数据目录：${error}`)
+    }
+  })
+  ipcMain.handle('app:open-failure-log', async (event) => {
+    assertTrustedSender(event)
+    const path = failureLogPath(dataDirectory)
+    if (!existsSync(path)) {
+      if (!mainWindow) {
+        return
+      }
+      await dialog.showMessageBox(mainWindow, {
+        type: 'info',
+        title: '登录失败日志',
+        message: '目前还没有登录失败记录',
+        detail: '批量登录出现失败时，AutoLogin 会将安全的失败原因写入本地日志。',
+        buttons: ['知道了'],
+        noLink: true
+      })
+      return
+    }
+    const error = await shell.openPath(path)
+    if (error) {
+      throw new Error(`无法打开失败日志：${error}`)
+    }
+  })
+  ipcMain.handle('app:restart', async (event) => {
+    assertTrustedSender(event)
+    await closeLoginManagers()
+    vault?.lock()
+    app.relaunch()
+    app.exit(0)
+  })
   ipcMain.on('app:activity', (event) => {
     assertTrustedSender(event)
     vault.touch()
@@ -356,22 +507,26 @@ function registerIpc(): void {
     const data = status.unlocked ? vault.requireData() : null
     const accountIds = new Set([
       ...sessionIndex.list(),
-      ...discoverManagedPartitionIds(app.getPath('userData')),
-      ...discoverManagedBrowserProfileIds(app.getPath('userData')),
+      ...discoverManagedPartitionIds(dataDirectory),
+      ...discoverManagedBrowserProfileIds(dataDirectory),
       ...(data?.accounts.map((account) => account.id) ?? [])
     ])
-    await loginManager?.close()
+    await closeLoginManagers()
     await Promise.allSettled(
       [...accountIds]
         .filter(isManagedAccountId)
-        .map((accountId) => clearManagedSession(accountId))
+        .map((accountId) => Promise.resolve(clearManagedSessionDirectories(dataDirectory, accountId)))
     )
     sessionIndex.clear()
     vault.clearAllFiles()
+    ensureLoginManagers()
   })
   ipcMain.handle('app:open-privacy', async (event) => {
     assertTrustedSender(event)
-    const result = await dialog.showMessageBox(mainWindow!, {
+    if (!mainWindow) {
+      return
+    }
+    const result = await dialog.showMessageBox(mainWindow, {
       type: 'info',
       title: '隐私说明',
       message: 'AutoLogin 采用本地优先设计',
@@ -417,6 +572,7 @@ function saveSite(input: SiteInput): Site {
     existing.startUrl = startUrl
     existing.allowedOrigins = allowedOrigins
     existing.autoSubmit = input.autoSubmit
+    existing.group = input.group?.trim() || undefined
     existing.updatedAt = now
     vault.save()
     return structuredClone(existing)
@@ -428,6 +584,7 @@ function saveSite(input: SiteInput): Site {
     startUrl,
     allowedOrigins,
     autoSubmit: input.autoSubmit,
+    group: input.group?.trim() || undefined,
     createdAt: now,
     updatedAt: now
   }
@@ -536,23 +693,215 @@ function assertTrustedSender(event: IpcMainInvokeEvent | IpcMainEvent): void {
   }
 }
 
-async function clearManagedSession(accountId: string): Promise<void> {
-  try {
-    rmSync(browserProfileDirectory(app.getPath('userData'), accountId), {
-      recursive: true,
-      force: true,
-      maxRetries: 8,
-      retryDelay: 200
-    })
-    rmSync(partitionDirectory(app.getPath('userData'), accountId), {
-      recursive: true,
-      force: true,
-      maxRetries: 8,
-      retryDelay: 200
-    })
-  } catch {
-    // A browser profile can retain a handle briefly after its process exits.
+function dataLocationInfo(restartRequired = false): DataLocationInfo {
+  return {
+    directory: dataDirectory,
+    defaultDirectory: configDirectory,
+    isDefault: sameDirectory(dataDirectory, configDirectory),
+    ...(restartRequired ? { restartRequired: true } : {})
   }
+}
+
+async function chooseDataLocation(): Promise<DataLocationInfo | null> {
+  if (!mainWindow) {
+    return null
+  }
+  const selection = await dialog.showOpenDialog(mainWindow, {
+    title: '选择 AutoLogin 数据目录',
+    buttonLabel: '使用此文件夹',
+    properties: ['openDirectory', 'createDirectory']
+  })
+  const selected = selection.filePaths[0]
+  if (selection.canceled || !selected) {
+    return null
+  }
+
+  const target = resolve(selected)
+  if (sameDirectory(target, dataDirectory)) {
+    return dataLocationInfo()
+  }
+
+  await closeLoginManagers()
+  vault.lock()
+  try {
+    migrateDataDirectory(configDirectory, dataDirectory, target)
+    dataDirectory = target
+    initializeDataStores()
+    ensureLoginManagers()
+    sendToRenderer('vault:locked')
+    return dataLocationInfo(true)
+  } catch (error) {
+    // A failed migration may still have committed the location pointer. Reload
+    // from the pointer so the running app never keeps using a removed source.
+    dataDirectory = readDataDirectory(configDirectory)
+    initializeDataStores()
+    ensureLoginManagers()
+    sendToRenderer('vault:locked')
+    throw error
+  }
+}
+
+async function openExternalUrl(value: string): Promise<void> {
+  if (!isHttpUrl(value)) {
+    throw new Error('只能打开 http 或 https 地址')
+  }
+  await shell.openExternal(value)
+}
+
+async function checkForUpdates(): Promise<UpdateCheckResult> {
+  const currentVersion = app.getVersion()
+  const controller = new AbortController()
+  const timer = setTimeout(() => controller.abort(), 8_000)
+  timer.unref()
+
+  try {
+    const response = await net.fetch(RELEASES_API_URL, {
+      headers: {
+        Accept: 'application/vnd.github+json',
+        'User-Agent': `AutoLogin/${currentVersion}`
+      },
+      signal: controller.signal
+    })
+    if (!response.ok) {
+      return {
+        status: 'unavailable',
+        currentVersion,
+        message:
+          response.status === 404
+            ? '无法访问更新服务，请确认网络连接或仓库访问权限'
+            : `更新服务暂时不可用（HTTP ${response.status}）`
+      }
+    }
+
+    const payload: unknown = await response.json()
+    const releases = Array.isArray(payload)
+      ? payload.map(toGithubRelease).filter((release): release is GithubRelease => Boolean(release))
+      : []
+    const latest = releases.reduce<GithubRelease | null>((current, release) => {
+      if (!current) return release
+      return compareVersions(release.version, current.version) > 0 ? release : current
+    }, null)
+
+    if (!latest) {
+      return {
+        status: 'up-to-date',
+        currentVersion,
+        message: '当前没有可用的发布版本'
+      }
+    }
+
+    if (compareVersions(latest.version, currentVersion) > 0) {
+      return {
+        status: 'available',
+        currentVersion,
+        latestVersion: latest.version,
+        releaseUrl: latest.url || RELEASES_URL,
+        message: `发现新版本 v${latest.version}`
+      }
+    }
+
+    return {
+      status: 'up-to-date',
+      currentVersion,
+      latestVersion: latest.version,
+      releaseUrl: latest.url || RELEASES_URL,
+      message: '当前已是最新版本'
+    }
+  } catch {
+    return {
+      status: 'unavailable',
+      currentVersion,
+      message: '无法连接更新服务，请检查网络后重试'
+    }
+  } finally {
+    clearTimeout(timer)
+  }
+}
+
+interface GithubRelease {
+  version: string
+  url?: string
+}
+
+function toGithubRelease(value: unknown): GithubRelease | null {
+  if (!value || typeof value !== 'object') {
+    return null
+  }
+  const record = value as Record<string, unknown>
+  if (record.draft === true || typeof record.tag_name !== 'string') {
+    return null
+  }
+  const version = record.tag_name.replace(/^v/i, '').trim()
+  if (!parseVersion(version)) {
+    return null
+  }
+  return {
+    version,
+    url: typeof record.html_url === 'string' && isHttpUrl(record.html_url) ? record.html_url : undefined
+  }
+}
+
+interface ParsedVersion {
+  numbers: [number, number, number]
+  prerelease: string[]
+}
+
+function parseVersion(value: string): ParsedVersion | null {
+  const match = /^v?(\d+)\.(\d+)\.(\d+)(?:-([0-9A-Za-z.-]+))?$/.exec(value.trim())
+  if (!match) {
+    return null
+  }
+  return {
+    numbers: [Number(match[1]), Number(match[2]), Number(match[3])],
+    prerelease: match[4] ? match[4].split('.') : []
+  }
+}
+
+function compareVersions(left: string, right: string): number {
+  const parsedLeft = parseVersion(left)
+  const parsedRight = parseVersion(right)
+  if (!parsedLeft || !parsedRight) {
+    return 0
+  }
+  for (let index = 0; index < 3; index += 1) {
+    const difference = parsedLeft.numbers[index]! - parsedRight.numbers[index]!
+    if (difference !== 0) {
+      return difference
+    }
+  }
+  if (parsedLeft.prerelease.length === 0 && parsedRight.prerelease.length > 0) {
+    return 1
+  }
+  if (parsedRight.prerelease.length === 0 && parsedLeft.prerelease.length > 0) {
+    return -1
+  }
+  const count = Math.max(parsedLeft.prerelease.length, parsedRight.prerelease.length)
+  for (let index = 0; index < count; index += 1) {
+    const leftPart = parsedLeft.prerelease[index]
+    const rightPart = parsedRight.prerelease[index]
+    if (leftPart === undefined) return -1
+    if (rightPart === undefined) return 1
+    if (leftPart === rightPart) continue
+    const leftNumber = /^\d+$/.test(leftPart) ? Number(leftPart) : null
+    const rightNumber = /^\d+$/.test(rightPart) ? Number(rightPart) : null
+    if (leftNumber !== null && rightNumber !== null) {
+      return leftNumber - rightNumber
+    }
+    if (leftNumber !== null) return -1
+    if (rightNumber !== null) return 1
+    return leftPart.localeCompare(rightPart)
+  }
+  return 0
+}
+
+function sameDirectory(left: string, right: string): boolean {
+  return resolve(left).toLowerCase() === resolve(right).toLowerCase()
+}
+
+async function closeRecordingManager(): Promise<void> {
+  const current = loginManager
+  loginManager = null
+  await current?.close()
 }
 
 function isManagedAccountId(value: string): boolean {

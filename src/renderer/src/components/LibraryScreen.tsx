@@ -10,6 +10,8 @@ import {
   Layers3,
   LoaderCircle,
   LockKeyhole,
+  PanelLeftClose,
+  PanelLeftOpen,
   Pencil,
   Plus,
   Search,
@@ -20,7 +22,6 @@ import {
 import type { AccountWithSite, AppSettings, LoginBatchState, Site } from '@shared/types'
 import { useI18n } from '../i18n'
 import { AccountDrawer } from './AccountDrawer'
-import { BrandMark } from './Brand'
 import { LoginLogsPage } from './LoginLogsPage'
 import { SettingsPage, type SettingsModule } from './SettingsPage'
 
@@ -72,6 +73,9 @@ export function LibraryScreen({
   const [groupFilter, setGroupFilter] = useState<string | null>(null)
   const [settingsExpanded, setSettingsExpanded] = useState(false)
   const [settingsModule, setSettingsModule] = useState<SettingsModule>('general')
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(
+    () => window.localStorage.getItem('autologin.sidebar.collapsed') === '1'
+  )
   const [search, setSearch] = useState('')
   const [selectedIds, setSelectedIds] = useState<Set<string>>(() => new Set())
   const [favoriteGroups, setFavoriteGroups] = useState<string[]>([])
@@ -271,6 +275,14 @@ export function LibraryScreen({
     setSettingsExpanded((value) => !value)
   }
 
+  function toggleSidebar(): void {
+    setSidebarCollapsed((current) => {
+      const next = !current
+      window.localStorage.setItem('autologin.sidebar.collapsed', next ? '1' : '0')
+      return next
+    })
+  }
+
   function chooseSettingsModule(next: SettingsModule): void {
     setView('settings')
     setSettingsModule(next)
@@ -378,9 +390,33 @@ export function LibraryScreen({
         )
 
   return (
-    <div className="app-shell">
-      <aside className="sidebar">
-        <BrandMark />
+    <div className={`app-shell${sidebarCollapsed ? ' is-sidebar-collapsed' : ''}`}>
+      <aside className={`sidebar${sidebarCollapsed ? ' is-collapsed' : ''}`}>
+        <div className="sidebar-topbar">
+          <button
+            type="button"
+            className="sidebar-collapse-toggle"
+            onClick={toggleSidebar}
+            aria-label={
+              sidebarCollapsed
+                ? tr('显示菜单栏', 'Show sidebar', '顯示選單列')
+                : tr('隐藏菜单栏', 'Hide sidebar', '隱藏選單列')
+            }
+            aria-expanded={!sidebarCollapsed}
+            title={
+              sidebarCollapsed
+                ? tr('显示菜单栏', 'Show sidebar', '顯示選單列')
+                : tr('隐藏菜单栏', 'Hide sidebar', '隱藏選單列')
+            }
+          >
+            {sidebarCollapsed ? <PanelLeftOpen size={18} /> : <PanelLeftClose size={18} />}
+            <span>
+              {sidebarCollapsed
+                ? tr('显示菜单栏', 'Show sidebar', '顯示選單列')
+                : tr('隐藏菜单栏', 'Hide sidebar', '隱藏選單列')}
+            </span>
+          </button>
+        </div>
 
         <nav className="sidebar-nav sidebar-nav--grouped" aria-label={tr('主导航', 'Main navigation', '主導覽')}>
           <section className="sidebar-section">
@@ -388,6 +424,8 @@ export function LibraryScreen({
             <button
               className={`sidebar-nav__item${view === 'accounts' ? ' is-active' : ''}`}
               onClick={chooseAllAccounts}
+              aria-label={tr('账号', 'Accounts', '帳號')}
+              title={tr('账号', 'Accounts', '帳號')}
             >
               <KeyRound size={17} />
               <span>{tr('账号', 'Accounts', '帳號')}</span>
@@ -396,6 +434,8 @@ export function LibraryScreen({
             <button
               className={`sidebar-nav__item${view === 'favorites' ? ' is-active' : ''}`}
               onClick={() => switchView('favorites')}
+              aria-label={tr('收藏', 'Favorites', '收藏')}
+              title={tr('收藏', 'Favorites', '收藏')}
             >
               <Star size={17} />
               <span>{tr('收藏', 'Favorites', '收藏')}</span>
@@ -404,6 +444,8 @@ export function LibraryScreen({
             <button
               className={`sidebar-nav__item${view === 'logs' ? ' is-active' : ''}`}
               onClick={() => switchView('logs')}
+              aria-label={tr('登录日志', 'Login history', '登入日誌')}
+              title={tr('登录日志', 'Login history', '登入日誌')}
             >
               <FileText size={17} />
               <span>{tr('登录日志', 'Login history', '登入日誌')}</span>
@@ -418,6 +460,8 @@ export function LibraryScreen({
               }`}
               onClick={toggleSettings}
               aria-expanded={settingsExpanded}
+              aria-label={tr('设置', 'Settings', '設定')}
+              title={tr('设置', 'Settings', '設定')}
             >
               <Settings size={17} />
               <span>{tr('设置', 'Settings', '設定')}</span>
@@ -476,7 +520,11 @@ export function LibraryScreen({
         </nav>
 
         <div className="sidebar-bottom">
-          <div className="vault-indicator">
+          <div
+            className="vault-indicator"
+            title={tr('保险库已解锁', 'Vault unlocked', '保險庫已解鎖')}
+            aria-label={tr('保险库已解锁', 'Vault unlocked', '保險庫已解鎖')}
+          >
             <span className="vault-indicator__pulse" />
             <div>
               <strong>{tr('保险库已解锁', 'Vault unlocked', '保險庫已解鎖')}</strong>
@@ -490,9 +538,14 @@ export function LibraryScreen({
             </div>
           </div>
           <div className="sidebar-actions">
-            <button className="sidebar-action" onClick={() => void onLock()}>
+            <button
+              className="sidebar-action"
+              onClick={() => void onLock()}
+              aria-label={tr('立即锁定', 'Lock now', '立即鎖定')}
+              title={tr('立即锁定', 'Lock now', '立即鎖定')}
+            >
               <LockKeyhole size={17} />
-              {tr('立即锁定', 'Lock now', '立即鎖定')}
+              <span>{tr('立即锁定', 'Lock now', '立即鎖定')}</span>
             </button>
           </div>
         </div>

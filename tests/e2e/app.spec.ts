@@ -79,6 +79,24 @@ test.afterAll(async () => {
 
 test('uses the Windows default browser, reuses the session and clears it', async () => {
   await createVault(page)
+  const titlebarLogo = page.locator('.window-titlebar__logo')
+  await expect(titlebarLogo).toBeVisible()
+  expect(await titlebarLogo.evaluate((image) => (image as HTMLImageElement).naturalWidth)).toBeGreaterThan(0)
+
+  const expandedWidth = await page.locator('.sidebar').evaluate((element) => element.getBoundingClientRect().width)
+  await page.getByRole('button', { name: '隐藏菜单栏' }).click()
+  await expect(page.locator('.app-shell')).toHaveClass(/is-sidebar-collapsed/)
+  await expect(page.getByRole('button', { name: '显示菜单栏' })).toBeVisible()
+  await expect
+    .poll(() => page.locator('.sidebar').evaluate((element) => element.getBoundingClientRect().width))
+    .toBeLessThan(70)
+  const collapsedWidth = await page
+    .locator('.sidebar')
+    .evaluate((element) => element.getBoundingClientRect().width)
+  expect(expandedWidth).toBeGreaterThan(collapsedWidth)
+  await page.getByRole('button', { name: '显示菜单栏' }).click()
+  await expect(page.locator('.app-shell')).not.toHaveClass(/is-sidebar-collapsed/)
+
   await addAccount(page, {
     siteName: '标准登录',
     startUrl: `${server.baseUrl}/login`,

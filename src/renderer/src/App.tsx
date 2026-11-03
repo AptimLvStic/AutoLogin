@@ -1,13 +1,21 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { LoaderCircle, LockKeyhole } from 'lucide-react'
-import type { AccountWithSite, AppSettings, LoginBatchState, Site } from '@shared/types'
+import type {
+  AccountWithSite,
+  AppSettings,
+  AppUpdateState,
+  LoginBatchState,
+  Site
+} from '@shared/types'
 import { DEFAULT_APP_SETTINGS, resolveThemeColors } from '@shared/theme'
+import logoUrl from './assets/app-logo.png'
 import { SetupScreen, UnlockScreen } from './components/AuthScreens'
 import { BrandMark } from './components/Brand'
 import { LibraryScreen } from './components/LibraryScreen'
 import { LoginWorkspace } from './components/LoginWorkspace'
 import { ConfirmDialog } from './components/Modal'
 import { Toast, type ToastKind, type ToastState } from './components/Toast'
+import { UpdateDialog } from './components/UpdateDialog'
 import { I18nProvider, translate } from './i18n'
 
 type AuthState = 'boot' | 'setup' | 'unlock' | 'ready'
@@ -27,9 +35,11 @@ export default function App(): React.JSX.Element {
   const [accounts, setAccounts] = useState<AccountWithSite[]>([])
   const [sites, setSites] = useState<Site[]>([])
   const [settings, setSettings] = useState<AppSettings>(DEFAULT_SETTINGS)
-  const [appVersion, setAppVersion] = useState('0.4.1')
+  const [appVersion, setAppVersion] = useState('0.5.0')
   const [loginTarget, setLoginTarget] = useState<LoginTarget | null>(null)
   const [batchState, setBatchState] = useState<LoginBatchState | null>(null)
+  const [updateState, setUpdateState] = useState<AppUpdateState | null>(null)
+  const [dismissedUpdateVersion, setDismissedUpdateVersion] = useState<string | null>(null)
   const [toast, setToast] = useState<ToastState | null>(null)
   const [resetOpen, setResetOpen] = useState(false)
   const [resetBusy, setResetBusy] = useState(false)
@@ -87,6 +97,27 @@ export default function App(): React.JSX.Element {
       cancelled = true
       unsubscribeLocked()
       unsubscribeBatch()
+    }
+  }, [])
+
+  useEffect(() => {
+    let cancelled = false
+    const applyUpdateState = (state: AppUpdateState): void => {
+      if (cancelled) return
+      if (state.phase === 'checking') {
+        setDismissedUpdateVersion(null)
+      }
+      setUpdateState(state)
+    }
+
+    void window.autologin.app
+      .getUpdateState()
+      .then(applyUpdateState)
+      .catch(() => undefined)
+    const unsubscribe = window.autologin.events.onUpdateState(applyUpdateState)
+    return () => {
+      cancelled = true
+      unsubscribe()
     }
   }, [])
 
@@ -285,10 +316,58 @@ export default function App(): React.JSX.Element {
     }
   }
 
+  async function downloadUpdate(): Promise<void> {
+    try {
+      setUpdateState(await window.autologin.app.downloadUpdate())
+    } catch (error) {
+      notify(
+        'error',
+        error instanceof Error
+          ? error.message
+          : translate(settings.language, '更新下载失败', 'Could not download the update', '更新下載失敗')
+      )
+    }
+  }
+
+  async function installUpdate(): Promise<void> {
+    try {
+      await window.autologin.app.installUpdate()
+    } catch (error) {
+      notify(
+        'error',
+        error instanceof Error
+          ? error.message
+          : translate(settings.language, '无法安装更新', 'Could not install the update', '無法安裝更新')
+      )
+    }
+  }
+
+  async function retryUpdate(): Promise<void> {
+    try {
+      await window.autologin.app.checkForUpdates()
+    } catch (error) {
+      notify(
+        'error',
+        error instanceof Error
+          ? error.message
+          : translate(settings.language, '检查更新失败', 'Could not check for updates', '檢查更新失敗')
+      )
+    }
+  }
+
+  const updateDialogVisible =
+    Boolean(updateState) &&
+    dismissedUpdateVersion !== (updateState?.latestVersion ?? updateState?.phase ?? '') &&
+    (updateState?.phase === 'available' ||
+      updateState?.phase === 'downloading' ||
+      updateState?.phase === 'downloaded' ||
+      (updateState?.phase === 'error' && updateState.interactive))
+
   return (
     <I18nProvider language={settings.language}>
     <>
       <div className="window-titlebar" aria-hidden="true">
+        <img className="window-titlebar__logo" src={logoUrl} alt="" />
         <span>AutoLogin</span>
       </div>
       {authState === 'boot' && (
@@ -352,6 +431,19 @@ export default function App(): React.JSX.Element {
       )}
 
       {toast && <Toast toast={toast} onClose={() => setToast(null)} />}
+
+      {updateDialogVisible && updateState && (
+        <UpdateDialog
+          state={updateState}
+          onLater={() =>
+            setDismissedUpdateVersion(updateState.latestVersion ?? updateState.phase)
+          }
+          onDownload={() => void downloadUpdate()}
+          onInstall={() => void installUpdate()}
+          onOpenRelease={() => void window.autologin.app.openReleases()}
+          onRetry={() => void retryUpdate()}
+        />
+      )}
 
       {authState === 'boot' && (
         <div className="boot-screen__footnote">

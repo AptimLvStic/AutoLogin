@@ -3,6 +3,7 @@ import { existsSync, mkdirSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { basename, join, resolve } from 'node:path'
 import { randomUUID } from 'node:crypto'
 import type { IpcMainEvent, IpcMainInvokeEvent } from 'electron'
+import { autoUpdater } from 'electron-updater'
 import {
   accountCreateInputSchema,
   accountUpdateInputSchema,
@@ -21,6 +22,7 @@ import {
 import type {
   AccountWithSite,
   AboutInfo,
+  AppUpdateState,
   AppSettings,
   BackupRecord,
   DataImportResult,
@@ -87,18 +89,20 @@ let sessionIndex: SessionIndex
 let clipboardClearTimer: NodeJS.Timeout | null = null
 let configDirectory = ''
 let dataDirectory = ''
+let updateState: AppUpdateState = {
+  phase: 'idle',
+  currentVersion: app.getVersion(),
+  interactive: false
+}
+let updaterInitialized = false
+let startupUpdateCheckStarted = false
 const pendingKdbxSelections = new Map<
   string,
   { path: string; fileName: string; size: number; expiresAt: number }
 >()
 
-const REPOSITORY_URL = ['https:', '//github.com', '/AptimLvStic/autologin'].join('')
+const REPOSITORY_URL = ['https:', '//github.com', '/AptimLvStic/AutoLogin'].join('')
 const RELEASES_URL = `${REPOSITORY_URL}/releases`
-const RELEASES_API_URL = [
-  'https:',
-  '//api.github.com',
-  '/repos/AptimLvStic/autologin/releases?per_page=10'
-].join('')
 
 const gotLock = app.requestSingleInstanceLock()
 if (!gotLock) {
@@ -118,6 +122,7 @@ app.whenReady().then(() => {
   } catch {
     // Startup backups are best-effort and must never block unlocking the app.
   }
+  initializeAutoUpdater()
   createWindow()
   ensureLoginManagers()
 
@@ -158,6 +163,9 @@ function createWindow(): void {
     thickFrame: true,
     backgroundColor: '#F7F8FA',
     title: 'AutoLogin',
+    icon: app.isPackaged
+      ? join(process.resourcesPath, 'icon.png')
+      : join(__dirname, '../../resources/icon.png'),
     titleBarStyle: 'hidden',
     titleBarOverlay: {
       color: '#F7F8FA',
@@ -180,6 +188,7 @@ function createWindow(): void {
 
   window.once('ready-to-show', () => {
     window.show()
+    scheduleStartupUpdateCheck()
   })
 
   if (vault?.status().unlocked) {
@@ -671,7 +680,19 @@ function registerIpc(): void {
   })
   ipcMain.handle('app:check-for-updates', async (event): Promise<UpdateCheckResult> => {
     assertTrustedSender(event)
-    return checkForUpdates()
+    return checkForUpdates(true)
+  })
+  ipcMain.handle('app:get-update-state', (event): AppUpdateState => {
+    assertTrustedSender(event)
+    return getUpdateState()
+  })
+  ipcMain.handle('app:download-update', async (event): Promise<AppUpdateState> => {
+    assertTrustedSender(event)
+    return downloadUpdate()
+  })
+  ipcMain.handle('app:install-update', async (event): Promise<void> => {
+    assertTrustedSender(event)
+    await installUpdate()
   })
   ipcMain.handle('app:open-repository', async (event) => {
     assertTrustedSender(event)
@@ -1111,97 +1132,290 @@ async function openExternalUrl(value: string): Promise<void> {
   await shell.openExternal(value)
 }
 
-async function checkForUpdates(): Promise<UpdateCheckResult> {
-  const currentVersion = app.getVersion()
-  const controller = new AbortController()
-  const timer = setTimeout(() => controller.abort(), 8_000)
+function initializeAutoUpdater(): void {
+  if (updaterInitialized) return
+  updaterInitialized = true
+  autoUpdater.autoDownload = false
+  autoUpdater.autoInstallOnAppQuit = true
+  autoUpdater.allowDowngrade = false
+
+  autoUpdater.on('download-progress', (progress) => {
+    publishUpdateState({
+      ...updateState,
+      phase: 'downloading',
+      message: '正在下载更新…',
+      percent: progress.percent,
+      bytesPerSecond: progress.bytesPerSecond,
+      transferred: progress.transferred,
+      total: progress.total
+    })
+  })
+  autoUpdater.on('update-downloaded', (info) => {
+    publishUpdateState({
+      ...updateState,
+      phase: 'downloaded',
+      latestVersion: info.version,
+      releaseNotes: updateState.releaseNotes ?? normalizeReleaseNotes(info.releaseNotes),
+      message: '更新已下载，重启后即可安装',
+      percent: 100
+    })
+  })
+  autoUpdater.on('error', (error) => {
+    if (updateState.phase === 'idle' || updateState.phase === 'up-to-date') return
+    publishUpdateState({
+      ...updateState,
+      phase: 'error',
+      message: updateErrorMessage(error)
+    })
+  })
+}
+
+function scheduleStartupUpdateCheck(): void {
+  if (startupUpdateCheckStarted || !app.isPackaged) return
+  startupUpdateCheckStarted = true
+  const timer = setTimeout(() => {
+    void checkForUpdates(false)
+  }, 2_500)
   timer.unref()
+}
+
+async function checkForUpdates(interactive = true): Promise<UpdateCheckResult> {
+  const currentVersion = app.getVersion()
+  if (!app.isPackaged) {
+    const message = '自动更新仅在安装版中启用'
+    publishUpdateState({
+      phase: interactive ? 'error' : 'idle',
+      currentVersion,
+      interactive,
+      message: interactive ? message : undefined
+    })
+    return { status: 'unavailable', currentVersion, message }
+  }
+
+  if (updateState.phase === 'downloading' || updateState.phase === 'downloaded') {
+    return {
+      status: 'available',
+      currentVersion,
+      latestVersion: updateState.latestVersion,
+      releaseUrl: updateState.releaseUrl,
+      message:
+        updateState.phase === 'downloading' ? '更新正在下载' : '更新已下载，等待重启安装'
+    }
+  }
+
+  publishUpdateState({
+    phase: 'checking',
+    currentVersion,
+    interactive,
+    message: '正在检查更新…'
+  })
 
   try {
-    const response = await net.fetch(RELEASES_API_URL, {
-      headers: {
-        Accept: 'application/vnd.github+json',
-        'User-Agent': `AutoLogin/${currentVersion}`
-      },
-      signal: controller.signal
-    })
-    if (!response.ok) {
-      return {
-        status: 'unavailable',
+    const result = await autoUpdater.checkForUpdates()
+    const info = result?.updateInfo
+    if (!info?.version) {
+      const message = '当前没有可用的发布版本'
+      publishUpdateState({
+        phase: 'up-to-date',
         currentVersion,
-        message:
-          response.status === 404
-            ? '无法访问更新服务，请确认网络连接或仓库访问权限'
-            : `更新服务暂时不可用（HTTP ${response.status}）`
-      }
+        interactive,
+        message
+      })
+      return { status: 'up-to-date', currentVersion, message }
     }
 
-    const payload: unknown = await response.json()
-    const releases = Array.isArray(payload)
-      ? payload.map(toGithubRelease).filter((release): release is GithubRelease => Boolean(release))
-      : []
-    const latest = releases.reduce<GithubRelease | null>((current, release) => {
-      if (!current) return release
-      return compareVersions(release.version, current.version) > 0 ? release : current
-    }, null)
-
-    if (!latest) {
-      return {
-        status: 'up-to-date',
-        currentVersion,
-        message: '当前没有可用的发布版本'
-      }
+    const latestVersion = info.version.replace(/^v/i, '').trim()
+    if (!parseVersion(latestVersion)) {
+      throw new Error('更新版本号无效')
     }
 
-    if (compareVersions(latest.version, currentVersion) > 0) {
+    const metadata = await fetchReleaseMetadata(latestVersion, info.releaseNotes)
+    if (compareVersions(latestVersion, currentVersion) > 0) {
+      const nextState: AppUpdateState = {
+        phase: 'available',
+        currentVersion,
+        latestVersion,
+        releaseName: metadata.name ?? `AutoLogin v${latestVersion}`,
+        releaseDate: metadata.date,
+        releaseNotes: metadata.notes,
+        releaseUrl:
+          metadata.url ??
+          `${REPOSITORY_URL}/releases/tag/v${encodeURIComponent(latestVersion)}`,
+        interactive,
+        message: `发现新版本 v${latestVersion}`
+      }
+      publishUpdateState(nextState)
       return {
         status: 'available',
         currentVersion,
-        latestVersion: latest.version,
-        releaseUrl: latest.url || RELEASES_URL,
-        message: `发现新版本 v${latest.version}`
+        latestVersion,
+        releaseUrl: nextState.releaseUrl,
+        message: nextState.message ?? ''
       }
     }
 
+    const message = '当前已是最新版本'
+    publishUpdateState({
+      phase: 'up-to-date',
+      currentVersion,
+      latestVersion,
+      releaseName: metadata.name,
+      releaseDate: metadata.date,
+      releaseUrl: metadata.url ?? RELEASES_URL,
+      interactive,
+      message
+    })
     return {
       status: 'up-to-date',
       currentVersion,
-      latestVersion: latest.version,
-      releaseUrl: latest.url || RELEASES_URL,
-      message: '当前已是最新版本'
+      latestVersion,
+      releaseUrl: metadata.url ?? RELEASES_URL,
+      message
+    }
+  } catch (error) {
+    const message = updateErrorMessage(error)
+    publishUpdateState({
+      phase: interactive ? 'error' : 'idle',
+      currentVersion,
+      interactive,
+      message: interactive ? message : undefined
+    })
+    return { status: 'unavailable', currentVersion, message }
+  }
+}
+
+async function downloadUpdate(): Promise<AppUpdateState> {
+  if (!app.isPackaged) {
+    throw new Error('自动更新仅在安装版中启用')
+  }
+  if (updateState.phase === 'downloaded') {
+    return getUpdateState()
+  }
+  if (updateState.phase !== 'available' && updateState.phase !== 'error') {
+    throw new Error('当前没有可下载的更新')
+  }
+
+  publishUpdateState({
+    ...updateState,
+    phase: 'downloading',
+    interactive: true,
+    percent: 0,
+    message: '正在下载更新…'
+  })
+  try {
+    await autoUpdater.downloadUpdate()
+  } catch (error) {
+    const current = getUpdateState()
+    publishUpdateState({
+      ...current,
+      phase: 'error',
+      message: updateErrorMessage(error)
+    })
+    throw error
+  }
+  const current = getUpdateState()
+  if (current.phase !== 'downloaded') {
+    publishUpdateState({
+      ...current,
+      phase: 'downloaded',
+      percent: 100,
+      message: '更新已下载，重启后即可安装'
+    })
+  }
+  return getUpdateState()
+}
+
+async function installUpdate(): Promise<void> {
+  if (!app.isPackaged) {
+    throw new Error('自动更新仅在安装版中启用')
+  }
+  if (updateState.phase !== 'downloaded') {
+    throw new Error('更新尚未下载完成')
+  }
+  await closeLoginManagers()
+  vault?.lock()
+  setTimeout(() => autoUpdater.quitAndInstall(false, true), 100)
+}
+
+function getUpdateState(): AppUpdateState {
+  return { ...updateState }
+}
+
+function publishUpdateState(next: AppUpdateState): void {
+  updateState = next
+  sendToRenderer('app:update-state', getUpdateState())
+}
+
+async function fetchReleaseMetadata(
+  version: string,
+  fallbackNotes: unknown
+): Promise<{ name?: string; date?: string; notes?: string; url?: string }> {
+  const fallback = {
+    notes: normalizeReleaseNotes(fallbackNotes),
+    url: `${REPOSITORY_URL}/releases/tag/v${encodeURIComponent(version)}`
+  }
+  const controller = new AbortController()
+  const timer = setTimeout(() => controller.abort(), 8_000)
+  timer.unref()
+  try {
+    const response = await net.fetch(
+      `https://api.github.com/repos/AptimLvStic/AutoLogin/releases/tags/v${encodeURIComponent(version)}`,
+      {
+        headers: {
+          Accept: 'application/vnd.github+json',
+          'User-Agent': `AutoLogin/${app.getVersion()}`
+        },
+        signal: controller.signal
+      }
+    )
+    if (!response.ok) return fallback
+    const payload: unknown = await response.json()
+    if (!payload || typeof payload !== 'object') return fallback
+    const record = payload as Record<string, unknown>
+    const body = typeof record.body === 'string' ? record.body.trim() : ''
+    return {
+      name: typeof record.name === 'string' ? record.name : undefined,
+      date:
+        typeof record.published_at === 'string'
+          ? record.published_at
+          : typeof record.created_at === 'string'
+            ? record.created_at
+            : undefined,
+      notes: body || fallback.notes,
+      url:
+        typeof record.html_url === 'string' && isHttpUrl(record.html_url)
+          ? record.html_url
+          : fallback.url
     }
   } catch {
-    return {
-      status: 'unavailable',
-      currentVersion,
-      message: '无法连接更新服务，请检查网络后重试'
-    }
+    return fallback
   } finally {
     clearTimeout(timer)
   }
 }
 
-interface GithubRelease {
-  version: string
-  url?: string
+function normalizeReleaseNotes(value: unknown): string | undefined {
+  if (typeof value === 'string') {
+    const notes = value.trim()
+    return notes || undefined
+  }
+  if (!Array.isArray(value)) return undefined
+  const notes = value
+    .map((entry) => {
+      if (!entry || typeof entry !== 'object') return ''
+      const record = entry as Record<string, unknown>
+      const version = typeof record.version === 'string' ? `## v${record.version}` : ''
+      const note = typeof record.note === 'string' ? record.note.trim() : ''
+      return [version, note].filter(Boolean).join('\n\n')
+    })
+    .filter(Boolean)
+    .join('\n\n')
+  return notes || undefined
 }
 
-function toGithubRelease(value: unknown): GithubRelease | null {
-  if (!value || typeof value !== 'object') {
-    return null
-  }
-  const record = value as Record<string, unknown>
-  if (record.draft === true || typeof record.tag_name !== 'string') {
-    return null
-  }
-  const version = record.tag_name.replace(/^v/i, '').trim()
-  if (!parseVersion(version)) {
-    return null
-  }
-  return {
-    version,
-    url: typeof record.html_url === 'string' && isHttpUrl(record.html_url) ? record.html_url : undefined
-  }
+function updateErrorMessage(error: unknown): string {
+  const detail = error instanceof Error ? error.message : String(error)
+  return detail.trim() ? `更新失败：${detail}` : '更新失败，请稍后重试'
 }
 
 interface ParsedVersion {

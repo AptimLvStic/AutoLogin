@@ -346,6 +346,31 @@ export interface UpdateCheckResult {
   message: string
 }
 
+export type AppUpdatePhase =
+  | 'idle'
+  | 'checking'
+  | 'available'
+  | 'downloading'
+  | 'downloaded'
+  | 'up-to-date'
+  | 'error'
+
+export interface AppUpdateState {
+  phase: AppUpdatePhase
+  currentVersion: string
+  latestVersion?: string
+  releaseName?: string
+  releaseDate?: string
+  releaseNotes?: string
+  releaseUrl?: string
+  message?: string
+  interactive: boolean
+  percent?: number
+  bytesPerSecond?: number
+  transferred?: number
+  total?: number
+}
+
 export interface AutologinApi {
   vault: {
     status: () => Promise<VaultStatus>
@@ -395,6 +420,9 @@ export interface AutologinApi {
     getVersion: () => Promise<string>
     getAbout: () => Promise<AboutInfo>
     checkForUpdates: () => Promise<UpdateCheckResult>
+    getUpdateState: () => Promise<AppUpdateState>
+    downloadUpdate: () => Promise<AppUpdateState>
+    installUpdate: () => Promise<void>
     openRepository: () => Promise<void>
     openReleases: () => Promise<void>
     getDataLocation: () => Promise<DataLocationInfo>
@@ -432,5 +460,6 @@ export interface AutologinApi {
     onVaultLocked: (callback: () => void) => () => void
     onLoginState: (callback: (state: LoginViewState) => void) => () => void
     onLoginBatchState: (callback: (state: LoginBatchState) => void) => () => void
+    onUpdateState: (callback: (state: AppUpdateState) => void) => () => void
   }
 }

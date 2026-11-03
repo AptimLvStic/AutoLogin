@@ -2,6 +2,7 @@ import { contextBridge, ipcRenderer } from 'electron'
 import type {
   AccountCreateInput,
   AccountUpdateInput,
+  AppUpdateState,
   AppSettings,
   AppSettingsPatch,
   AutologinApi,
@@ -77,6 +78,9 @@ const api: AutologinApi = {
     getVersion: () => invoke('app:get-version'),
     getAbout: () => invoke('app:get-about'),
     checkForUpdates: () => invoke('app:check-for-updates'),
+    getUpdateState: () => invoke('app:get-update-state'),
+    downloadUpdate: () => invoke('app:download-update'),
+    installUpdate: () => invoke('app:install-update'),
     openRepository: () => invoke('app:open-repository'),
     openReleases: () => invoke('app:open-releases'),
     getDataLocation: () => invoke('app:get-data-location'),
@@ -111,7 +115,9 @@ const api: AutologinApi = {
     onLoginState: (callback: (state: LoginViewState) => void) =>
       subscribe('login:state', callback),
     onLoginBatchState: (callback: (state: LoginBatchState) => void) =>
-      subscribe('login:batch-state', callback)
+      subscribe('login:batch-state', callback),
+    onUpdateState: (callback: (state: AppUpdateState) => void) =>
+      subscribe('app:update-state', callback)
   }
 }
 

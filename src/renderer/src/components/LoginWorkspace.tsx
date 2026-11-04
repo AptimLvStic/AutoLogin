@@ -19,6 +19,7 @@ import {
 import type { AccountWithSite, LoginMode, LoginStatus, LoginViewState } from '@shared/types'
 import { useI18n } from '../i18n'
 import { ConfirmDialog } from './Modal'
+import { SiteMark } from './SiteMark'
 
 type Translate = (
   zhCN: string,
@@ -269,9 +270,7 @@ export function LoginWorkspace({
           >
             <ArrowLeft size={18} />
           </button>
-          <span className={`monogram monogram--small ${toneClass(account.siteId)}`}>
-            {account.site.name.slice(0, 1).toUpperCase()}
-          </span>
+          <SiteMark site={account.site} className="monogram--small" />
           <div className="workspace-account">
             <span>
               {account.site.name} <em>/</em> {account.label}
@@ -637,14 +636,6 @@ function statusMeta(
         icon: <Globe2 size={13} />
       }
   }
-}
-
-function toneClass(id: string): string {
-  let hash = 0
-  for (const char of id) {
-    hash = (hash * 31 + char.charCodeAt(0)) >>> 0
-  }
-  return `monogram--tone-${hash % 4}`
 }
 
 function displayUrl(value: string): string {

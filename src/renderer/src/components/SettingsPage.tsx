@@ -63,6 +63,7 @@ import { translate, useI18n } from '../i18n'
 import { ConfirmDialog, Modal } from './Modal'
 import { PasswordStrength } from './PasswordStrength'
 import { UpdateProgress } from './UpdateDialog'
+import { LoadingSpinner } from './LoadingSpinner'
 
 export type SettingsModule =
   | 'general'
@@ -1239,9 +1240,10 @@ export function SettingsPage({
                     className="button button--ghost proxy-test-button"
                     onClick={() => void testProxyConnection()}
                     disabled={proxyTesting}
+                    aria-busy={proxyTesting}
                   >
                     {proxyTesting ? (
-                      <LoaderCircle size={15} className="spin" />
+                      <LoadingSpinner />
                     ) : (
                       <Network size={15} />
                     )}
@@ -1684,9 +1686,10 @@ export function SettingsPage({
                   className="button button--soft"
                   onClick={() => void checkUpdates()}
                   disabled={checkingUpdates}
+                  aria-busy={checkingUpdates}
                 >
                   {checkingUpdates ? (
-                    <LoaderCircle size={15} className="spin" />
+                    <LoadingSpinner />
                   ) : (
                     <RefreshCw size={15} />
                   )}

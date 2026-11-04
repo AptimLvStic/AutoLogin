@@ -1,4 +1,5 @@
 import { forwardRef, useEffect, useMemo, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
 import {
   ArchiveRestore,
   Check,
@@ -14,6 +15,8 @@ import {
   LoaderCircle,
   LogIn,
   LockKeyhole,
+  Maximize2,
+  MoveHorizontal,
   PanelLeftClose,
   PanelLeftOpen,
   Pencil,
@@ -30,6 +33,7 @@ import {
   GROUP_MAX_DEPTH,
   GROUP_PATH_SEPARATOR,
   TRASH_RETENTION_OPTIONS,
+  UNGROUPED_GROUP_KEY,
   type AccountWithSite,
   type AppSettings,
   type AppUpdateState,
@@ -44,13 +48,85 @@ import {
 import { useI18n } from '../i18n'
 import { AccountDrawer } from './AccountDrawer'
 import { AppLogsPage } from './AppLogsPage'
+import { LoadingSpinner } from './LoadingSpinner'
 import { LoginLogsPage } from './LoginLogsPage'
 import { ConfirmDialog, Modal } from './Modal'
 import { SettingsPage, type SettingsModule } from './SettingsPage'
+import { SiteMark } from './SiteMark'
 
 type LibraryView = 'accounts' | 'loginLogs' | 'appLogs' | 'trash' | 'settings'
 type GroupDropPosition = 'before' | 'after' | 'inside'
 type DrawerState = { mode: 'create'; siteId?: string } | { mode: 'edit'; accountId: string }
+type AccountMenuState =
+  | { kind: 'account'; account: AccountWithSite; left: number; top: number }
+  | { kind: 'page'; left: number; top: number }
+type AccountColumnSizing = 'content' | 'window' | 'manual'
+const ACCOUNT_COLUMN_KEYS = ['username', 'group', 'updated', 'status', 'url'] as const
+type AccountColumnKey = (typeof ACCOUNT_COLUMN_KEYS)[number]
+type AccountColumnResizeKey = 'site' | AccountColumnKey | 'actions'
+const ACCOUNT_COLUMN_STORAGE_KEY = 'autologin.account.visibleColumns'
+const ACCOUNT_COLUMN_SIZING_STORAGE_KEY = 'autologin.account.columnSizing'
+const ACCOUNT_COLUMN_WIDTH_STORAGE_KEY = 'autologin.account.columnWidths'
+const ACCOUNT_COLUMN_DEFAULT_WIDTHS: Record<AccountColumnResizeKey, number> = {
+  site: 220,
+  username: 150,
+  group: 90,
+  updated: 86,
+  status: 72,
+  url: 180,
+  actions: 80
+}
+const ACCOUNT_COLUMN_MIN_WIDTHS: Record<AccountColumnResizeKey, number> = {
+  site: 90,
+  username: 58,
+  group: 40,
+  updated: 54,
+  status: 46,
+  url: 68,
+  actions: 52
+}
+const ACCOUNT_COLUMN_TRACKS = {
+  wide: {
+    checkbox: '22px',
+    site: 'minmax(120px, 1.15fr)',
+    username: 'minmax(80px, 0.78fr)',
+    group: 'minmax(52px, 0.5fr)',
+    updated: '82px',
+    status: '70px',
+    url: 'minmax(112px, 0.9fr)',
+    actions: '98px'
+  },
+  medium: {
+    checkbox: '20px',
+    site: 'minmax(96px, 1.1fr)',
+    username: 'minmax(68px, 0.78fr)',
+    group: 'minmax(44px, 0.48fr)',
+    updated: '68px',
+    status: '56px',
+    url: 'minmax(92px, 0.85fr)',
+    actions: '96px'
+  },
+  compact: {
+    checkbox: '20px',
+    site: 'minmax(84px, 1.1fr)',
+    username: 'minmax(58px, 0.78fr)',
+    group: 'minmax(40px, 0.5fr)',
+    updated: '60px',
+    status: '52px',
+    url: 'minmax(78px, 0.8fr)',
+    actions: '92px'
+  },
+  narrow: {
+    checkbox: '20px',
+    site: 'minmax(72px, 1.05fr)',
+    username: 'minmax(48px, 0.72fr)',
+    group: 'minmax(34px, 0.45fr)',
+    updated: '52px',
+    status: '46px',
+    url: 'minmax(68px, 0.8fr)',
+    actions: '88px'
+  }
+} as const
 type Translate = (
   zhCN: string,
   en: string,
@@ -67,11 +143,48 @@ interface GroupSummary {
   count: number
   accounts: AccountWithSite[]
 }
-const UNGROUPED_KEY = '__ungrouped__'
+const UNGROUPED_KEY = UNGROUPED_GROUP_KEY
 const ACCOUNT_SUBNAV_DEFAULT_WIDTH = 184
 const ACCOUNT_SUBNAV_MIN_WIDTH = 128
 const ACCOUNT_SUBNAV_MAX_WIDTH = 320
 const ACCOUNT_SUBNAV_HIDE_THRESHOLD = 132
+
+function accountColumnTemplate(
+  visibleColumns: Set<AccountColumnKey>,
+  density: keyof typeof ACCOUNT_COLUMN_TRACKS,
+  sizing: AccountColumnSizing,
+  manualWidths: Record<AccountColumnResizeKey, number>
+): string {
+  if (sizing === 'content') {
+    return [
+      '22px',
+      'max-content',
+      ...ACCOUNT_COLUMN_KEYS.filter((key) => visibleColumns.has(key)).map(
+        () => 'max-content'
+      ),
+      '44px'
+    ].join(' ')
+  }
+  const tracks = ACCOUNT_COLUMN_TRACKS[density]
+  if (sizing === 'manual') {
+    return [
+      tracks.checkbox,
+      `${manualWidths.site}px`,
+      ...ACCOUNT_COLUMN_KEYS.filter((key) => visibleColumns.has(key)).map(
+        (key) => `${manualWidths[key]}px`
+      ),
+      `${manualWidths.actions}px`
+    ].join(' ')
+  }
+  return [
+    tracks.checkbox,
+    tracks.site,
+    ...ACCOUNT_COLUMN_KEYS.filter((key) => visibleColumns.has(key)).map(
+      (key) => tracks[key]
+    ),
+    tracks.actions
+  ].join(' ')
+}
 
 export function LibraryScreen({
   accounts,
@@ -115,6 +228,61 @@ export function LibraryScreen({
   )
   const [search, setSearch] = useState('')
   const [searchExpanded, setSearchExpanded] = useState(false)
+  const [visibleAccountColumns, setVisibleAccountColumns] = useState<
+    Set<AccountColumnKey>
+  >(() => {
+    try {
+      const stored = window.localStorage.getItem(ACCOUNT_COLUMN_STORAGE_KEY)
+      if (!stored) return new Set(ACCOUNT_COLUMN_KEYS)
+      const values = JSON.parse(stored) as unknown
+      if (!Array.isArray(values)) return new Set(ACCOUNT_COLUMN_KEYS)
+      return new Set(
+        values.filter(
+          (value): value is AccountColumnKey =>
+            typeof value === 'string' &&
+            ACCOUNT_COLUMN_KEYS.includes(value as AccountColumnKey)
+        )
+      )
+    } catch {
+      return new Set(ACCOUNT_COLUMN_KEYS)
+    }
+  })
+  const [accountColumnWidths, setAccountColumnWidths] = useState<
+    Record<AccountColumnResizeKey, number>
+  >(() => {
+    try {
+      const stored = window.localStorage.getItem(ACCOUNT_COLUMN_WIDTH_STORAGE_KEY)
+      const values = stored ? (JSON.parse(stored) as unknown) : null
+      if (!values || typeof values !== 'object') return { ...ACCOUNT_COLUMN_DEFAULT_WIDTHS }
+      const record = values as Record<string, unknown>
+      return Object.fromEntries(
+        Object.entries(ACCOUNT_COLUMN_DEFAULT_WIDTHS).map(([key, fallback]) => {
+          const value = record[key]
+          return [
+            key,
+            typeof value === 'number' && Number.isFinite(value)
+              ? Math.max(
+                  ACCOUNT_COLUMN_MIN_WIDTHS[key as AccountColumnResizeKey],
+                  Math.min(520, value)
+                )
+              : fallback
+          ]
+        })
+      ) as Record<AccountColumnResizeKey, number>
+    } catch {
+      return { ...ACCOUNT_COLUMN_DEFAULT_WIDTHS }
+    }
+  })
+  const [accountColumnSizing, setAccountColumnSizing] =
+    useState<AccountColumnSizing>(() => {
+      const stored = window.localStorage.getItem(ACCOUNT_COLUMN_SIZING_STORAGE_KEY)
+      return stored === 'content' || stored === 'manual' ? stored : 'window'
+    })
+  const [columnMenuOpen, setColumnMenuOpen] = useState(false)
+  const [columnMenuPosition, setColumnMenuPosition] = useState({ left: 0, top: 0 })
+  const [accountGroupTreeExpanded, setAccountGroupTreeExpanded] = useState(
+    () => window.localStorage.getItem('autologin.account.groups.treeExpanded') !== '0'
+  )
   const [collapsedGroupPaths, setCollapsedGroupPaths] = useState<Set<string>>(() => {
     try {
       const stored = window.localStorage.getItem('autologin.account.groups.collapsedPaths')
@@ -148,11 +316,7 @@ export function LibraryScreen({
   const [groupCreateName, setGroupCreateName] = useState('')
   const [groupCreateError, setGroupCreateError] = useState('')
   const [groupCreateBusy, setGroupCreateBusy] = useState(false)
-  const [copyMenu, setCopyMenu] = useState<{
-    account: AccountWithSite
-    left: number
-    top: number
-  } | null>(null)
+  const [accountMenu, setAccountMenu] = useState<AccountMenuState | null>(null)
   const [restoringAccountId, setRestoringAccountId] = useState<string | null>(null)
   const [trashRetentionSaving, setTrashRetentionSaving] = useState(false)
   const [selectedIds, setSelectedIds] = useState<Set<string>>(() => new Set())
@@ -181,12 +345,16 @@ export function LibraryScreen({
   const [batchStrategyError, setBatchStrategyError] = useState('')
   const [batchStrategyBusy, setBatchStrategyBusy] = useState(false)
   const [duplicateBusy, setDuplicateBusy] = useState(false)
+  const [accountClipboardIds, setAccountClipboardIds] = useState<string[]>([])
+  const [keyboardDuplicateBusy, setKeyboardDuplicateBusy] = useState(false)
   const [manualRefreshing, setManualRefreshing] = useState(false)
   const [deleteSelectedOpen, setDeleteSelectedOpen] = useState(false)
   const [deleteSelectedBusy, setDeleteSelectedBusy] = useState(false)
   const searchRef = useRef<HTMLInputElement>(null)
   const selectAllRef = useRef<HTMLInputElement>(null)
   const groupCreateInputRef = useRef<HTMLInputElement>(null)
+  const columnMenuRef = useRef<HTMLDivElement>(null)
+  const columnResizeCleanupRef = useRef<(() => void) | null>(null)
   const draggedGroupPathRef = useRef<string | null>(null)
   const subnavResizeRef = useRef<{
     startX: number
@@ -239,6 +407,17 @@ export function LibraryScreen({
       current.count += 1
       grouped.set(key, current)
     }
+    if (!grouped.has(UNGROUPED_KEY)) {
+      grouped.set(UNGROUPED_KEY, {
+        key: UNGROUPED_KEY,
+        name: tr('未分组', 'Ungrouped', '未分組'),
+        actualName: null,
+        parentPath: null,
+        level: 1,
+        count: 0,
+        accounts: []
+      })
+    }
 
     const order = new Map(settings.groupOrder.map((name, index) => [name, index]))
     const values = [...grouped.values()].map((group) => ({
@@ -262,10 +441,10 @@ export function LibraryScreen({
       ),
     [groups, namedGroups]
   )
-  const visibleNamedGroups = useMemo(
+  const visibleTreeGroups = useMemo(
     () =>
-      namedGroups.filter((group) => {
-        if (!group.actualName) return false
+      groups.filter((group) => {
+        if (!group.actualName) return true
         const segments = group.actualName.split(GROUP_PATH_SEPARATOR)
         return segments
           .slice(0, -1)
@@ -276,7 +455,7 @@ export function LibraryScreen({
               )
           )
       }),
-    [collapsedGroupPaths, namedGroups]
+    [collapsedGroupPaths, groups]
   )
 
   const currentGroup = groupFilter
@@ -363,6 +542,39 @@ export function LibraryScreen({
     drawer?.mode === 'edit'
       ? accounts.find((account) => account.id === drawer.accountId) ?? null
       : null
+  const accountEditorOpen = Boolean(
+    drawer && (drawer.mode === 'create' || drawerAccount)
+  )
+  const accountGridStyle = useMemo(
+    () =>
+      ({
+        '--account-columns-wide': accountColumnTemplate(
+          visibleAccountColumns,
+          'wide',
+          accountColumnSizing,
+          accountColumnWidths
+        ),
+        '--account-columns-medium': accountColumnTemplate(
+          visibleAccountColumns,
+          'medium',
+          accountColumnSizing,
+          accountColumnWidths
+        ),
+        '--account-columns-compact': accountColumnTemplate(
+          visibleAccountColumns,
+          'compact',
+          accountColumnSizing,
+          accountColumnWidths
+        ),
+        '--account-columns-narrow': accountColumnTemplate(
+          visibleAccountColumns,
+          'narrow',
+          accountColumnSizing,
+          accountColumnWidths
+        )
+      }) as React.CSSProperties,
+    [accountColumnSizing, accountColumnWidths, visibleAccountColumns]
+  )
 
   useEffect(() => {
     let cancelled = false
@@ -464,14 +676,14 @@ export function LibraryScreen({
   }, [groupCreateState])
 
   useEffect(() => {
-    if (!copyMenu) return
+    if (!accountMenu) return
     let scrollArmed = false
     const armScrollClose = window.requestAnimationFrame(() => {
       scrollArmed = true
     })
-    const close = (): void => setCopyMenu(null)
+    const close = (): void => setAccountMenu(null)
     const closeOnPointer = (event: PointerEvent): void => {
-      if (event.target instanceof Element && event.target.closest('.account-copy-menu')) {
+      if (event.target instanceof Element && event.target.closest('.account-context-menu')) {
         return
       }
       close()
@@ -493,14 +705,53 @@ export function LibraryScreen({
       window.removeEventListener('resize', close)
       window.removeEventListener('scroll', closeOnScroll, true)
     }
-  }, [copyMenu])
+  }, [accountMenu])
+
+  useEffect(() => {
+    if (!columnMenuOpen) return
+    const closeOnPointer = (event: PointerEvent): void => {
+      if (
+        event.target instanceof Node &&
+        columnMenuRef.current?.contains(event.target)
+      ) {
+        return
+      }
+      setColumnMenuOpen(false)
+    }
+    const closeOnEscape = (event: KeyboardEvent): void => {
+      if (event.key === 'Escape') setColumnMenuOpen(false)
+    }
+    const close = (): void => setColumnMenuOpen(false)
+    document.addEventListener('pointerdown', closeOnPointer)
+    document.addEventListener('keydown', closeOnEscape)
+    window.addEventListener('blur', close)
+    window.addEventListener('resize', close)
+    return () => {
+      document.removeEventListener('pointerdown', closeOnPointer)
+      document.removeEventListener('keydown', closeOnEscape)
+      window.removeEventListener('blur', close)
+      window.removeEventListener('resize', close)
+    }
+  }, [columnMenuOpen])
 
   useEffect(() => {
     if (!searchExpanded) return
     window.requestAnimationFrame(() => searchRef.current?.focus())
   }, [searchExpanded])
 
+  useEffect(() => {
+    window.localStorage.setItem(
+      ACCOUNT_COLUMN_WIDTH_STORAGE_KEY,
+      JSON.stringify(accountColumnWidths)
+    )
+  }, [accountColumnWidths])
+
+  useEffect(() => {
+    window.localStorage.setItem(ACCOUNT_COLUMN_SIZING_STORAGE_KEY, accountColumnSizing)
+  }, [accountColumnSizing])
+
   useEffect(() => () => subnavResizeCleanupRef.current?.(), [])
+  useEffect(() => () => columnResizeCleanupRef.current?.(), [])
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent): void => {
@@ -514,6 +765,67 @@ export function LibraryScreen({
     window.addEventListener('keydown', onKeyDown)
     return () => window.removeEventListener('keydown', onKeyDown)
   }, [view])
+
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent): void => {
+      if (
+        view !== 'accounts' ||
+        accountEditorOpen ||
+        batchState?.active ||
+        batchStrategyOpen ||
+        deleteSelectedOpen
+      ) {
+        return
+      }
+      const target = event.target instanceof Element ? event.target : null
+      if (
+        target?.closest(
+          'textarea, select, input:not([type="checkbox"]):not([type="radio"]), [contenteditable="true"]'
+        )
+      ) {
+        return
+      }
+      const modifier = event.ctrlKey || event.metaKey
+      if (modifier && event.key.toLowerCase() === 'c') {
+        if (visibleSelectedIds.length === 0) return
+        event.preventDefault()
+        setAccountClipboardIds([...visibleSelectedIds])
+        notify(
+          'info',
+          tr(
+            `已复制 ${visibleSelectedIds.length} 个账号，按 Ctrl+V 粘贴`,
+            `Copied ${visibleSelectedIds.length} account${visibleSelectedIds.length === 1 ? '' : 's'}. Press Ctrl+V to paste.`,
+            `已複製 ${visibleSelectedIds.length} 個帳號，按 Ctrl+V 貼上`
+          )
+        )
+        return
+      }
+      if (modifier && event.key.toLowerCase() === 'v') {
+        if (accountClipboardIds.length === 0 || keyboardDuplicateBusy) return
+        event.preventDefault()
+        void pasteAccountClipboard()
+        return
+      }
+      if (!modifier && event.key === 'Delete' && selectedIds.size > 0) {
+        event.preventDefault()
+        setDeleteSelectedOpen(true)
+      }
+    }
+    window.addEventListener('keydown', onKeyDown)
+    return () => window.removeEventListener('keydown', onKeyDown)
+  }, [
+    accountClipboardIds,
+    accountEditorOpen,
+    batchState?.active,
+    batchStrategyOpen,
+    deleteSelectedOpen,
+    keyboardDuplicateBusy,
+    notify,
+    selectedIds.size,
+    tr,
+    view,
+    visibleSelectedIds
+  ])
 
   async function refreshAll(): Promise<void> {
     const [, nextGroups, nextDeleted] = await Promise.all([
@@ -529,8 +841,105 @@ export function LibraryScreen({
     setView(next)
     setSearch('')
     setSearchExpanded(false)
+    setColumnMenuOpen(false)
     setGroupFilter(null)
     setSelectedIds(new Set())
+  }
+
+  function toggleAccountColumn(key: AccountColumnKey): void {
+    setVisibleAccountColumns((current) => {
+      const next = new Set(current)
+      if (next.has(key)) {
+        next.delete(key)
+      } else {
+        next.add(key)
+      }
+      window.localStorage.setItem(
+        ACCOUNT_COLUMN_STORAGE_KEY,
+        JSON.stringify(ACCOUNT_COLUMN_KEYS.filter((column) => next.has(column)))
+      )
+      return next
+    })
+  }
+
+  function openColumnMenu(event: React.MouseEvent<HTMLElement>): void {
+    event.preventDefault()
+    event.stopPropagation()
+    const menuWidth = 214
+    const menuHeight = 386
+    setColumnMenuPosition({
+      left: Math.max(8, Math.min(event.clientX, window.innerWidth - menuWidth - 8)),
+      top:
+        event.clientY + menuHeight + 8 <= window.innerHeight
+          ? event.clientY
+          : Math.max(8, event.clientY - menuHeight)
+    })
+    setColumnMenuOpen(true)
+  }
+
+  function chooseAccountColumnSizing(sizing: AccountColumnSizing): void {
+    setAccountColumnSizing(sizing)
+    window.localStorage.setItem(ACCOUNT_COLUMN_SIZING_STORAGE_KEY, sizing)
+    setColumnMenuOpen(false)
+  }
+
+  function beginAccountColumnResize(
+    event: React.PointerEvent<HTMLSpanElement>,
+    key: AccountColumnResizeKey
+  ): void {
+    if (event.button !== 0) return
+    event.preventDefault()
+    event.stopPropagation()
+    setColumnMenuOpen(false)
+    const header = event.currentTarget.closest<HTMLElement>('.account-list__header')
+    if (!header) return
+    const measuredWidths = { ...ACCOUNT_COLUMN_DEFAULT_WIDTHS }
+    for (const cell of header.querySelectorAll<HTMLElement>(':scope > [data-column-key]')) {
+      const columnKey = cell.dataset.columnKey as AccountColumnResizeKey | undefined
+      const width = cell.getBoundingClientRect().width
+      if (columnKey && width > 0) measuredWidths[columnKey] = Math.round(width)
+    }
+    const startX = event.clientX
+    const startWidth = measuredWidths[key]
+    setAccountColumnSizing('manual')
+    setAccountColumnWidths(measuredWidths)
+    columnResizeCleanupRef.current?.()
+    document.body.classList.add('is-resizing-account-column')
+    const onPointerMove = (moveEvent: PointerEvent): void => {
+      const nextWidth = Math.max(
+        ACCOUNT_COLUMN_MIN_WIDTHS[key],
+        Math.min(520, startWidth + moveEvent.clientX - startX)
+      )
+      setAccountColumnWidths((current) => ({ ...current, [key]: nextWidth }))
+    }
+    const cleanup = (): void => {
+      document.removeEventListener('pointermove', onPointerMove)
+      document.removeEventListener('pointerup', cleanup)
+      document.removeEventListener('pointercancel', cleanup)
+      document.body.classList.remove('is-resizing-account-column')
+      if (columnResizeCleanupRef.current === cleanup) {
+        columnResizeCleanupRef.current = null
+      }
+    }
+    columnResizeCleanupRef.current = cleanup
+    document.addEventListener('pointermove', onPointerMove)
+    document.addEventListener('pointerup', cleanup)
+    document.addEventListener('pointercancel', cleanup)
+  }
+
+  function accountColumnResizer(
+    key: AccountColumnResizeKey,
+    label: string
+  ): React.JSX.Element {
+    return (
+      <span
+        className="account-column-resizer"
+        role="separator"
+        aria-orientation="vertical"
+        aria-label={tr(`调整${label}列宽`, `Resize ${label} column`, `調整${label}欄寬`)}
+        onPointerDown={(event) => beginAccountColumnResize(event, key)}
+      />
+    )
   }
 
   function chooseAllAccounts(): void {
@@ -547,6 +956,28 @@ export function LibraryScreen({
     setSearch('')
     setSearchExpanded(false)
     setSelectedIds(new Set())
+  }
+
+  function chooseAllAccountsFromTree(): void {
+    chooseAllAccounts()
+    toggleAccountGroupTree()
+  }
+
+  function chooseGroupFromTree(group: GroupSummary, hasChildren: boolean): void {
+    chooseGroup(group)
+    if (!hasChildren || !group.actualName) return
+    toggleGroupExpanded(group.actualName)
+  }
+
+  function toggleAccountGroupTree(): void {
+    setAccountGroupTreeExpanded((current) => {
+      const next = !current
+      window.localStorage.setItem(
+        'autologin.account.groups.treeExpanded',
+        next ? '1' : '0'
+      )
+      return next
+    })
   }
 
   function chooseLogView(next: 'loginLogs' | 'appLogs'): void {
@@ -768,27 +1199,51 @@ export function LibraryScreen({
     }
   }
 
-  function openCopyMenu(
-    event: React.MouseEvent<HTMLButtonElement>,
+  function openAccountMenu(
+    event: React.MouseEvent<HTMLElement>,
     account: AccountWithSite
   ): void {
     event.preventDefault()
     event.stopPropagation()
-    const rect = event.currentTarget.getBoundingClientRect()
-    const menuHeight = 142
-    const top =
-      rect.bottom + menuHeight + 8 <= window.innerHeight
-        ? rect.bottom + 6
-        : Math.max(8, rect.top - menuHeight - 6)
-    setCopyMenu({
+    const menuWidth = 196
+    const menuHeight = 214
+    setAccountMenu({
+      kind: 'account',
       account,
-      left: Math.max(8, Math.min(rect.right - 190, window.innerWidth - 198)),
-      top
+      left: Math.max(8, Math.min(event.clientX, window.innerWidth - menuWidth - 8)),
+      top:
+        event.clientY + menuHeight + 8 <= window.innerHeight
+          ? event.clientY
+          : Math.max(8, event.clientY - menuHeight)
+    })
+  }
+
+  function openPageAccountMenu(event: React.MouseEvent<HTMLElement>): void {
+    if (event.defaultPrevented) return
+    const target = event.target instanceof Element ? event.target : null
+    if (
+      target?.closest(
+        '.account-row, .account-list__header, .account-subnav-shell, button, input, select, textarea, a, label'
+      )
+    ) {
+      return
+    }
+    event.preventDefault()
+    event.stopPropagation()
+    const menuWidth = 190
+    const menuHeight = 50
+    setAccountMenu({
+      kind: 'page',
+      left: Math.max(8, Math.min(event.clientX, window.innerWidth - menuWidth - 8)),
+      top:
+        event.clientY + menuHeight + 8 <= window.innerHeight
+          ? event.clientY
+          : Math.max(8, event.clientY - menuHeight)
     })
   }
 
   async function copyAccountUsername(account: AccountWithSite): Promise<void> {
-    setCopyMenu(null)
+    setAccountMenu(null)
     try {
       await window.autologin.accounts.copyUsername(account.id)
       notify('success', tr('用户名已复制', 'Username copied.', '使用者名稱已複製'))
@@ -803,7 +1258,7 @@ export function LibraryScreen({
   }
 
   async function copyAccountPassword(account: AccountWithSite): Promise<void> {
-    setCopyMenu(null)
+    setAccountMenu(null)
     try {
       await window.autologin.accounts.copy(account.id)
       notify('success', tr('密码已复制', 'Password copied.', '密碼已複製'))
@@ -817,8 +1272,23 @@ export function LibraryScreen({
     }
   }
 
+  async function copyAccountUrl(account: AccountWithSite): Promise<void> {
+    setAccountMenu(null)
+    try {
+      await window.autologin.accounts.copyUrl(account.id)
+      notify('success', tr('站点 URL 已复制', 'Site URL copied.', '站點 URL 已複製'))
+    } catch (error) {
+      notify(
+        'error',
+        error instanceof Error
+          ? error.message
+          : tr('复制站点 URL 失败', 'Could not copy site URL.', '複製站點 URL 失敗')
+      )
+    }
+  }
+
   async function duplicateSingleAccount(account: AccountWithSite): Promise<void> {
-    setCopyMenu(null)
+    setAccountMenu(null)
     try {
       const [created] = await window.autologin.accounts.duplicate([account.id])
       await refreshAll()
@@ -837,6 +1307,33 @@ export function LibraryScreen({
           ? error.message
           : tr('复制账号失败', 'Could not copy account.', '複製帳號失敗')
       )
+    }
+  }
+
+  async function pasteAccountClipboard(): Promise<void> {
+    if (accountClipboardIds.length === 0 || keyboardDuplicateBusy) return
+    setKeyboardDuplicateBusy(true)
+    try {
+      const created = await window.autologin.accounts.duplicate(accountClipboardIds)
+      await refreshAll()
+      setSelectedIds(new Set(created.map((account) => account.id)))
+      notify(
+        'success',
+        tr(
+          `已粘贴 ${created.length} 个账号`,
+          `Pasted ${created.length} account${created.length === 1 ? '' : 's'}.`,
+          `已貼上 ${created.length} 個帳號`
+        )
+      )
+    } catch (error) {
+      notify(
+        'error',
+        error instanceof Error
+          ? error.message
+          : tr('粘贴账号失败', 'Could not paste accounts.', '貼上帳號失敗')
+      )
+    } finally {
+      setKeyboardDuplicateBusy(false)
     }
   }
 
@@ -903,11 +1400,13 @@ export function LibraryScreen({
     event: React.DragEvent<HTMLSpanElement>,
     group: GroupSummary
   ): void {
-    if (!group.actualName) return
+    const dragPath =
+      group.actualName ?? (group.key === UNGROUPED_KEY ? UNGROUPED_KEY : null)
+    if (!dragPath) return
     event.dataTransfer.effectAllowed = 'move'
-    event.dataTransfer.setData('text/plain', group.actualName)
-    draggedGroupPathRef.current = group.actualName
-    setDraggedGroupPath(group.actualName)
+    event.dataTransfer.setData('text/plain', dragPath)
+    draggedGroupPathRef.current = dragPath
+    setDraggedGroupPath(dragPath)
   }
 
   function resolveGroupDropPosition(
@@ -915,8 +1414,16 @@ export function LibraryScreen({
     target: GroupSummary,
     position: GroupDropPosition
   ): GroupDropPosition | null {
-    const targetPath = target.actualName
+    const targetPath =
+      target.actualName ?? (target.key === UNGROUPED_KEY ? UNGROUPED_KEY : null)
     if (!targetPath || targetPath === draggedPath) return null
+    const draggedIsUngrouped = draggedPath === UNGROUPED_KEY
+    const targetIsUngrouped = targetPath === UNGROUPED_KEY
+    if (draggedIsUngrouped || targetIsUngrouped) {
+      if (draggedIsUngrouped && target.parentPath !== null) return null
+      if (targetIsUngrouped && groupParentPath(draggedPath) !== null) return null
+      return position === 'inside' ? 'after' : position
+    }
     if (targetPath.startsWith(`${draggedPath}${GROUP_PATH_SEPARATOR}`)) return null
 
     if (position === 'inside') {
@@ -972,24 +1479,29 @@ export function LibraryScreen({
     draggedGroupPathRef.current = null
     setDraggedGroupPath(null)
     setGroupDropTarget(null)
-    if (!draggedPath || !dropTarget || dropTarget.path !== target.actualName) return
+    const targetPath =
+      target.actualName ?? (target.key === UNGROUPED_KEY ? UNGROUPED_KEY : null)
+    if (!draggedPath || !dropTarget || dropTarget.path !== targetPath) return
 
     const destinationParent =
       dropTarget.position === 'inside'
         ? target.actualName ?? undefined
-        : groupParentPath(target.actualName ?? target.key) ?? undefined
+        : target.actualName
+          ? groupParentPath(target.actualName) ?? undefined
+          : undefined
     const currentParent = groupParentPath(draggedPath) ?? undefined
 
     if (destinationParent === currentParent) {
       const siblings = groups
-        .filter(
+        .filter((group) => (group.parentPath ?? undefined) === destinationParent)
+        .map(
           (group) =>
-            group.actualName &&
-            (group.parentPath ?? undefined) === destinationParent
+            group.actualName ??
+            (group.key === UNGROUPED_KEY ? UNGROUPED_GROUP_KEY : null)
         )
-        .map((group) => group.actualName as string)
+        .filter((path): path is string => Boolean(path))
       const nextSiblings = siblings.filter((path) => path !== draggedPath)
-      const targetIndex = nextSiblings.indexOf(target.actualName ?? '')
+      const targetIndex = nextSiblings.indexOf(targetPath ?? '')
       if (targetIndex < 0) return
       nextSiblings.splice(
         targetIndex + (dropTarget.position === 'after' ? 1 : 0),
@@ -998,7 +1510,11 @@ export function LibraryScreen({
       )
       if (nextSiblings.join('\0') === siblings.join('\0')) return
       const nextOrder = groups
-        .map((group) => group.actualName)
+        .map(
+          (group) =>
+            group.actualName ??
+            (group.key === UNGROUPED_KEY ? UNGROUPED_GROUP_KEY : null)
+        )
         .filter((path): path is string => Boolean(path))
       const siblingSet = new Set(siblings)
       let siblingIndex = 0
@@ -1277,6 +1793,8 @@ export function LibraryScreen({
   }
 
   async function refreshAccounts(): Promise<void> {
+    if (manualRefreshing) return
+    const startedAt = Date.now()
     setManualRefreshing(true)
     try {
       await refreshAll()
@@ -1288,6 +1806,10 @@ export function LibraryScreen({
           : tr('刷新账号失败', 'Could not refresh accounts.', '重新整理帳號失敗')
       )
     } finally {
+      const remaining = 500 - (Date.now() - startedAt)
+      if (remaining > 0) {
+        await new Promise((resolve) => window.setTimeout(resolve, remaining))
+      }
       setManualRefreshing(false)
     }
   }
@@ -1372,7 +1894,11 @@ export function LibraryScreen({
   }
 
   return (
-    <div className={`app-shell${sidebarCollapsed ? ' is-sidebar-collapsed' : ''}`}>
+    <div
+      className={`app-shell${sidebarCollapsed ? ' is-sidebar-collapsed' : ''}${
+        accountEditorOpen ? ' is-account-editor' : ''
+      }`}
+    >
       <aside className={`sidebar${sidebarCollapsed ? ' is-collapsed' : ''}`}>
         <div className="sidebar-topbar">
           <button
@@ -1578,17 +2104,30 @@ export function LibraryScreen({
         </form>
       )}
 
-      {copyMenu && (
+      {accountMenu?.kind === 'account' && (
         <div
-          className="account-copy-menu"
+          className="account-context-menu"
           role="menu"
-          aria-label={tr('复制账号内容', 'Copy account options', '複製帳號內容')}
-          style={{ left: copyMenu.left, top: copyMenu.top }}
+          aria-label={tr('账号操作', 'Account actions', '帳號操作')}
+          style={{ left: accountMenu.left, top: accountMenu.top }}
         >
           <button
             type="button"
             role="menuitem"
-            onClick={() => void copyAccountUsername(copyMenu.account)}
+            onClick={() => {
+              const accountId = accountMenu.account.id
+              setAccountMenu(null)
+              setDrawer({ mode: 'edit', accountId })
+            }}
+          >
+            <Pencil size={14} />
+            {tr('编辑账号', 'Edit account', '編輯帳號')}
+          </button>
+          <div className="account-context-menu__divider" aria-hidden="true" />
+          <button
+            type="button"
+            role="menuitem"
+            onClick={() => void copyAccountUsername(accountMenu.account)}
           >
             <UserRound size={14} />
             {tr('复制用户名', 'Copy username', '複製使用者名稱')}
@@ -1596,7 +2135,7 @@ export function LibraryScreen({
           <button
             type="button"
             role="menuitem"
-            onClick={() => void copyAccountPassword(copyMenu.account)}
+            onClick={() => void copyAccountPassword(accountMenu.account)}
           >
             <KeyRound size={14} />
             {tr('复制密码', 'Copy password', '複製密碼')}
@@ -1604,10 +2143,39 @@ export function LibraryScreen({
           <button
             type="button"
             role="menuitem"
-            onClick={() => void duplicateSingleAccount(copyMenu.account)}
+            onClick={() => void copyAccountUrl(accountMenu.account)}
+          >
+            <Globe2 size={14} />
+            {tr('复制 URL', 'Copy URL', '複製 URL')}
+          </button>
+          <button
+            type="button"
+            role="menuitem"
+            onClick={() => void duplicateSingleAccount(accountMenu.account)}
           >
             <Copy size={14} />
             {tr('复制账号', 'Duplicate account', '複製帳號')}
+          </button>
+        </div>
+      )}
+
+      {accountMenu?.kind === 'page' && (
+        <div
+          className="account-context-menu"
+          role="menu"
+          aria-label={tr('账号页面操作', 'Account page actions', '帳號頁面操作')}
+          style={{ left: accountMenu.left, top: accountMenu.top }}
+        >
+          <button
+            type="button"
+            role="menuitem"
+            onClick={() => {
+              setAccountMenu(null)
+              setDrawer({ mode: 'create' })
+            }}
+          >
+            <Plus size={14} />
+            {tr('新增账号', 'Add account', '新增帳號')}
           </button>
         </div>
       )}
@@ -1930,8 +2498,30 @@ export function LibraryScreen({
         />
       )}
 
-      <main className="library-main">
-        <div className="library-content-scroll">
+      <main
+        className={`library-main${accountEditorOpen ? ' is-account-editor' : ''}`}
+      >
+        {accountEditorOpen && drawer ? (
+          <AccountDrawer
+            mode={drawer.mode}
+            account={drawer.mode === 'edit' ? drawerAccount ?? undefined : undefined}
+            sites={sites}
+            groups={groupDefinitions}
+            initialSiteId={drawer.mode === 'create' ? drawer.siteId : undefined}
+            onClose={() => setDrawer(null)}
+            onSaved={handleSaved}
+            onDeleted={handleDeleted}
+            onRecord={drawerAccount ? () => onRecord(drawerAccount) : undefined}
+            onChanged={refreshAll}
+            notify={notify}
+          />
+        ) : (
+        <div
+          className={`library-content-scroll${
+            view === 'accounts' ? ' library-content-scroll--accounts' : ''
+          }`}
+          onContextMenu={view === 'accounts' ? openPageAccountMenu : undefined}
+        >
           {view === 'accounts' && (
             <div
               className={`library-view-layout library-view-layout--accounts${
@@ -1950,16 +2540,27 @@ export function LibraryScreen({
                   className="account-subnav"
                   aria-label={tr('账号分组', 'Account groups', '帳號分組')}
                 >
-                  <span className="account-subnav__label">{tr('账号', 'Accounts', '帳號')}</span>
+                  <div className="account-subnav__header" aria-hidden="true" />
                   <div className="account-subnav__all-row">
                     <button
                       type="button"
-                      className={`account-subnav__item${groupFilter === null ? ' is-active' : ''}`}
-                      onClick={chooseAllAccounts}
+                      className={`account-subnav__item account-subnav__all-button${
+                        groupFilter === null ? ' is-active' : ''
+                      }`}
+                      onClick={chooseAllAccountsFromTree}
+                      aria-expanded={accountGroupTreeExpanded}
+                      title={tr('全部账号', 'All accounts', '全部帳號')}
                     >
                       <KeyRound size={15} />
                       <span>{tr('全部账号', 'All accounts', '全部帳號')}</span>
                       <small>{accounts.length}</small>
+                      <span className="account-subnav__tree-chevron" aria-hidden="true">
+                        {accountGroupTreeExpanded ? (
+                          <ChevronDown size={14} />
+                        ) : (
+                          <ChevronRight size={14} />
+                        )}
+                      </span>
                     </button>
                     <button
                       type="button"
@@ -1971,9 +2572,72 @@ export function LibraryScreen({
                       <Plus size={14} />
                     </button>
                   </div>
-                  <section className="account-subnav__groups">
-                    <div className="account-subnav__group-list">
-                      {visibleNamedGroups.map((group) => {
+                  <div
+                    className={`account-subnav__groups-accordion${
+                      accountGroupTreeExpanded ? ' is-expanded' : ''
+                    }`}
+                    aria-hidden={!accountGroupTreeExpanded}
+                  >
+                    <div className="account-subnav__groups-inner">
+                      <section className="account-subnav__groups">
+                        <div className="account-subnav__group-list">
+                      {visibleTreeGroups.map((group) => {
+                        if (!group.actualName) {
+                          return (
+                            <div
+                              className={`account-subnav__group-row account-subnav__group-row--ungrouped${
+                                groupDropTarget?.path === group.key
+                                  ? ` is-drop-${groupDropTarget.position}`
+                                  : ''
+                              }${draggedGroupPath === group.key ? ' is-dragging' : ''}`}
+                              key={group.key}
+                              data-group-path={group.key}
+                              onDragOver={(event) => hoverGroupDropTarget(event, group)}
+                              onDragLeave={(event) => {
+                                if (
+                                  event.relatedTarget instanceof Node &&
+                                  event.currentTarget.contains(event.relatedTarget)
+                                ) {
+                                  return
+                                }
+                                setGroupDropTarget(null)
+                              }}
+                              onDrop={(event) => void finishGroupDrop(event, group)}
+                            >
+                              <span
+                                className="account-subnav__drag-handle"
+                                draggable
+                                onDragStart={(event) => beginGroupDrag(event, group)}
+                                onDragEnd={() => {
+                                  draggedGroupPathRef.current = null
+                                  setDraggedGroupPath(null)
+                                  setGroupDropTarget(null)
+                                }}
+                                aria-hidden="true"
+                              >
+                                <GripVertical size={13} />
+                              </span>
+                              <button
+                                type="button"
+                                className={`account-subnav__item account-subnav__item--group${
+                                  groupFilter === UNGROUPED_KEY ? ' is-active' : ''
+                                }`}
+                                onClick={() => chooseGroup(group)}
+                                aria-label={tr(
+                                  '未分组，无子分组',
+                                  'Ungrouped, no subgroups',
+                                  '未分組，無子分組'
+                                )}
+                                title={group.name}
+                              >
+                                <Globe2 size={15} />
+                                <span>{group.name}</span>
+                                <small>{group.count}</small>
+                                <span className="account-subnav__tree-spacer" aria-hidden="true" />
+                              </button>
+                            </div>
+                          )
+                        }
                         const hasChildren = groupsWithChildren.has(group.actualName ?? '')
                         const isCollapsed = collapsedGroupPaths.has(group.actualName ?? '')
                         return (
@@ -2015,55 +2679,58 @@ export function LibraryScreen({
                               >
                                 <GripVertical size={13} />
                               </span>
-                              <div
-                                className={`account-subnav__group-main${
+                              <button
+                                type="button"
+                                className={`account-subnav__item account-subnav__item--group${
                                   groupFilter === group.key ? ' is-active' : ''
                                 }`}
+                                onClick={() => chooseGroupFromTree(group, hasChildren)}
+                                onContextMenu={(event) => openGroupMenu(event, group)}
+                                onKeyDown={(event) => openGroupMenuFromKeyboard(event, group)}
+                                aria-haspopup="menu"
+                                aria-expanded={hasChildren ? !isCollapsed : undefined}
+                                aria-label={
+                                  hasChildren
+                                    ? isCollapsed
+                                      ? tr(
+                                          `展开“${group.name}”`,
+                                          `Expand “${group.name}”`,
+                                          `展開「${group.name}」`
+                                        )
+                                      : tr(
+                                          `收起“${group.name}”`,
+                                          `Collapse “${group.name}”`,
+                                          `收起「${group.name}」`
+                                        )
+                                    : tr(
+                                        `${group.name}，无子分组`,
+                                        `${group.name}, no subgroups`,
+                                        `${group.name}，無子分組`
+                                      )
+                                }
+                                title={group.actualName ?? group.name}
                               >
-                                <button
-                                  type="button"
-                                  className="account-subnav__item account-subnav__item--group"
-                                  onClick={() => chooseGroup(group)}
-                                  onContextMenu={(event) => openGroupMenu(event, group)}
-                                  onKeyDown={(event) => openGroupMenuFromKeyboard(event, group)}
-                                  aria-haspopup="menu"
-                                  title={group.actualName ?? group.name}
-                                >
-                                  <Layers3 size={15} />
-                                  <span>{group.name}</span>
-                                  <small>{group.count}</small>
-                                </button>
-                                <button
-                                  type="button"
-                                  className="account-subnav__group-toggle"
-                                  onClick={() => {
-                                    if (group.actualName) toggleGroupExpanded(group.actualName)
-                                  }}
-                                  disabled={!hasChildren}
-                                  aria-label={
-                                    hasChildren
-                                      ? isCollapsed
-                                        ? tr(
-                                            `展开“${group.name}”`,
-                                            `Expand “${group.name}”`,
-                                            `展開「${group.name}」`
-                                          )
-                                        : tr(
-                                            `收起“${group.name}”`,
-                                            `Collapse “${group.name}”`,
-                                            `收起「${group.name}」`
-                                          )
-                                      : tr('无子分组', 'No subgroups', '無子分組')
-                                  }
-                                  aria-expanded={hasChildren ? !isCollapsed : undefined}
-                                >
-                                  {isCollapsed ? (
-                                    <ChevronRight size={14} />
-                                  ) : (
-                                    <ChevronDown size={14} />
-                                  )}
-                                </button>
-                              </div>
+                                <Layers3 size={15} />
+                                <span>{group.name}</span>
+                                <small>{group.count}</small>
+                                {hasChildren ? (
+                                  <span
+                                    className="account-subnav__tree-chevron"
+                                    aria-hidden="true"
+                                  >
+                                    {isCollapsed ? (
+                                      <ChevronRight size={14} />
+                                    ) : (
+                                      <ChevronDown size={14} />
+                                    )}
+                                  </span>
+                                ) : (
+                                  <span
+                                    className="account-subnav__tree-spacer"
+                                    aria-hidden="true"
+                                  />
+                                )}
+                              </button>
                               {groupLevel(group.actualName ?? group.key) < GROUP_MAX_DEPTH && (
                                 <button
                                   type="button"
@@ -2082,44 +2749,10 @@ export function LibraryScreen({
                             </div>
                         )
                       })}
-                      <div className="account-subnav__group-row account-subnav__group-row--ungrouped">
-                        <span
-                          className="account-subnav__drag-handle account-subnav__drag-handle--placeholder"
-                          aria-hidden="true"
-                        />
-                        <div
-                          className={`account-subnav__group-main${
-                            groupFilter === UNGROUPED_KEY ? ' is-active' : ''
-                          }`}
-                        >
-                          <button
-                            type="button"
-                            className="account-subnav__item account-subnav__item--group"
-                            onClick={() => {
-                              const ungrouped = groups.find(
-                                (group) => group.key === UNGROUPED_KEY
-                              )
-                              if (ungrouped) chooseGroup(ungrouped)
-                              else {
-                                setView('accounts')
-                                setGroupFilter(UNGROUPED_KEY)
-                              }
-                            }}
-                          >
-                            <Globe2 size={15} />
-                            <span>{tr('未分组', 'Ungrouped', '未分組')}</span>
-                            <small>
-                              {groups.find((group) => group.key === UNGROUPED_KEY)?.count ?? 0}
-                            </small>
-                          </button>
-                          <span
-                            className="account-subnav__group-toggle account-subnav__group-toggle--spacer"
-                            aria-hidden="true"
-                          />
                         </div>
-                      </div>
+                      </section>
                     </div>
-                  </section>
+                  </div>
                 </aside>
                 )}
                 {!accountSubnavHidden && (
@@ -2135,27 +2768,59 @@ export function LibraryScreen({
               )}
               <div className="library-view-main">
               <header className="library-header page-breadcrumb-bar">
-                <nav className="page-breadcrumb" aria-label={tr('面包屑', 'Breadcrumb', '麵包屑')}>
-                  <span>{tr('账号', 'Accounts', '帳號')}</span>
-                  {currentBreadcrumb.map((crumb, index) => {
-                    const isLast = index === currentBreadcrumb.length - 1
-                    return (
-                      <span className="page-breadcrumb__segment" key={crumb.path ?? 'all'}>
-                        <ChevronRight size={12} />
-                        {isLast ? (
-                          <h1 title={crumb.path ?? undefined}>{crumb.label}</h1>
-                        ) : (
-                          <span
-                            className="page-breadcrumb__crumb page-breadcrumb__crumb--static"
-                            title={crumb.path ?? undefined}
-                          >
-                            {crumb.label}
-                          </span>
-                        )}
-                      </span>
-                    )
-                  })}
-                </nav>
+                <div className="library-header__leading">
+                  <button
+                    type="button"
+                    className={`account-subnav-collapse-toggle${
+                      accountSubnavHidden ? ' is-collapsed' : ''
+                    }`}
+                    onClick={handleSubnavToggle}
+                    aria-label={
+                      accountSubnavHidden
+                        ? tr('展开账号侧边栏', 'Expand account sidebar', '展開帳號側邊欄')
+                        : tr('隐藏账号侧边栏', 'Hide account sidebar', '隱藏帳號側邊欄')
+                    }
+                    aria-expanded={!accountSubnavHidden}
+                    title={
+                      accountSubnavHidden
+                        ? tr('展开账号侧边栏', 'Expand account sidebar', '展開帳號側邊欄')
+                        : tr('隐藏账号侧边栏', 'Hide account sidebar', '隱藏帳號側邊欄')
+                    }
+                  >
+                    {accountSubnavHidden ? (
+                      <PanelLeftOpen size={15} />
+                    ) : (
+                      <PanelLeftClose size={15} />
+                    )}
+                  </button>
+                  <nav
+                    className="page-breadcrumb"
+                    aria-label={tr('面包屑', 'Breadcrumb', '麵包屑')}
+                  >
+                    <span>{tr('账号', 'Accounts', '帳號')}</span>
+                    {currentBreadcrumb.map((crumb, index) => {
+                      const isLast = index === currentBreadcrumb.length - 1
+                      return (
+                        <span
+                          className="page-breadcrumb__segment"
+                          key={crumb.path ?? 'all'}
+                        >
+                          <ChevronRight size={12} />
+                          {isLast ? (
+                            <h1 title={crumb.path ?? undefined}>{crumb.label}</h1>
+                          ) : (
+                            <span
+                              className="page-breadcrumb__crumb page-breadcrumb__crumb--static"
+                              title={crumb.path ?? undefined}
+                            >
+                              {crumb.label}
+                            </span>
+                          )}
+                        </span>
+                      )
+                    })}
+                  </nav>
+                </div>
                 <div className="library-header__actions">
                   {batchState && batchState.total > 0 && (
                     <button
@@ -2243,11 +2908,9 @@ export function LibraryScreen({
                       disabled={manualRefreshing}
                       aria-label={tr('刷新', 'Refresh', '重新整理')}
                       title={tr('刷新', 'Refresh', '重新整理')}
+                      aria-busy={manualRefreshing}
                     >
-                      <RefreshCw
-                        size={14}
-                        className={manualRefreshing ? 'spin' : undefined}
-                      />
+                      {manualRefreshing ? <LoadingSpinner size={14} /> : <RefreshCw size={14} />}
                     </button>
                     <button
                       type="button"
@@ -2299,33 +2962,15 @@ export function LibraryScreen({
                 )}
               </div>
 
-              <div className="account-subnav-controls">
-                <button
-                  type="button"
-                  className="account-subnav-toggle button button--ghost button--small button--icon-only"
-                  onClick={handleSubnavToggle}
-                  aria-label={
-                    accountSubnavHidden
-                      ? tr('展开账号侧边栏', 'Expand account sidebar', '展開帳號側邊欄')
-                      : tr('隐藏账号侧边栏', 'Hide account sidebar', '隱藏帳號側邊欄')
-                  }
-                  aria-expanded={!accountSubnavHidden}
-                  title={
-                    accountSubnavHidden
-                      ? tr('展开账号侧边栏', 'Expand account sidebar', '展開帳號側邊欄')
-                      : tr('隐藏账号侧边栏', 'Hide account sidebar', '隱藏帳號側邊欄')
-                  }
-                >
-                  {accountSubnavHidden ? (
-                    <PanelLeftOpen size={14} />
-                  ) : (
-                    <PanelLeftClose size={14} />
-                  )}
-                </button>
-              </div>
-
-              <section className="account-list" aria-live="polite">
-                  <div className="account-list__header accounts-table__header">
+              <section
+                className="account-list"
+                aria-live="polite"
+                style={accountGridStyle}
+              >
+                  <div
+                    className="account-list__header accounts-table__header"
+                    onContextMenu={openColumnMenu}
+                  >
                     <SelectionCheckbox
                       ref={selectAllRef}
                       checked={allVisibleSelected}
@@ -2337,16 +2982,151 @@ export function LibraryScreen({
                       onChange={toggleSelectAll}
                       disabled={filteredAccounts.length === 0}
                     />
-                    <span className="account-col--site">{tr('站点', 'Site', '站點')}</span>
-                    <span className="account-col--username">
+                    <span className="account-col--site" data-column-key="site">
+                      {tr('站点', 'Site', '站點')}
+                      {accountColumnResizer('site', tr('站点', 'site', '站點'))}
+                    </span>
+                    <span
+                      className={`account-col--username${
+                        visibleAccountColumns.has('username')
+                          ? ''
+                          : ' is-column-hidden'
+                      }`}
+                      data-column-key="username"
+                    >
                       {tr('用户名', 'Username', '使用者名稱')}
+                      {accountColumnResizer('username', tr('用户名', 'username', '使用者名稱'))}
                     </span>
-                    <span className="account-col--group">{tr('分组', 'Group', '分組')}</span>
-                    <span className="account-col--updated">
+                    <span
+                      className={`account-col--group${
+                        visibleAccountColumns.has('group') ? '' : ' is-column-hidden'
+                      }`}
+                      data-column-key="group"
+                    >
+                      {tr('分组', 'Group', '分組')}
+                      {accountColumnResizer('group', tr('分组', 'group', '分組'))}
+                    </span>
+                    <span
+                      className={`account-col--updated${
+                        visibleAccountColumns.has('updated')
+                          ? ''
+                          : ' is-column-hidden'
+                      }`}
+                      data-column-key="updated"
+                    >
                       {tr('最后更新', 'Last updated', '最後更新')}
+                      {accountColumnResizer('updated', tr('最后更新', 'updated', '最後更新'))}
                     </span>
-                    <span className="account-col--status">{tr('状态', 'Status', '狀態')}</span>
-                    <span className="account-col--actions" />
+                    <span
+                      className={`account-col--status${
+                        visibleAccountColumns.has('status')
+                          ? ''
+                          : ' is-column-hidden'
+                      }`}
+                      data-column-key="status"
+                    >
+                      {tr('状态', 'Status', '狀態')}
+                      {accountColumnResizer('status', tr('状态', 'status', '狀態'))}
+                    </span>
+                    <span
+                      className={`account-col--url${
+                        visibleAccountColumns.has('url') ? '' : ' is-column-hidden'
+                      }`}
+                      data-column-key="url"
+                    >
+                      {tr('站点 URL', 'Site URL', '站點 URL')}
+                      {accountColumnResizer('url', tr('站点 URL', 'site URL', '站點 URL'))}
+                    </span>
+                    <div className="account-col--actions" data-column-key="actions">
+                      {accountColumnResizer('actions', tr('操作', 'actions', '操作'))}
+                      {columnMenuOpen &&
+                        createPortal(
+                          <div
+                            className="account-column-menu"
+                            role="menu"
+                            aria-label={tr(
+                              '账号列表显示列',
+                              'Account list columns',
+                              '帳號列表顯示欄位'
+                            )}
+                            ref={columnMenuRef}
+                            style={{
+                              left: columnMenuPosition.left,
+                              top: columnMenuPosition.top
+                            }}
+                          >
+                            <span className="account-column-menu__label">
+                              {tr('列尺寸', 'Column sizing', '欄位尺寸')}
+                            </span>
+                            <button
+                              type="button"
+                              role="menuitemradio"
+                              aria-checked={accountColumnSizing === 'content'}
+                              className={
+                                accountColumnSizing === 'content'
+                                  ? 'is-checked'
+                                  : undefined
+                              }
+                              onClick={() => chooseAccountColumnSizing('content')}
+                            >
+                              <span className="account-column-menu__icon">
+                                <Maximize2 size={14} />
+                              </span>
+                              <span>{tr('适应内容', 'Fit content', '適應內容')}</span>
+                            </button>
+                            <button
+                              type="button"
+                              role="menuitemradio"
+                              aria-checked={accountColumnSizing === 'window'}
+                              className={
+                                accountColumnSizing === 'window'
+                                  ? 'is-checked'
+                                  : undefined
+                              }
+                              onClick={() => chooseAccountColumnSizing('window')}
+                            >
+                              <span className="account-column-menu__icon">
+                                <MoveHorizontal size={14} />
+                              </span>
+                              <span>{tr('适应窗口', 'Fit window', '適應視窗')}</span>
+                            </button>
+                            <div
+                              className="account-column-menu__divider"
+                              aria-hidden="true"
+                            />
+                            <span className="account-column-menu__label">
+                              {tr('显示列', 'Visible columns', '顯示欄位')}
+                            </span>
+                            {(
+                              [
+                                ['username', tr('用户名', 'Username', '使用者名稱')],
+                                ['group', tr('分组', 'Group', '分組')],
+                                ['updated', tr('最后更新', 'Last updated', '最後更新')],
+                                ['status', tr('状态', 'Status', '狀態')],
+                                ['url', tr('站点 URL', 'Site URL', '站點 URL')]
+                              ] as const
+                            ).map(([key, label]) => {
+                              const checked = visibleAccountColumns.has(key)
+                              return (
+                                <button
+                                  type="button"
+                                  role="menuitemcheckbox"
+                                  aria-checked={checked}
+                                  className={checked ? 'is-checked' : undefined}
+                                  key={key}
+                                  onClick={() => toggleAccountColumn(key)}
+                                >
+                                  <span className="account-column-menu__check">
+                                    {checked && <Check size={12} />}
+                                  </span>
+                                  <span>{label}</span>
+                                </button>
+                              )
+                            })}
+                          </div>,
+                          document.body
+                        )}
+                    </div>
                   </div>
 
                   {filteredAccounts.map((account, index) => (
@@ -2356,10 +3136,11 @@ export function LibraryScreen({
                       checked={selectedIds.has(account.id)}
                       index={index}
                       tr={tr}
+                      visibleColumns={visibleAccountColumns}
                       formatLastUsed={(value) => formatLastUsed(value, tr, formatDate)}
                       onToggleSelection={() => toggleAccountSelection(account.id)}
                       onEdit={() => setDrawer({ mode: 'edit', accountId: account.id })}
-                      onCopy={(event) => openCopyMenu(event, account)}
+                      onContextMenu={(event) => openAccountMenu(event, account)}
                       onLogin={() => void openAccount(account)}
                     />
                   ))}
@@ -2470,9 +3251,7 @@ export function LibraryScreen({
                   {deletedAccounts.map((account) => (
                     <div className="trash-row" role="row" key={account.id}>
                       <div className="account-identity">
-                        <span className={`monogram ${toneClass(account.siteId)}`}>
-                          {account.site.name.slice(0, 1).toUpperCase()}
-                        </span>
+                        <SiteMark site={account.site} />
                         <div>
                           <strong>{account.site.name}</strong>
                         </div>
@@ -2534,53 +3313,55 @@ export function LibraryScreen({
             />
           )}
         </div>
+        )}
       </main>
-
-      {drawer && (drawer.mode === 'create' || drawerAccount) && (
-        <AccountDrawer
-          mode={drawer.mode}
-          account={drawer.mode === 'edit' ? drawerAccount ?? undefined : undefined}
-          sites={sites}
-          groups={groupDefinitions}
-          initialSiteId={drawer.mode === 'create' ? drawer.siteId : undefined}
-          onClose={() => setDrawer(null)}
-          onSaved={handleSaved}
-          onDeleted={handleDeleted}
-          onRecord={drawerAccount ? () => onRecord(drawerAccount) : undefined}
-          onChanged={refreshAll}
-          notify={notify}
-        />
-      )}
     </div>
   )
 }
-
 function AccountListRow({
   account,
   checked,
   index,
   tr,
+  visibleColumns,
   formatLastUsed,
   onToggleSelection,
   onEdit,
-  onCopy,
+  onContextMenu,
   onLogin
 }: {
   account: AccountWithSite
   checked: boolean
   index: number
   tr: Translate
+  visibleColumns: Set<AccountColumnKey>
   formatLastUsed: (value?: string) => string
   onToggleSelection?: () => void
   onEdit: () => void
-  onCopy: (event: React.MouseEvent<HTMLButtonElement>) => void
+  onContextMenu: (event: React.MouseEvent<HTMLElement>) => void
   onLogin: () => void
 }): React.JSX.Element {
+  const recorded = (account.recipes?.length ?? 0) > 0 || Boolean(account.site.recipe)
+  const statusLabel = recorded
+    ? tr('已录制', 'Recorded', '已錄製')
+    : tr('自动识别', 'Auto detect', '自動識別')
+
   return (
     <article
       className={`account-row${checked ? ' is-selected' : ''}`}
       style={{ '--row-index': index } as React.CSSProperties}
-      onClick={onEdit}
+      title={tr(
+        '双击编辑，右键查看更多操作',
+        'Double-click to edit, right-click for more actions',
+        '雙擊編輯，右鍵查看更多操作'
+      )}
+      onDoubleClick={(event) => {
+        if (event.target instanceof Element && event.target.closest('button, input, label')) {
+          return
+        }
+        onEdit()
+      }}
+      onContextMenu={onContextMenu}
     >
       <SelectionCheckbox
         checked={checked}
@@ -2592,37 +3373,57 @@ function AccountListRow({
         onChange={() => onToggleSelection?.()}
       />
       <div className="account-identity">
-        <span className={`monogram ${toneClass(account.siteId)}`}>
-          {account.site.name.slice(0, 1).toUpperCase()}
-        </span>
+        <SiteMark site={account.site} />
         <div>
           <div className="account-name-line">
             <strong>{account.site.name}</strong>
           </div>
         </div>
       </div>
-      <div className="account-username">
+      <div
+        className={`account-username${
+          visibleColumns.has('username') ? '' : ' is-column-hidden'
+        }`}
+      >
         <UserRound size={14} />
         <strong>{account.username}</strong>
       </div>
-      <div className="account-group-cell">
+      <div
+        className={`account-group-cell${
+          visibleColumns.has('group') ? '' : ' is-column-hidden'
+        }`}
+      >
         <Layers3 size={13} />
         <span>{displayGroup(account, tr)}</span>
       </div>
-      <time className="account-updated" dateTime={account.updatedAt}>
+      <time
+        className={`account-updated${
+          visibleColumns.has('updated') ? '' : ' is-column-hidden'
+        }`}
+        dateTime={account.updatedAt}
+      >
         {formatLastUsed(account.updatedAt)}
       </time>
-      <div className="account-status-cell">
+      <div
+        className={`account-status-cell${
+          visibleColumns.has('status') ? '' : ' is-column-hidden'
+        }`}
+      >
         <span
-          className={`recipe-badge${
-            (account.recipes?.length ?? 0) > 0 || account.site.recipe ? ' is-recorded' : ''
-          }`}
+          className={`recipe-badge${recorded ? ' is-recorded' : ''}`}
+          title={statusLabel}
         >
           <span />
-          {(account.recipes?.length ?? 0) > 0 || account.site.recipe
-            ? tr('已录制', 'Recorded', '已錄製')
-            : tr('自动识别', 'Auto detect', '自動識別')}
+          {statusLabel}
         </span>
+      </div>
+      <div
+        className={`account-site-url${
+          visibleColumns.has('url') ? '' : ' is-column-hidden'
+        }`}
+        title={account.site.startUrl}
+      >
+        {account.site.startUrl}
       </div>
       <div className="account-actions">
         <button
@@ -2635,29 +3436,6 @@ function AccountListRow({
           title={tr('登录', 'Sign in', '登入')}
         >
           <LogIn size={15} />
-        </button>
-        <button
-          className="row-edit-button row-action-button--icon"
-          onClick={(event) => {
-            event.stopPropagation()
-            onEdit()
-          }}
-          aria-label={tr('编辑', 'Edit', '編輯')}
-          title={tr('编辑', 'Edit', '編輯')}
-        >
-          <Pencil size={14} />
-        </button>
-        <button
-          className="icon-button icon-button--small account-copy-trigger"
-          onPointerDown={(event) => event.stopPropagation()}
-          onClick={(event) => {
-            event.stopPropagation()
-            onCopy(event)
-          }}
-          aria-label={tr('复制账号内容', 'Copy account options', '複製帳號內容')}
-          title={tr('复制账号内容', 'Copy account options', '複製帳號內容')}
-        >
-          <Copy size={14} />
         </button>
       </div>
     </article>
@@ -2803,7 +3581,18 @@ function flattenGroupTree(
     result.push(group)
     visit(group.actualName)
   }
-  return [...result, ...ungrouped]
+  if (ungrouped.length === 0) return result
+  const ungroupedOrder = order.get(UNGROUPED_GROUP_KEY) ?? Number.MAX_SAFE_INTEGER
+  const insertIndex = result.findIndex((group) => {
+    if (group.parentPath !== null) return false
+    const groupOrder =
+      order.get(group.actualName ?? group.key) ??
+      order.get(group.name) ??
+      Number.MAX_SAFE_INTEGER
+    return groupOrder > ungroupedOrder
+  })
+  result.splice(insertIndex < 0 ? result.length : insertIndex, 0, ...ungrouped)
+  return result
 }
 
 function formatLastUsed(
@@ -2828,10 +3617,4 @@ function formatLastUsed(
     hour: '2-digit',
     minute: '2-digit'
   })
-}
-
-function toneClass(id: string): string {
-  let hash = 0
-  for (const char of id) hash = (hash * 31 + char.charCodeAt(0)) >>> 0
-  return `monogram--tone-${hash % 4}`
 }

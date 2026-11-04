@@ -52,6 +52,14 @@ const groupNameSchema = z
 
 const groupPathSchema = z.string().trim().min(1).max(80)
 
+const siteIconDataUrlSchema = z
+  .string()
+  .max(750_000, '账号图标不能超过 750 KB')
+  .regex(
+    /^data:image\/[a-zA-Z0-9.+-]+;base64,[a-zA-Z0-9+/]+={0,2}$/,
+    '账号图标格式无效'
+  )
+
 export const selectorSpecSchema = z.object({
   candidates: z.array(z.string().min(1)).min(1).max(8),
   text: z.string().max(120).optional()
@@ -105,6 +113,7 @@ export const siteSchema = z.object({
   allowedOrigins: z.array(originSchema).min(1),
   autoSubmit: z.boolean(),
   group: groupPathSchema.optional(),
+  icon: siteIconDataUrlSchema.optional(),
   recipe: loginRecipeSchema.optional(),
   createdAt: z.string(),
   updatedAt: z.string()
@@ -303,8 +312,15 @@ export const siteInputSchema = z.object({
   startUrl: httpUrl,
   allowedOrigins: z.array(originSchema).optional(),
   autoSubmit: z.boolean(),
-  group: groupPathSchema.optional()
+  group: groupPathSchema.optional(),
+  icon: siteIconDataUrlSchema.optional()
 })
+
+export const siteIconFetchInputSchema = z
+  .object({
+    url: httpUrl
+  })
+  .strict()
 
 export const groupCreateInputSchema = z
   .object({

@@ -23,6 +23,7 @@ export type ProxyMode = (typeof PROXY_MODES)[number]
 export const DEFAULT_PROXY_TEST_URL = 'https://www.google.com/'
 
 export const GROUP_PATH_SEPARATOR = ' / '
+export const UNGROUPED_GROUP_KEY = '__autologin:ungrouped__'
 export const GROUP_NAME_MAX_LENGTH = 20
 export const GROUP_MAX_DEPTH = 3
 export const TRASH_RETENTION_OPTIONS = [3, 7, 15, 30] as const
@@ -218,6 +219,7 @@ export interface Site {
   allowedOrigins: string[]
   autoSubmit: boolean
   group?: string
+  icon?: string
   recipe?: LoginRecipe
   createdAt: string
   updatedAt: string
@@ -313,6 +315,7 @@ export interface SiteInput {
   allowedOrigins?: string[]
   autoSubmit: boolean
   group?: string
+  icon?: string
 }
 
 export interface AccountCreateInput {
@@ -494,6 +497,7 @@ export interface AutologinApi {
     list: () => Promise<Site[]>
     save: (input: SiteInput) => Promise<Site>
     delete: (siteId: string) => Promise<void>
+    fetchIcon: (url: string) => Promise<string>
   }
   groups: {
     list: () => Promise<GroupDefinition[]>
@@ -517,6 +521,7 @@ export interface AutologinApi {
     reveal: (accountId: string) => Promise<PasswordReveal>
     copyUsername: (accountId: string) => Promise<void>
     copy: (accountId: string) => Promise<void>
+    copyUrl: (accountId: string) => Promise<void>
     setActiveRecipe: (accountId: string, recipeId?: string) => Promise<AccountWithSite>
     deleteRecipe: (accountId: string, recipeId: string) => Promise<AccountWithSite>
   }

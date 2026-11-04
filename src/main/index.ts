@@ -28,9 +28,14 @@ import {
   masterPasswordSchema,
   proxyTestInputSchema,
   selectorTestInputSchema,
+  siteIconFetchInputSchema,
   siteInputSchema
 } from '@shared/schemas'
-import { GROUP_MAX_DEPTH, GROUP_PATH_SEPARATOR } from '@shared/types'
+import {
+  GROUP_MAX_DEPTH,
+  GROUP_PATH_SEPARATOR,
+  UNGROUPED_GROUP_KEY
+} from '@shared/types'
 import type {
   AccountBatchStrategyInput,
   AccountDeleteResult,
@@ -224,8 +229,8 @@ function createWindow(): void {
     backgroundColor: '#F7F8FA',
     title: 'AutoLogin',
     icon: app.isPackaged
-      ? join(process.resourcesPath, 'icon.png')
-      : join(__dirname, '../../resources/icon.png'),
+      ? join(process.resourcesPath, 'icon.ico')
+      : join(__dirname, '../../resources/icon.ico'),
     titleBarStyle: 'hidden',
     titleBarOverlay: {
       color: '#F7F8FA',
@@ -389,6 +394,14 @@ function registerIpc(): void {
   ipcMain.handle('sites:list', (event) => {
     assertTrustedSender(event)
     return structuredClone(vault.requireData().sites)
+  })
+  ipcMain.handle('sites:fetch-icon', async (event, payload: unknown) => {
+    assertTrustedSender(event)
+    const parsed = siteIconFetchInputSchema.safeParse(payload)
+    if (!parsed.success) {
+      throw new Error(firstIssue(parsed.error))
+    }
+    return fetchSiteIcon(parsed.data.url)
   })
   ipcMain.handle('sites:save', (event, payload: unknown) => {
     assertTrustedSender(event)
@@ -592,6 +605,20 @@ function registerIpc(): void {
       throw new Error('账号不存在')
     }
     clipboard.writeText(account.username)
+  })
+  ipcMain.handle('accounts:copy-url', (event, accountId: unknown) => {
+    assertTrustedSender(event)
+    const id = requireId(accountId)
+    const data = vault.requireData()
+    const account = data.accounts.find((entry) => entry.id === id)
+    if (!account) {
+      throw new Error('账号不存在')
+    }
+    const site = data.sites.find((entry) => entry.id === account.siteId)
+    if (!site) {
+      throw new Error('站点不存在')
+    }
+    clipboard.writeText(site.startUrl)
   })
 
   ipcMain.handle('login:start', async (event, payload: unknown): Promise<LoginViewState> => {
@@ -1084,7 +1111,13 @@ function renameGroup(input: GroupRenameInput): void {
     if (record.site.group) record.site.group = renamePath(record.site.group)
   }
   data.favoriteGroups = [...new Set(data.favoriteGroups.map(renamePath))]
-  data.settings.groupOrder = [...new Set(data.settings.groupOrder.map(renamePath))]
+  data.settings.groupOrder = [
+    ...new Set(
+      data.settings.groupOrder.map((path) =>
+        path === UNGROUPED_GROUP_KEY ? path : renamePath(path)
+      )
+    )
+  ]
   vault.save()
 }
 
@@ -1158,7 +1191,13 @@ function moveGroup(input: GroupMoveInput): GroupMoveResult {
     if (record.site.group) record.site.group = movePath(record.site.group)
   }
   data.favoriteGroups = [...new Set(data.favoriteGroups.map(movePath))]
-  data.settings.groupOrder = [...new Set(data.settings.groupOrder.map(movePath))]
+  data.settings.groupOrder = [
+    ...new Set(
+      data.settings.groupOrder.map((path) =>
+        path === UNGROUPED_GROUP_KEY ? path : movePath(path)
+      )
+    )
+  ]
   vault.save()
   return { fromPath, toPath }
 }
@@ -1246,7 +1285,10 @@ function ensureGroupDefinitions(data: VaultData): boolean {
     if (record.site.group?.trim()) paths.add(record.site.group.trim())
   }
   for (const path of data.favoriteGroups) paths.add(path.trim())
-  for (const path of data.settings.groupOrder) paths.add(path.trim())
+  for (const path of data.settings.groupOrder) {
+    if (path.trim() === UNGROUPED_GROUP_KEY) continue
+    paths.add(path.trim())
+  }
 
   let changed = false
   for (const path of paths) {
@@ -1277,7 +1319,10 @@ function allGroupPaths(data: VaultData): string[] {
     if (record.site.group?.trim()) paths.add(record.site.group.trim())
   }
   for (const path of data.favoriteGroups) paths.add(path)
-  for (const path of data.settings.groupOrder) paths.add(path)
+  for (const path of data.settings.groupOrder) {
+    if (path === UNGROUPED_GROUP_KEY) continue
+    paths.add(path)
+  }
   return [...paths]
 }
 
@@ -1425,6 +1470,7 @@ function saveSite(input: SiteInput): Site {
     existing.allowedOrigins = allowedOrigins
     existing.autoSubmit = input.autoSubmit
     existing.group = input.group?.trim() || undefined
+    existing.icon = input.icon
     existing.updatedAt = now
     if (previousName !== requestedName) {
       for (const account of data.accounts) {
@@ -1445,6 +1491,7 @@ function saveSite(input: SiteInput): Site {
     allowedOrigins,
     autoSubmit: input.autoSubmit,
     group: input.group?.trim() || undefined,
+    icon: input.icon,
     createdAt: now,
     updatedAt: now
   }
@@ -2382,6 +2429,136 @@ function normalizeOrigin(value: string): string | null {
 
 function normalizeSiteName(value: string): string {
   return value.trim().toLocaleLowerCase()
+}
+
+const SITE_ICON_MAX_BYTES = 512 * 1024
+const PAGE_ICON_SCAN_MAX_BYTES = 1024 * 1024
+
+async function fetchSiteIcon(pageUrl: string): Promise<string> {
+  const startUrl = new URL(normalizeUrl(pageUrl))
+  const controller = new AbortController()
+  const timer = setTimeout(() => controller.abort(), 10_000)
+  timer.unref()
+  const candidates = new Set<string>()
+  try {
+    let pageBaseUrl = startUrl.toString()
+    try {
+      const pageResponse = await net.fetch(startUrl.toString(), {
+        headers: {
+          Accept: 'text/html,application/xhtml+xml',
+          'User-Agent': `AutoLogin/${app.getVersion()}`
+        },
+        signal: controller.signal
+      })
+      if (pageResponse.url && isHttpUrl(pageResponse.url)) {
+        pageBaseUrl = pageResponse.url
+      }
+      const contentType = pageResponse.headers.get('content-type') ?? ''
+      const contentLength = Number(pageResponse.headers.get('content-length') ?? 0)
+      if (
+        pageResponse.ok &&
+        contentType.toLowerCase().includes('html') &&
+        (!Number.isFinite(contentLength) || contentLength <= PAGE_ICON_SCAN_MAX_BYTES)
+      ) {
+        const htmlBuffer = await pageResponse.arrayBuffer()
+        if (htmlBuffer.byteLength <= PAGE_ICON_SCAN_MAX_BYTES) {
+          const html = new TextDecoder().decode(htmlBuffer)
+          for (const iconUrl of extractDeclaredIconUrls(html, pageBaseUrl)) {
+            candidates.add(iconUrl)
+          }
+        }
+      }
+    } catch (error) {
+      if (error instanceof Error && error.name === 'AbortError') throw error
+    }
+
+    candidates.add(new URL('/favicon.ico', pageBaseUrl).toString())
+    candidates.add(new URL('/apple-touch-icon.png', pageBaseUrl).toString())
+
+    for (const candidate of [...candidates].slice(0, 6)) {
+      if (!isHttpUrl(candidate)) continue
+      try {
+        const response = await net.fetch(candidate, {
+          headers: {
+            Accept: 'image/avif,image/webp,image/png,image/svg+xml,image/x-icon,image/*,*/*;q=0.8',
+            'User-Agent': `AutoLogin/${app.getVersion()}`
+          },
+          signal: controller.signal
+        })
+        if (!response.ok) continue
+        const contentLength = Number(response.headers.get('content-length') ?? 0)
+        if (Number.isFinite(contentLength) && contentLength > SITE_ICON_MAX_BYTES) {
+          continue
+        }
+        const mime = resolveIconMime(
+          response.headers.get('content-type'),
+          response.url || candidate
+        )
+        if (!mime) continue
+        const iconBuffer = Buffer.from(await response.arrayBuffer())
+        if (iconBuffer.byteLength === 0 || iconBuffer.byteLength > SITE_ICON_MAX_BYTES) {
+          continue
+        }
+        return `data:${mime};base64,${iconBuffer.toString('base64')}`
+      } catch (error) {
+        if (error instanceof Error && error.name === 'AbortError') throw error
+      }
+    }
+  } catch (error) {
+    if (error instanceof Error && error.name === 'AbortError') {
+      throw new Error('获取站点图标超时，请稍后重试或上传本地图片')
+    }
+    throw new Error('无法从该站点获取图标，请上传本地图片')
+  } finally {
+    clearTimeout(timer)
+  }
+  throw new Error('该站点没有可用的图标，请上传本地图片')
+}
+
+function extractDeclaredIconUrls(html: string, baseUrl: string): string[] {
+  const results: string[] = []
+  for (const tag of html.match(/<link\b[^>]*>/gi) ?? []) {
+    const rel = readHtmlAttribute(tag, 'rel')?.trim().toLowerCase() ?? ''
+    if (!/(?:^|\s)(?:icon|apple-touch-icon(?:-precomposed)?)(?:\s|$)/i.test(rel)) {
+      continue
+    }
+    const href = readHtmlAttribute(tag, 'href')
+      ?.replaceAll('&amp;', '&')
+      .replaceAll('&quot;', '"')
+      .trim()
+    if (!href) continue
+    try {
+      const resolved = new URL(href, baseUrl).toString()
+      if (isHttpUrl(resolved) && !results.includes(resolved)) results.push(resolved)
+    } catch {
+      // Ignore malformed icon links and continue with favicon fallbacks.
+    }
+  }
+  return results
+}
+
+function readHtmlAttribute(tag: string, name: string): string | null {
+  const match = tag.match(
+    new RegExp(`\\b${name}\\s*=\\s*(?:\"([^\"]*)\"|'([^']*)'|([^\\s>]+))`, 'i')
+  )
+  return match?.[1] ?? match?.[2] ?? match?.[3] ?? null
+}
+
+function resolveIconMime(contentType: string | null, url: string): string | null {
+  const normalized = contentType?.split(';')[0]?.trim().toLowerCase() ?? ''
+  if (normalized.startsWith('image/')) return normalized
+  try {
+    const pathname = new URL(url).pathname.toLowerCase()
+    if (pathname.endsWith('.svg')) return 'image/svg+xml'
+    if (pathname.endsWith('.png')) return 'image/png'
+    if (pathname.endsWith('.webp')) return 'image/webp'
+    if (pathname.endsWith('.gif')) return 'image/gif'
+    if (pathname.endsWith('.jpg') || pathname.endsWith('.jpeg')) return 'image/jpeg'
+    if (pathname.endsWith('.ico')) return 'image/x-icon'
+  } catch {
+    return null
+  }
+  return null
 }
 
 async function applySystemProxy(proxy: ProxySettings): Promise<void> {

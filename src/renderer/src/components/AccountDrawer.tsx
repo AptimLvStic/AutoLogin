@@ -5,9 +5,11 @@ import {
   ChevronDown,
   CirclePlay,
   Copy,
+  Download,
   Eye,
   EyeOff,
   Globe2,
+  ImagePlus,
   KeyRound,
   Layers3,
   ListChecks,
@@ -30,6 +32,7 @@ import type {
 } from '@shared/types'
 import { useI18n } from '../i18n'
 import { ConfirmDialog, Modal } from './Modal'
+import { SiteMark } from './SiteMark'
 
 interface AccountDrawerProps {
   mode: 'create' | 'edit'
@@ -70,6 +73,9 @@ export function AccountDrawer({
   const [startUrl, setStartUrl] = useState(
     account?.site.startUrl ?? initialSite?.startUrl ?? 'https://'
   )
+  const [siteIcon, setSiteIcon] = useState(
+    account?.site.icon ?? initialSite?.icon ?? ''
+  )
   const [autoSubmit, setAutoSubmit] = useState(initialSite?.autoSubmit ?? true)
   const [siteGroup, setSiteGroup] = useState(initialSite?.group ?? '')
   const [username, setUsername] = useState(account?.username ?? '')
@@ -98,9 +104,11 @@ export function AccountDrawer({
   const [recipeDetails, setRecipeDetails] = useState<AccountRecipe | null>(null)
   const [confirmRecipeDelete, setConfirmRecipeDelete] = useState<AccountRecipe | null>(null)
   const [recipeBusy, setRecipeBusy] = useState(false)
+  const [iconBusy, setIconBusy] = useState(false)
   const revealTimer = useRef<number | null>(null)
   const sitePickerRef = useRef<HTMLDivElement>(null)
   const groupPickerRef = useRef<HTMLDivElement>(null)
+  const iconFileRef = useRef<HTMLInputElement>(null)
 
   const selectedSite = useMemo(
     () => sites.find((site) => site.id === selectedSiteId),
@@ -176,6 +184,7 @@ export function AccountDrawer({
       setSelectedSiteId(site.id)
       setSiteName(site.name)
       setStartUrl(site.startUrl)
+      setSiteIcon(site.icon ?? '')
       setAutoSubmit(site.autoSubmit)
       setSiteGroup(site.group ?? '')
     }
@@ -185,6 +194,7 @@ export function AccountDrawer({
     setSiteMode('new')
     setSiteName('')
     setStartUrl('https://')
+    setSiteIcon('')
     setAutoSubmit(true)
     setSiteGroup('')
   }
@@ -196,8 +206,63 @@ export function AccountDrawer({
     if (site) {
       setSiteName(site.name)
       setStartUrl(site.startUrl)
+      setSiteIcon(site.icon ?? '')
       setAutoSubmit(site.autoSubmit)
       setSiteGroup(site.group ?? '')
+    }
+  }
+
+  async function fetchWebsiteIcon(): Promise<void> {
+    if (!/^https?:\/\//i.test(startUrl.trim())) {
+      notify(
+        'error',
+        tr(
+          '请先填写有效的 http 或 https 登录地址',
+          'Enter a valid HTTP or HTTPS sign-in URL first.',
+          '請先填寫有效的 HTTP 或 HTTPS 登入網址'
+        )
+      )
+      return
+    }
+    setIconBusy(true)
+    try {
+      const icon = await window.autologin.sites.fetchIcon(startUrl.trim())
+      setSiteIcon(icon)
+      notify(
+        'success',
+        tr('已获取站点图标', 'Site icon downloaded.', '已取得站點圖示')
+      )
+    } catch (reason) {
+      notify(
+        'error',
+        reason instanceof Error
+          ? reason.message
+          : tr('获取站点图标失败', 'Could not download the site icon.', '取得站點圖示失敗')
+      )
+    } finally {
+      setIconBusy(false)
+    }
+  }
+
+  async function selectSiteIcon(event: React.ChangeEvent<HTMLInputElement>): Promise<void> {
+    const file = event.target.files?.[0]
+    event.target.value = ''
+    if (!file) return
+    if (!file.type.startsWith('image/')) {
+      notify('error', tr('请选择图片文件', 'Choose an image file.', '請選擇圖片檔案'))
+      return
+    }
+    if (file.size > 512 * 1024) {
+      notify(
+        'error',
+        tr('图标文件不能超过 512 KB', 'The icon must be 512 KB or smaller.', '圖示檔案不能超過 512 KB')
+      )
+      return
+    }
+    try {
+      setSiteIcon(await readFileAsDataUrl(file))
+    } catch {
+      notify('error', tr('读取图标失败', 'Could not read the icon.', '讀取圖示失敗'))
     }
   }
 
@@ -253,7 +318,8 @@ export function AccountDrawer({
           name: siteName.trim(),
           startUrl: startUrl.trim(),
           autoSubmit,
-          group: siteGroup.trim() || undefined
+          group: siteGroup.trim() || undefined,
+          ...(siteIcon ? { icon: siteIcon } : {})
         })
       } else {
         if (!selectedSite) throw new Error(tr('请选择站点', 'Select a site.', '請選擇站點'))
@@ -262,6 +328,7 @@ export function AccountDrawer({
           selectedSite.name !== siteName.trim() ||
           selectedSite.startUrl !== startUrl.trim() ||
           selectedSite.autoSubmit !== autoSubmit ||
+          (selectedSite.icon ?? '') !== siteIcon ||
           groupChanged
         site =
           !siteChanged
@@ -272,7 +339,8 @@ export function AccountDrawer({
                 startUrl: startUrl.trim(),
                 allowedOrigins: selectedSite.allowedOrigins,
                 autoSubmit,
-                group: siteGroup.trim() || undefined
+                group: siteGroup.trim() || undefined,
+                ...(siteIcon ? { icon: siteIcon } : {})
               })
       }
 
@@ -492,25 +560,19 @@ export function AccountDrawer({
 
   return (
     <>
-      <div className="drawer-layer account-drawer-layer">
-        <button
-          className="drawer-backdrop"
-          aria-label={tr('关闭账号面板', 'Close account panel', '關閉帳號面板')}
-          onClick={onClose}
-        />
-        <aside
-          className="details-drawer account-drawer"
-          role="dialog"
-          aria-modal="true"
-          aria-labelledby="account-drawer-title"
-        >
+      <section
+        className="account-editor-page account-drawer"
+        aria-labelledby="account-drawer-title"
+      >
           <header className="details-header account-drawer__header">
             <div className="details-identity">
-              <span className={`monogram ${account ? toneClass(account.siteId) : ''}`}>
-                {(siteName || selectedSite?.name || account?.site.name || '?')
-                  .slice(0, 1)
-                  .toUpperCase()}
-              </span>
+              <SiteMark
+                site={{
+                  id: (account?.siteId ?? selectedSiteId) || 'new-site',
+                  name: siteName || selectedSite?.name || account?.site.name || '?',
+                  icon: siteIcon || undefined
+                }}
+              />
               <div>
                 <span className="eyebrow">
                   {mode === 'edit' ? 'SITE DETAILS' : 'NEW CREDENTIAL'}
@@ -541,22 +603,30 @@ export function AccountDrawer({
           <form className="account-form account-drawer__form" onSubmit={submit}>
             <div className="account-drawer__body">
             {!account && (
-              <div className="segmented-control" aria-label={tr('站点来源', 'Site source', '站點來源')}>
-                <button
-                  type="button"
-                  className={siteMode === 'existing' ? 'is-active' : ''}
-                  onClick={chooseExisting}
-                  disabled={sites.length === 0}
+              <div className="account-editor-choice-row">
+                <span className="account-editor-row-label">
+                  {tr('站点来源', 'Site source', '站點來源')}
+                </span>
+                <div
+                  className="segmented-control"
+                  aria-label={tr('站点来源', 'Site source', '站點來源')}
                 >
-                  {tr('已有站点', 'Existing site', '現有站點')}
-                </button>
-                <button
-                  type="button"
-                  className={siteMode === 'new' ? 'is-active' : ''}
-                  onClick={chooseNew}
-                >
-                  {tr('新站点', 'New site', '新站點')}
-                </button>
+                  <button
+                    type="button"
+                    className={siteMode === 'existing' ? 'is-active' : ''}
+                    onClick={chooseExisting}
+                    disabled={sites.length === 0}
+                  >
+                    {tr('已有站点', 'Existing site', '現有站點')}
+                  </button>
+                  <button
+                    type="button"
+                    className={siteMode === 'new' ? 'is-active' : ''}
+                    onClick={chooseNew}
+                  >
+                    {tr('新站点', 'New site', '新站點')}
+                  </button>
+                </div>
               </div>
             )}
 
@@ -605,9 +675,7 @@ export function AccountDrawer({
                             className={site.id === selectedSiteId ? 'is-selected' : ''}
                             onClick={() => handleSiteChange(site.id)}
                           >
-                            <span className={`monogram ${toneClass(site.id)}`}>
-                              {site.name.slice(0, 1).toUpperCase()}
-                            </span>
+                            <SiteMark site={site} />
                             <span>
                               <strong>{site.name}</strong>
                               <small>{safeHostname(site.startUrl)}</small>
@@ -646,6 +714,86 @@ export function AccountDrawer({
                   />
                 </span>
               </label>
+
+              <div className="field site-icon-field">
+                <span className="field__label">
+                  {tr('账号图标', 'Account icon', '帳號圖示')}
+                </span>
+                <div className="site-icon-editor">
+                  <SiteMark
+                    site={{
+                      id: (account?.siteId ?? selectedSiteId) || 'new-site',
+                      name: siteName || tr('新站点', 'New site', '新站點'),
+                      icon: siteIcon || undefined
+                    }}
+                    className="site-icon-editor__preview"
+                  />
+                  <div className="site-icon-editor__body">
+                    <span>
+                      {tr(
+                        '上传本地图片，或从当前登录地址获取网站图标。',
+                        'Upload a local image or download the icon from the sign-in URL.',
+                        '上傳本機圖片，或從目前登入網址取得網站圖示。'
+                      )}
+                    </span>
+                    <small>
+                      {tr(
+                        '支持 PNG、JPG、WebP、GIF、SVG、ICO，最大 512 KB',
+                        'PNG, JPG, WebP, GIF, SVG or ICO up to 512 KB',
+                        '支援 PNG、JPG、WebP、GIF、SVG、ICO，最大 512 KB'
+                      )}
+                    </small>
+                    <div className="site-icon-editor__actions">
+                      <input
+                        ref={iconFileRef}
+                        type="file"
+                        accept="image/png,image/jpeg,image/webp,image/gif,image/svg+xml,image/x-icon,.ico"
+                        className="site-icon-editor__file-input"
+                        hidden
+                        aria-label={tr('上传账号图标文件', 'Upload account icon file', '上傳帳號圖示檔案')}
+                        onChange={(event) => void selectSiteIcon(event)}
+                        disabled={iconBusy}
+                      />
+                      <button
+                        type="button"
+                        className="button button--ghost button--small"
+                        onClick={() => iconFileRef.current?.click()}
+                        disabled={iconBusy}
+                      >
+                        <ImagePlus size={14} />
+                        {tr('上传图标', 'Upload icon', '上傳圖示')}
+                      </button>
+                      <button
+                        type="button"
+                        className="button button--ghost button--small"
+                        onClick={() => void fetchWebsiteIcon()}
+                        disabled={iconBusy}
+                        aria-busy={iconBusy}
+                      >
+                        {iconBusy ? (
+                          <LoaderCircle size={14} className="spin" />
+                        ) : (
+                          <Download size={14} />
+                        )}
+                        {iconBusy
+                          ? tr('正在获取...', 'Downloading...', '正在取得...')
+                          : tr('获取网站图标', 'Get site icon', '取得網站圖示')}
+                      </button>
+                      {siteIcon && (
+                        <button
+                          type="button"
+                          className="button button--danger-ghost button--small"
+                          onClick={() => setSiteIcon('')}
+                          disabled={iconBusy}
+                        >
+                          <Trash2 size={14} />
+                          {tr('移除图标', 'Remove icon', '移除圖示')}
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              </div>
 
               <div className="field">
                 <span className="field__label">{tr('站点分组（可选）', 'Site group (optional)', '站點分組（選填）')}</span>
@@ -775,17 +923,22 @@ export function AccountDrawer({
               </label>
 
               <div className="form-options account-form__span-2">
-                <label className="switch-row">
-                  <span>
-                    <strong>{tr('自动提交', 'Auto submit', '自動提交')}</strong>
-                    <small>{tr('检测到验证码时会自动暂停', 'Pauses when a challenge is detected', '偵測到驗證碼時會自動暫停')}</small>
-                  </span>
+                <label className="account-editor-check-row">
                   <input
                     type="checkbox"
                     checked={autoSubmit}
                     onChange={(event) => setAutoSubmit(event.target.checked)}
                   />
-                  <span className="switch" aria-hidden="true" />
+                  <span>
+                    <strong>{tr('自动提交', 'Auto submit', '自動提交')}</strong>
+                    <small>
+                      {tr(
+                        '检测到验证码时会自动暂停',
+                        'Pauses when a challenge is detected',
+                        '偵測到驗證碼時會自動暫停'
+                      )}
+                    </small>
+                  </span>
                 </label>
               </div>
             </div>
@@ -823,9 +976,12 @@ export function AccountDrawer({
             {(
               <>
                 <section
-                  className="account-login-strategy"
+                  className="account-login-strategy account-editor-choice-section"
                   aria-label={tr('登录方式', 'Login method', '登入方式')}
                 >
+                  <span className="account-editor-row-label">
+                    {tr('登录方式', 'Login method', '登入方式')}
+                  </span>
                   <div className="proxy-mode-options account-strategy-options">
                     <label
                       className={`proxy-mode-option${loginStrategy === 'auto' ? ' is-active' : ''}`}
@@ -971,56 +1127,58 @@ export function AccountDrawer({
                         </small>
                       </div>
                     </header>
-                    {(
-                      [
-                        ['username', tr('用户名', 'Username', '使用者名稱')],
-                        ['password', tr('密码', 'Password', '密碼')],
-                        ['submit', tr('提交按钮', 'Submit button', '提交按鈕')]
-                      ] as const
-                    ).map(([field, label]) => {
-                      const result = selectorTests[field]
-                      return (
-                        <label className="field selector-config-row" key={field}>
-                          <span className="field__label">{label}</span>
-                          <span className="selector-config-row__control">
-                            <span className="input-shell">
-                              <SlidersHorizontal size={15} />
-                              <input
-                                value={manualSelectors[field] ?? ''}
-                                onChange={(event) =>
-                                  updateManualSelector(field, event.target.value)
-                                }
-                                placeholder={selectorPlaceholder(field)}
-                                spellCheck={false}
-                                autoComplete="off"
-                              />
+                    <div className="manual-selector-panel__fields">
+                      {(
+                        [
+                          ['username', tr('用户名', 'Username', '使用者名稱')],
+                          ['password', tr('密码', 'Password', '密碼')],
+                          ['submit', tr('提交按钮', 'Submit button', '提交按鈕')]
+                        ] as const
+                      ).map(([field, label]) => {
+                        const result = selectorTests[field]
+                        return (
+                          <label className="field selector-config-row" key={field}>
+                            <span className="field__label">{label}</span>
+                            <span className="selector-config-row__control">
+                              <span className="input-shell">
+                                <SlidersHorizontal size={15} />
+                                <input
+                                  value={manualSelectors[field] ?? ''}
+                                  onChange={(event) =>
+                                    updateManualSelector(field, event.target.value)
+                                  }
+                                  placeholder={selectorPlaceholder(field)}
+                                  spellCheck={false}
+                                  autoComplete="off"
+                                />
+                              </span>
+                              <button
+                                type="button"
+                                className="button button--ghost button--small"
+                                onClick={() => void testManualSelector(field)}
+                                disabled={selectorTesting !== null}
+                              >
+                                {selectorTesting === field ? (
+                                  <LoaderCircle size={13} className="spin" />
+                                ) : (
+                                  <RefreshCw size={13} />
+                                )}
+                                {tr('测试', 'Test', '測試')}
+                              </button>
                             </span>
-                            <button
-                              type="button"
-                              className="button button--ghost button--small"
-                              onClick={() => void testManualSelector(field)}
-                              disabled={selectorTesting !== null}
-                            >
-                              {selectorTesting === field ? (
-                                <LoaderCircle size={13} className="spin" />
-                              ) : (
-                                <RefreshCw size={13} />
-                              )}
-                              {tr('测试', 'Test', '測試')}
-                            </button>
-                          </span>
-                          {result && (
-                            <small
-                              className={`selector-config-row__result${
-                                result.found ? ' is-success' : ' is-error'
-                              }`}
-                            >
-                              {result.message}
-                            </small>
-                          )}
-                        </label>
-                      )
-                    })}
+                            {result && (
+                              <small
+                                className={`selector-config-row__result${
+                                  result.found ? ' is-success' : ' is-error'
+                                }`}
+                              >
+                                {result.message}
+                              </small>
+                            )}
+                          </label>
+                        )
+                      })}
+                    </div>
                   </section>
                 )}
               </>
@@ -1061,8 +1219,7 @@ export function AccountDrawer({
               </div>
             </div>
           </form>
-        </aside>
-      </div>
+      </section>
 
       {confirmDelete && (
         <ConfirmDialog
@@ -1187,8 +1344,14 @@ function recipeStepName(
   }
 }
 
-function toneClass(id: string): string {
-  let hash = 0
-  for (const char of id) hash = (hash * 31 + char.charCodeAt(0)) >>> 0
-  return `monogram--tone-${hash % 4}`
+function readFileAsDataUrl(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader()
+    reader.onload = () =>
+      typeof reader.result === 'string'
+        ? resolve(reader.result)
+        : reject(new Error('无法读取图片'))
+    reader.onerror = () => reject(reader.error ?? new Error('无法读取图片'))
+    reader.readAsDataURL(file)
+  })
 }

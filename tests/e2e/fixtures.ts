@@ -184,6 +184,17 @@ async function handleRequest(
     return
   }
 
+  if (url.pathname === '/site-icon.svg') {
+    response.writeHead(200, {
+      'Content-Type': 'image/svg+xml',
+      'Cache-Control': 'no-store'
+    })
+    response.end(
+      '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64"><rect width="64" height="64" rx="14" fill="#5c6bff"/><path d="M18 44 32 16l14 28H18Z" fill="#fff"/></svg>'
+    )
+    return
+  }
+
   response.writeHead(404, { 'Content-Type': 'text/plain; charset=utf-8' })
   response.end('Not found')
 }
@@ -191,7 +202,11 @@ async function handleRequest(
 function loginPage(message = ''): string {
   return `<!doctype html>
   <html lang="zh-CN">
-    <head><meta charset="utf-8"><title>Fixture Login</title></head>
+    <head>
+      <meta charset="utf-8">
+      <title>Fixture Login</title>
+      <link rel="icon" href="/site-icon.svg" type="image/svg+xml">
+    </head>
     <body>
       <main>
         <h1>登录测试站</h1>

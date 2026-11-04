@@ -36,7 +36,8 @@ const api: AutologinApi = {
   sites: {
     list: () => invoke('sites:list'),
     save: (input: SiteInput) => invoke('sites:save', input),
-    delete: (siteId) => invoke('sites:delete', siteId)
+    delete: (siteId) => invoke('sites:delete', siteId),
+    fetchIcon: (url) => invoke('sites:fetch-icon', { url })
   },
   groups: {
     list: () => invoke('groups:list'),
@@ -62,6 +63,7 @@ const api: AutologinApi = {
     reveal: (accountId) => invoke('accounts:reveal', accountId),
     copyUsername: (accountId) => invoke('accounts:copy-username', accountId),
     copy: (accountId) => invoke('accounts:copy', accountId),
+    copyUrl: (accountId) => invoke('accounts:copy-url', accountId),
     setActiveRecipe: (accountId, recipeId) =>
       invoke('accounts:set-active-recipe', accountId, recipeId),
     deleteRecipe: (accountId, recipeId) =>

@@ -14,6 +14,7 @@ import {
   appSettingsPatchSchema,
   changePasswordSchema,
   favoriteGroupInputSchema,
+  groupCreateInputSchema,
   groupDeleteInputSchema,
   groupRenameInputSchema,
   kdbxSelectionImportSchema,
@@ -26,6 +27,7 @@ import {
   selectorTestInputSchema,
   siteInputSchema
 } from '@shared/schemas'
+import { GROUP_MAX_DEPTH, GROUP_PATH_SEPARATOR } from '@shared/types'
 import type {
   AccountBatchStrategyInput,
   AccountDeleteResult,
@@ -36,7 +38,10 @@ import type {
   BackupRecord,
   DataImportResult,
   DataLocationInfo,
+  DeletedAccountWithSite,
   FileOperationResult,
+  GroupCreateInput,
+  GroupDefinition,
   GroupRenameInput,
   KdbxSelection,
   LoginLogEntry,
@@ -54,6 +59,7 @@ import type {
   SiteInput,
   StoredAccount,
   UpdateCheckResult,
+  VaultData,
   VaultStatus
 } from '@shared/types'
 import { BackupManager } from './backups'
@@ -69,7 +75,8 @@ import {
   migrateDataDirectory,
   pathIsInside,
   readDataDirectory,
-  recoverDataDirectoryFromInstall
+  recoverDataDirectoryFromInstall,
+  writeDataDirectory
 } from './data-location'
 import {
   deleteLoginLogs,
@@ -83,6 +90,7 @@ import {
   discoverDefaultBrowser
 } from './browser-discovery'
 import { ExternalBrowserHost } from './external-browser'
+import { isTrashItemExpired } from './trash-retention'
 import {
   discoverManagedBrowserProfileIds,
   discoverManagedPartitionIds,
@@ -112,6 +120,7 @@ let backupManager: BackupManager
 let sessionIndex: SessionIndex
 let clipboardClearTimer: NodeJS.Timeout | null = null
 let configDirectory = ''
+let dataLocationPointerDirectory = ''
 let dataDirectory = ''
 let updateState: AppUpdateState = {
   phase: 'idle',
@@ -139,12 +148,22 @@ app.whenReady().then(() => {
     callback(false)
   })
   configDirectory = app.getPath('userData')
-  dataDirectory = readDataDirectory(configDirectory)
+  dataLocationPointerDirectory =
+    allowDevelopmentOverrides && process.env.AUTOLOGIN_DATA_LOCATION_POINTER_DIR
+      ? resolve(process.env.AUTOLOGIN_DATA_LOCATION_POINTER_DIR)
+      : join(app.getPath('appData'), 'AutoLogin')
+  dataDirectory = readDataDirectory(
+    dataLocationPointerDirectory,
+    [configDirectory],
+    configDirectory
+  )
   dataDirectory = recoverDataDirectoryFromInstall(
     configDirectory,
     dataDirectory,
-    dirname(app.getPath('exe'))
+    dirname(app.getPath('exe')),
+    dataLocationPointerDirectory
   )
+  writeDataDirectory(configDirectory, dataDirectory)
   initializeDataStores()
   appendAppLog(dataDirectory, {
     level: 'info',
@@ -383,6 +402,18 @@ function registerIpc(): void {
     vault.save()
   })
 
+  ipcMain.handle('groups:list', (event): GroupDefinition[] => {
+    assertTrustedSender(event)
+    return listGroups()
+  })
+  ipcMain.handle('groups:create', (event, payload: unknown): GroupDefinition => {
+    assertTrustedSender(event)
+    const parsed = groupCreateInputSchema.safeParse(payload)
+    if (!parsed.success) {
+      throw new Error(firstIssue(parsed.error))
+    }
+    return createGroup(parsed.data)
+  })
   ipcMain.handle('groups:list-favorites', (event) => {
     assertTrustedSender(event)
     return [...vault.requireData().favoriteGroups]
@@ -481,8 +512,7 @@ function registerIpc(): void {
     await batchManager?.clearSession(id)
     await loginManager?.clearSession(id)
     clearManagedSessionDirectories(dataDirectory, id)
-    data.accounts = data.accounts.filter((entry) => entry.id !== id)
-    vault.save()
+    moveAccountsToTrash([id])
     sessionIndex.remove(id)
   })
   ipcMain.handle(
@@ -508,12 +538,19 @@ function registerIpc(): void {
         clearManagedSessionDirectories(dataDirectory, id)
       }
       const deletedSet = new Set(existingIds)
-      data.accounts = data.accounts.filter((account) => !deletedSet.has(account.id))
-      vault.save()
+      moveAccountsToTrash(existingIds)
       for (const id of existingIds) sessionIndex.remove(id)
       return { deleted: existingIds.length }
     }
   )
+  ipcMain.handle('accounts:list-deleted', (event): DeletedAccountWithSite[] => {
+    assertTrustedSender(event)
+    return listDeletedAccounts()
+  })
+  ipcMain.handle('accounts:restore', (event, accountId: unknown): AccountWithSite => {
+    assertTrustedSender(event)
+    return restoreDeletedAccount(requireId(accountId))
+  })
   ipcMain.handle('accounts:reveal', (event, accountId: unknown): PasswordReveal => {
     assertTrustedSender(event)
     const id = requireId(accountId)
@@ -639,6 +676,9 @@ function registerIpc(): void {
       throw new Error(firstIssue(parsed.error))
     }
     const settings = vault.updateSettings(parsed.data)
+    if (parsed.data.trashRetentionDays) {
+      purgeExpiredDeletedAccounts()
+    }
     if (parsed.data.proxy) {
       appendAppLog(dataDirectory, {
         level: 'info',
@@ -974,53 +1014,280 @@ function registerIpc(): void {
 
 function renameGroup(input: GroupRenameInput): void {
   const data = vault.requireData()
-  const fromName = input.fromName.trim()
+  ensureGroupDefinitions(data)
+  const fromPath = input.fromName.trim()
   const toName = input.toName.trim()
-  if (fromName === toName) return
-
-  const affected = data.sites.filter((site) => site.group?.trim() === fromName)
-  if (affected.length === 0) {
-    throw new Error('分组不存在')
-  }
-  if (data.sites.some((site) => site.group?.trim() === toName)) {
-    throw new Error('目标分组已存在')
+  const exists = groupPathExists(data, fromPath)
+  if (!exists) throw new Error('分组不存在')
+  const parentPath = groupParentPath(fromPath)
+  const toPath = parentPath ? `${parentPath}${GROUP_PATH_SEPARATOR}${toName}` : toName
+  if (fromPath === toPath) return
+  if (
+    allGroupPaths(data).some(
+      (path) => path !== fromPath && path === toPath
+    )
+  ) {
+    throw new Error('同级分组名称已存在')
   }
 
   const now = new Date().toISOString()
-  for (const site of affected) {
-    site.group = toName
-    site.updatedAt = now
+  const renamePath = (path: string): string => {
+    if (path === fromPath) return toPath
+    if (path.startsWith(`${fromPath}${GROUP_PATH_SEPARATOR}`)) {
+      return `${toPath}${path.slice(fromPath.length)}`
+    }
+    return path
   }
-  data.favoriteGroups = [
-    ...new Set(
-      data.favoriteGroups.map((groupName) => (groupName === fromName ? toName : groupName))
-    )
-  ]
-  data.settings.groupOrder = [
-    ...new Set(
-      data.settings.groupOrder.map((groupName) =>
-        groupName === fromName ? toName : groupName
-      )
-    )
-  ]
+
+  data.groupDefinitions = data.groupDefinitions.map((group) => ({
+    ...group,
+    path: renamePath(group.path),
+    name: group.path === fromPath ? toName : group.name,
+    updatedAt: now
+  }))
+  for (const site of data.sites) {
+    if (!site.group) continue
+    const next = renamePath(site.group)
+    if (next !== site.group) {
+      site.group = next
+      site.updatedAt = now
+    }
+  }
+  for (const record of data.deletedAccounts) {
+    if (record.site.group) record.site.group = renamePath(record.site.group)
+  }
+  data.favoriteGroups = [...new Set(data.favoriteGroups.map(renamePath))]
+  data.settings.groupOrder = [...new Set(data.settings.groupOrder.map(renamePath))]
   vault.save()
 }
 
 function deleteGroup(groupName: string): number {
   const data = vault.requireData()
-  const name = groupName.trim()
-  const affected = data.sites.filter((site) => site.group?.trim() === name)
-  if (affected.length === 0) return 0
+  ensureGroupDefinitions(data)
+  const root = groupName.trim()
+  if (!groupPathExists(data, root)) return 0
+  const removedPaths = new Set(
+    allGroupPaths(data).filter(
+      (path) => path === root || path.startsWith(`${root}${GROUP_PATH_SEPARATOR}`)
+    )
+  )
+  const now = new Date().toISOString()
+  let affected = 0
+  for (const site of data.sites) {
+    if (site.group && removedPaths.has(site.group)) {
+      site.group = undefined
+      site.updatedAt = now
+      affected += 1
+    }
+  }
+  for (const record of data.deletedAccounts) {
+    if (record.site.group && removedPaths.has(record.site.group)) {
+      record.site.group = undefined
+    }
+  }
+  data.groupDefinitions = data.groupDefinitions.filter(
+    (entry) => !removedPaths.has(entry.path)
+  )
+  data.favoriteGroups = data.favoriteGroups.filter((entry) => !removedPaths.has(entry))
+  data.settings.groupOrder = data.settings.groupOrder.filter(
+    (entry) => !removedPaths.has(entry)
+  )
+  vault.save()
+  return affected
+}
+
+function listGroups(): GroupDefinition[] {
+  const data = vault.requireData()
+  if (ensureGroupDefinitions(data)) vault.save()
+  return structuredClone(data.groupDefinitions)
+}
+
+function createGroup(input: GroupCreateInput): GroupDefinition {
+  const data = vault.requireData()
+  ensureGroupDefinitions(data)
+  const name = input.name.trim()
+  const parentPath = input.parentPath?.trim() || undefined
+  if (parentPath && !groupPathExists(data, parentPath)) {
+    throw new Error('父级分组不存在')
+  }
+  const depth = parentPath ? groupDepth(parentPath) + 1 : 1
+  if (depth > GROUP_MAX_DEPTH) {
+    throw new Error(`分组最多支持 ${GROUP_MAX_DEPTH} 级`)
+  }
+  const path = parentPath ? `${parentPath}${GROUP_PATH_SEPARATOR}${name}` : name
+  if (groupPathExists(data, path)) {
+    throw new Error('同级分组名称已存在')
+  }
 
   const now = new Date().toISOString()
-  for (const site of affected) {
-    site.group = undefined
-    site.updatedAt = now
+  const group: GroupDefinition = {
+    path,
+    name,
+    createdAt: now,
+    updatedAt: now
   }
-  data.favoriteGroups = data.favoriteGroups.filter((entry) => entry !== name)
-  data.settings.groupOrder = data.settings.groupOrder.filter((entry) => entry !== name)
+  data.groupDefinitions.push(group)
+  if (!data.settings.groupOrder.includes(path)) {
+    data.settings.groupOrder.push(path)
+  }
   vault.save()
-  return affected.length
+  return structuredClone(group)
+}
+
+function ensureGroupDefinitions(data: VaultData): boolean {
+  const existing = new Set(data.groupDefinitions.map((group) => group.path))
+  const paths = new Set<string>()
+  for (const site of data.sites) {
+    if (site.group?.trim()) paths.add(site.group.trim())
+  }
+  for (const record of data.deletedAccounts) {
+    if (record.site.group?.trim()) paths.add(record.site.group.trim())
+  }
+  for (const path of data.favoriteGroups) paths.add(path.trim())
+  for (const path of data.settings.groupOrder) paths.add(path.trim())
+
+  let changed = false
+  for (const path of paths) {
+    const segments = path.split(GROUP_PATH_SEPARATOR).map((segment) => segment.trim())
+    for (let index = 1; index <= segments.length; index += 1) {
+      const prefix = segments.slice(0, index).join(GROUP_PATH_SEPARATOR)
+      if (!prefix || existing.has(prefix)) continue
+      const now = new Date().toISOString()
+      data.groupDefinitions.push({
+        path: prefix,
+        name: segments[index - 1] ?? prefix,
+        createdAt: now,
+        updatedAt: now
+      })
+      existing.add(prefix)
+      changed = true
+    }
+  }
+  return changed
+}
+
+function allGroupPaths(data: VaultData): string[] {
+  const paths = new Set(data.groupDefinitions.map((group) => group.path))
+  for (const site of data.sites) {
+    if (site.group?.trim()) paths.add(site.group.trim())
+  }
+  for (const record of data.deletedAccounts) {
+    if (record.site.group?.trim()) paths.add(record.site.group.trim())
+  }
+  for (const path of data.favoriteGroups) paths.add(path)
+  for (const path of data.settings.groupOrder) paths.add(path)
+  return [...paths]
+}
+
+function groupPathExists(data: VaultData, path: string): boolean {
+  return allGroupPaths(data).includes(path)
+}
+
+function groupParentPath(path: string): string | undefined {
+  const segments = path.split(GROUP_PATH_SEPARATOR)
+  if (segments.length <= 1) return undefined
+  return segments.slice(0, -1).join(GROUP_PATH_SEPARATOR)
+}
+
+function groupDepth(path: string): number {
+  return path.split(GROUP_PATH_SEPARATOR).filter(Boolean).length
+}
+
+function listDeletedAccounts(): DeletedAccountWithSite[] {
+  const data = vault.requireData()
+  purgeExpiredDeletedAccounts()
+  return [...data.deletedAccounts]
+    .sort(
+      (left, right) =>
+        new Date(right.deletedAt).getTime() - new Date(left.deletedAt).getTime()
+    )
+    .map((record) => ({
+      ...toPublicAccount(record.account, record.site),
+      deletedAt: record.deletedAt
+    }))
+}
+
+function purgeExpiredDeletedAccounts(): number {
+  const data = vault.requireData()
+  const before = data.deletedAccounts.length
+  data.deletedAccounts = data.deletedAccounts.filter(
+    (record) =>
+      !isTrashItemExpired(record.deletedAt, data.settings.trashRetentionDays)
+  )
+  const removed = before - data.deletedAccounts.length
+  if (removed > 0) vault.save()
+  return removed
+}
+
+function moveAccountsToTrash(accountIds: string[]): void {
+  const data = vault.requireData()
+  const requested = new Set(accountIds)
+  const now = new Date().toISOString()
+  const removedSiteIds = new Set<string>()
+
+  for (const account of data.accounts) {
+    if (!requested.has(account.id)) continue
+    const site = data.sites.find((entry) => entry.id === account.siteId)
+    if (!site) continue
+    data.deletedAccounts = data.deletedAccounts.filter(
+      (record) => record.account.id !== account.id
+    )
+    data.deletedAccounts.push({
+      account: structuredClone(account),
+      site: structuredClone(site),
+      deletedAt: now
+    })
+    removedSiteIds.add(site.id)
+  }
+
+  data.accounts = data.accounts.filter((account) => !requested.has(account.id))
+  const activeSiteIds = new Set(data.accounts.map((account) => account.siteId))
+  data.sites = data.sites.filter(
+    (site) => !removedSiteIds.has(site.id) || activeSiteIds.has(site.id)
+  )
+  vault.save()
+}
+
+function restoreDeletedAccount(accountId: string): AccountWithSite {
+  const data = vault.requireData()
+  const record = data.deletedAccounts.find((entry) => entry.account.id === accountId)
+  if (!record) throw new Error('回收站中不存在该账号')
+  if (data.accounts.some((account) => account.id === record.account.id)) {
+    throw new Error('同名账号已被恢复')
+  }
+
+  const takenNames = new Set(data.sites.map((site) => normalizeSiteName(site.name)))
+  let site = data.sites.find((entry) => entry.id === record.site.id)
+  if (!site) {
+    const sameName = data.sites.find(
+      (entry) => normalizeSiteName(entry.name) === normalizeSiteName(record.site.name)
+    )
+    if (sameName && sameName.startUrl === record.site.startUrl) {
+      site = sameName
+    } else {
+      site = {
+        ...structuredClone(record.site),
+        name:
+          sameName || takenNames.has(normalizeSiteName(record.site.name))
+            ? uniqueCopyName(record.site.name, takenNames)
+            : record.site.name
+      }
+      data.sites.push(site)
+    }
+  }
+
+  const account: StoredAccount = {
+    ...structuredClone(record.account),
+    siteId: site.id
+  }
+  data.accounts.push(account)
+  data.deletedAccounts = data.deletedAccounts.filter(
+    (entry) => entry.account.id !== accountId
+  )
+  ensureGroupDefinitions(data)
+  vault.save()
+  sessionIndex.add(account.id)
+  return toPublicAccount(account, site)
 }
 
 function saveSite(input: SiteInput): Site {
@@ -1337,6 +1604,7 @@ function duplicateAccounts(accountIds: string[]): AccountWithSite[] {
       id: randomUUID(),
       siteId: site.id,
       label: copyName,
+      favorite: false,
       recipes,
       activeRecipeId: original.account.activeRecipeId
         ? recipeIds.get(original.account.activeRecipeId)
@@ -1539,7 +1807,8 @@ async function chooseDataLocation(): Promise<DataLocationInfo | null> {
   await closeLoginManagers()
   vault.lock()
   try {
-    migrateDataDirectory(configDirectory, dataDirectory, target)
+    migrateDataDirectory(dataLocationPointerDirectory, dataDirectory, target)
+    writeDataDirectory(configDirectory, target)
     dataDirectory = target
     initializeDataStores()
     ensureLoginManagers()
@@ -1548,7 +1817,11 @@ async function chooseDataLocation(): Promise<DataLocationInfo | null> {
   } catch (error) {
     // A failed migration may still have committed the location pointer. Reload
     // from the pointer so the running app never keeps using a removed source.
-    dataDirectory = readDataDirectory(configDirectory)
+    dataDirectory = readDataDirectory(
+      dataLocationPointerDirectory,
+      [configDirectory],
+      configDirectory
+    )
     initializeDataStores()
     ensureLoginManagers()
     sendToRenderer('vault:locked')

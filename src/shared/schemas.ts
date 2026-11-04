@@ -4,6 +4,8 @@ import {
   AUTO_LOCK_OPTIONS,
   COLOR_MODES,
   DEFAULT_PROXY_TEST_URL,
+  GROUP_NAME_MAX_LENGTH,
+  DEFAULT_TRASH_RETENTION_DAYS,
   INTERFACE_SCALE_MAX,
   INTERFACE_SCALE_MIN,
   LOGIN_STRATEGIES,
@@ -40,7 +42,14 @@ const originSchema = z
 
 const idSchema = z.string().regex(/^[a-zA-Z0-9_-]{1,128}$/, '标识格式无效')
 
-const groupNameSchema = z.string().trim().min(1).max(40)
+const groupNameSchema = z
+  .string()
+  .trim()
+  .min(1, '分组名称不能为空')
+  .max(GROUP_NAME_MAX_LENGTH, `分组名称不能超过 ${GROUP_NAME_MAX_LENGTH} 个字符`)
+  .regex(/^[\p{L}\p{N} _-]+$/u, '分组名称不能包含特殊字符')
+
+const groupPathSchema = z.string().trim().min(1).max(80)
 
 export const selectorSpecSchema = z.object({
   candidates: z.array(z.string().min(1)).min(1).max(8),
@@ -94,7 +103,7 @@ export const siteSchema = z.object({
   startUrl: httpUrl,
   allowedOrigins: z.array(originSchema).min(1),
   autoSubmit: z.boolean(),
-  group: z.string().trim().max(40).optional(),
+  group: groupPathSchema.optional(),
   recipe: loginRecipeSchema.optional(),
   createdAt: z.string(),
   updatedAt: z.string()
@@ -165,7 +174,7 @@ const interfaceScaleSchema = z
   .multipleOf(5)
 
 const groupOrderSchema = z
-  .array(groupNameSchema)
+  .array(groupPathSchema)
   .max(500)
   .refine((groups) => new Set(groups).size === groups.length, '分组顺序不能包含重复项')
 
@@ -216,6 +225,9 @@ const defaultThemeColors = {
 
 export const appSettingsSchema = z.object({
   autoLockMinutes: autoLockMinutesSchema.default(10),
+  trashRetentionDays: z
+    .union([z.literal(3), z.literal(7), z.literal(15), z.literal(30)])
+    .default(DEFAULT_TRASH_RETENTION_DAYS),
   colorMode: colorModeSchema.default('light'),
   language: languageSchema.default('zh-CN'),
   themePreset: themePresetSchema.default('magpie'),
@@ -228,6 +240,9 @@ export const appSettingsSchema = z.object({
 export const appSettingsPatchSchema = z
   .object({
     autoLockMinutes: autoLockMinutesSchema.optional(),
+    trashRetentionDays: z
+      .union([z.literal(3), z.literal(7), z.literal(15), z.literal(30)])
+      .optional(),
     colorMode: colorModeSchema.optional(),
     language: languageSchema.optional(),
     themePreset: themePresetSchema.optional(),
@@ -245,7 +260,28 @@ export const vaultDataSchema = z.object({
   schemaVersion: z.literal(1),
   sites: z.array(siteSchema),
   accounts: z.array(storedAccountSchema),
-  favoriteGroups: z.array(groupNameSchema).default([]),
+  groupDefinitions: z
+    .array(
+      z.object({
+        path: groupPathSchema,
+        name: z.string().trim().min(1).max(40),
+        createdAt: z.string(),
+        updatedAt: z.string()
+      })
+    )
+    .max(500)
+    .default([]),
+  deletedAccounts: z
+    .array(
+      z.object({
+        account: storedAccountSchema,
+        site: siteSchema,
+        deletedAt: z.string()
+      })
+    )
+    .max(500)
+    .default([]),
+  favoriteGroups: z.array(groupPathSchema).default([]),
   settings: appSettingsSchema
 })
 
@@ -257,8 +293,15 @@ export const siteInputSchema = z.object({
   startUrl: httpUrl,
   allowedOrigins: z.array(originSchema).optional(),
   autoSubmit: z.boolean(),
-  group: z.string().trim().max(40).optional()
+  group: groupPathSchema.optional()
 })
+
+export const groupCreateInputSchema = z
+  .object({
+    parentPath: groupPathSchema.optional(),
+    name: groupNameSchema
+  })
+  .strict()
 
 export const accountCreateInputSchema = z.object({
   siteId: idSchema,
@@ -318,20 +361,20 @@ export const selectorTestInputSchema = z
   .strict()
 
 export const favoriteGroupInputSchema = z.object({
-  groupName: groupNameSchema,
+  groupName: groupPathSchema,
   favorite: z.boolean()
 })
 
 export const groupRenameInputSchema = z
   .object({
-    fromName: groupNameSchema,
+    fromName: groupPathSchema,
     toName: groupNameSchema
   })
   .strict()
 
 export const groupDeleteInputSchema = z
   .object({
-    groupName: groupNameSchema
+    groupName: groupPathSchema
   })
   .strict()
 
@@ -345,7 +388,7 @@ export const loginLogQuerySchema = z
     date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
     siteId: idSchema.optional(),
     siteName: z.string().trim().max(80).optional(),
-    groupName: z.string().trim().max(40).optional(),
+    groupName: z.string().trim().max(80).optional(),
     status: z.enum(['success', 'error', 'timeout', 'manual']).optional()
   })
   .strict()

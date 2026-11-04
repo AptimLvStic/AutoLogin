@@ -402,6 +402,8 @@ export function SettingsPage({
   }
 
   async function checkUpdates(): Promise<void> {
+    if (checkingUpdates) return
+    const startedAt = Date.now()
     setCheckingUpdates(true)
     try {
       setUpdateResult(await window.autologin.app.checkForUpdates())
@@ -415,6 +417,7 @@ export function SettingsPage({
             : tr('检查更新失败', 'Could not check for updates.', '檢查更新失敗')
       })
     } finally {
+      await waitForLoadingFeedback(startedAt)
       setCheckingUpdates(false)
     }
   }
@@ -495,6 +498,8 @@ export function SettingsPage({
   }
 
   async function testProxyConnection(): Promise<void> {
+    if (proxyTesting) return
+    const startedAt = Date.now()
     setProxyTesting(true)
     setProxyResult(null)
     try {
@@ -508,6 +513,7 @@ export function SettingsPage({
             : tr('代理连接测试失败', 'Proxy connection test failed.', '代理連線測試失敗')
       })
     } finally {
+      await waitForLoadingFeedback(startedAt)
       setProxyTesting(false)
     }
   }
@@ -695,8 +701,6 @@ export function SettingsPage({
       <section className="page-section settings-page settings-page--controlled">
         <header className="settings-page__header">
           <nav className="page-breadcrumb" aria-label={tr('面包屑', 'Breadcrumb', '麵包屑')}>
-            <span>{tr('工作台', 'Workspace', '工作台')}</span>
-            <ChevronRight size={12} />
             <span>{tr('设置', 'Settings', '設定')}</span>
             <ChevronRight size={12} />
             <h2>{title}</h2>
@@ -1166,7 +1170,7 @@ export function SettingsPage({
                 </span>
                 <div className="settings-inline-actions">
                   <button
-                    className="button button--ghost"
+                    className="button button--ghost proxy-test-button"
                     onClick={() => void testProxyConnection()}
                     disabled={proxyTesting}
                   >
@@ -1950,6 +1954,13 @@ function platformLabel(platform: string): string {
   if (platform === 'darwin') return 'macOS'
   if (platform === 'linux') return 'Linux'
   return platform
+}
+
+async function waitForLoadingFeedback(startedAt: number): Promise<void> {
+  const remaining = 500 - (Date.now() - startedAt)
+  if (remaining > 0) {
+    await new Promise((resolve) => window.setTimeout(resolve, remaining))
+  }
 }
 
 function themePresetName(preset: ThemePreset, language: string): string {

@@ -5,6 +5,7 @@ import type {
   ThemeColors,
   ThemePreset
 } from './types'
+import { DEFAULT_TRASH_RETENTION_DAYS } from './types'
 
 export const DEFAULT_THEME_COLORS: ThemeColors = {
   background: '#F7F8FA',
@@ -25,6 +26,7 @@ export const DEFAULT_PROXY_SETTINGS: ProxySettings = {
 
 export const DEFAULT_APP_SETTINGS: AppSettings = {
   autoLockMinutes: 10,
+  trashRetentionDays: DEFAULT_TRASH_RETENTION_DAYS,
   colorMode: 'light',
   language: 'zh-CN',
   themePreset: 'magpie',

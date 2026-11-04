@@ -39,6 +39,8 @@ const api: AutologinApi = {
     delete: (siteId) => invoke('sites:delete', siteId)
   },
   groups: {
+    list: () => invoke('groups:list'),
+    create: (input) => invoke('groups:create', input),
     listFavorites: () => invoke('groups:list-favorites'),
     setFavorite: (groupName, favorite) =>
       invoke('groups:set-favorite', { groupName, favorite }),
@@ -54,6 +56,8 @@ const api: AutologinApi = {
     duplicate: (accountIds) => invoke('accounts:duplicate', accountIds),
     delete: (accountId) => invoke('accounts:delete', accountId),
     deleteMany: (accountIds) => invoke('accounts:delete-many', accountIds),
+    listDeleted: () => invoke('accounts:list-deleted'),
+    restore: (accountId) => invoke('accounts:restore', accountId),
     reveal: (accountId) => invoke('accounts:reveal', accountId),
     copyUsername: (accountId) => invoke('accounts:copy-username', accountId),
     copy: (accountId) => invoke('accounts:copy', accountId),

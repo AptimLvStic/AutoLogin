@@ -126,7 +126,7 @@ describe('VaultManager', () => {
     const { manager } = createManager()
     await manager.create('correct horse battery staple')
 
-    manager.updateSettings({ autoLockMinutes: 30 })
+    manager.updateSettings({ autoLockMinutes: 30, trashRetentionDays: 30 })
     manager.updateSettings({ themePreset: 'custom', interfaceScale: 115 })
     manager.updateSettings({
       customTheme: {
@@ -141,6 +141,7 @@ describe('VaultManager', () => {
     await manager.unlock('correct horse battery staple')
     expect(manager.getSettings()).toEqual({
       autoLockMinutes: 30,
+      trashRetentionDays: 30,
       colorMode: 'light',
       language: 'zh-CN',
       themePreset: 'custom',

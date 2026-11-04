@@ -22,6 +22,7 @@ import {
 import type {
   AccountRecipe,
   AccountWithSite,
+  GroupDefinition,
   LoginStrategy,
   ManualLoginSelectors,
   SelectorTestField,
@@ -35,6 +36,7 @@ interface AccountDrawerProps {
   mode: 'create' | 'edit'
   account?: AccountWithSite
   sites: Site[]
+  groups: GroupDefinition[]
   initialSiteId?: string
   onClose: () => void
   onSaved: (account: AccountWithSite, message: string) => void
@@ -48,6 +50,7 @@ export function AccountDrawer({
   mode,
   account,
   sites,
+  groups,
   initialSiteId,
   onClose,
   onSaved,
@@ -102,6 +105,10 @@ export function AccountDrawer({
   const selectedSite = useMemo(
     () => sites.find((site) => site.id === selectedSiteId),
     [selectedSiteId, sites]
+  )
+  const groupOptions = useMemo(
+    () => [...groups].sort((left, right) => left.path.localeCompare(right.path)),
+    [groups]
   )
 
   useEffect(() => {
@@ -624,12 +631,19 @@ export function AccountDrawer({
                 <span className="field__label">{tr('站点分组（可选）', 'Site group (optional)', '站點分組（選填）')}</span>
                 <span className="input-shell">
                   <Layers3 size={17} />
-                  <input
+                  <select
+                    className="select-control"
                     value={siteGroup}
                     onChange={(event) => setSiteGroup(event.target.value)}
-                    placeholder={tr('例如：工作、财务、个人', 'e.g. Work, Finance, Personal', '例如：工作、財務、個人')}
-                    maxLength={40}
-                  />
+                    aria-label={tr('站点分组', 'Site group', '站點分組')}
+                  >
+                    <option value="">{tr('未分组', 'Ungrouped', '未分組')}</option>
+                    {groupOptions.map((group) => (
+                      <option key={group.path} value={group.path}>
+                        {group.path}
+                      </option>
+                    ))}
+                  </select>
                 </span>
               </label>
 
@@ -993,9 +1007,9 @@ export function AccountDrawer({
         <ConfirmDialog
           title={tr('删除这个账号？', 'Delete this account?', '刪除這個帳號？')}
           description={tr(
-            '账号凭据、录制流程和独立网站会话都会从本机移除，此操作无法撤销。',
-            'Credentials, recorded flows and the website session will be removed from this device. This cannot be undone.',
-            '帳號憑證、錄製流程和獨立網站工作階段都會從本機移除，此操作無法復原。'
+            '账号会移入回收站，独立网站会话将被清除；之后可从主菜单的回收站恢复。',
+            'The account will move to Recycle Bin and its website session will be cleared. You can restore it later from the main menu.',
+            '帳號會移至回收站，獨立網站工作階段將被清除；之後可從主選單的回收站恢復。'
           )}
           confirmLabel={tr('删除账号', 'Delete account', '刪除帳號')}
           danger

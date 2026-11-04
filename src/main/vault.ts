@@ -109,6 +109,8 @@ export class VaultManager {
       schemaVersion: 1,
       sites: [],
       accounts: [],
+      groupDefinitions: [],
+      deletedAccounts: [],
       favoriteGroups: [],
       settings: structuredClone(DEFAULT_APP_SETTINGS)
     }

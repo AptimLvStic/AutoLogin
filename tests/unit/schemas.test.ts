@@ -6,6 +6,7 @@ import {
   accountCreateInputSchema,
   appSettingsPatchSchema,
   appSettingsSchema,
+  groupCreateInputSchema,
   groupDeleteInputSchema,
   groupRenameInputSchema,
   masterPasswordSchema,
@@ -49,6 +50,7 @@ describe('shared input schemas', () => {
     const parsed = appSettingsSchema.parse({ autoLockMinutes: 15 })
     expect(parsed).toEqual({
       autoLockMinutes: 15,
+      trashRetentionDays: 7,
       colorMode: 'light',
       language: 'zh-CN',
       themePreset: 'magpie',
@@ -74,6 +76,8 @@ describe('shared input schemas', () => {
 
   it('accepts partial settings updates and rejects invalid scale values', () => {
     expect(appSettingsPatchSchema.safeParse({ interfaceScale: 115 }).success).toBe(true)
+    expect(appSettingsPatchSchema.safeParse({ trashRetentionDays: 15 }).success).toBe(true)
+    expect(appSettingsPatchSchema.safeParse({ trashRetentionDays: 14 }).success).toBe(false)
     expect(
       appSettingsPatchSchema.safeParse({
         themePreset: 'custom',
@@ -125,6 +129,12 @@ describe('shared input schemas', () => {
 
   it('validates group actions and account batch inputs', () => {
     expect(
+      groupCreateInputSchema.safeParse({ name: 'Work', parentPath: 'Personal' }).success
+    ).toBe(true)
+    expect(groupCreateInputSchema.safeParse({ name: 'Work / 2026' }).success).toBe(false)
+    expect(groupCreateInputSchema.safeParse({ name: '' }).success).toBe(false)
+    expect(groupCreateInputSchema.safeParse({ name: 'x'.repeat(21) }).success).toBe(false)
+    expect(
       groupRenameInputSchema.safeParse({ fromName: 'Work', toName: 'Clients' }).success
     ).toBe(true)
     expect(
@@ -154,9 +164,11 @@ describe('shared input schemas', () => {
   })
 
   it('accepts a persisted custom account group order', () => {
-    expect(appSettingsPatchSchema.safeParse({ groupOrder: ['Work', 'Clients'] }).success).toBe(
-      true
-    )
+    expect(
+      appSettingsPatchSchema.safeParse({
+        groupOrder: ['Work', 'Work / Clients', 'Work / Clients / 2026']
+      }).success
+    ).toBe(true)
     expect(
       appSettingsPatchSchema.safeParse({ groupOrder: ['Work', 'Work'] }).success
     ).toBe(false)

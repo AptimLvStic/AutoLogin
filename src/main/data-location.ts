@@ -11,6 +11,7 @@ import {
 import { dirname, isAbsolute, join, parse, relative, resolve } from 'node:path'
 
 const LOCATION_FILE = 'data-location.json'
+const LOCATION_BACKUP_FILE = 'data-location.bak.json'
 const MANAGED_DATA_ENTRIES = [
   'vault.enc',
   'vault.enc.bak',
@@ -26,41 +27,53 @@ interface DataLocationFile {
   directory: string
 }
 
-export function readDataDirectory(configDirectory: string): string {
-  const pointerPath = join(configDirectory, LOCATION_FILE)
-  if (!existsSync(pointerPath)) {
-    return resolve(configDirectory)
-  }
-
-  try {
-    const parsed = JSON.parse(readFileSync(pointerPath, 'utf8')) as Partial<DataLocationFile>
-    if (
-      parsed.version === 1 &&
-      typeof parsed.directory === 'string' &&
-      isAbsolute(parsed.directory)
-    ) {
-      return resolve(parsed.directory)
+export function readDataDirectory(
+  configDirectory: string,
+  additionalDirectories: string[] = [],
+  defaultDirectory = configDirectory
+): string {
+  for (const directory of [configDirectory, ...additionalDirectories]) {
+    for (const fileName of [LOCATION_FILE, LOCATION_BACKUP_FILE]) {
+      const pointerPath = join(directory, fileName)
+      if (!existsSync(pointerPath)) continue
+      try {
+        const parsed = JSON.parse(readFileSync(pointerPath, 'utf8')) as Partial<DataLocationFile>
+        if (
+          parsed.version === 1 &&
+          typeof parsed.directory === 'string' &&
+          isAbsolute(parsed.directory)
+        ) {
+          return resolve(parsed.directory)
+        }
+      } catch {
+        // A damaged location pointer falls back to the next durable copy.
+      }
     }
-  } catch {
-    // A damaged location pointer falls back to the default data directory.
   }
-  return resolve(configDirectory)
+  return resolve(defaultDirectory)
 }
 
 export function writeDataDirectory(configDirectory: string, dataDirectory: string): void {
   const pointerPath = join(configDirectory, LOCATION_FILE)
+  const backupPointerPath = join(configDirectory, LOCATION_BACKUP_FILE)
   const target = resolve(dataDirectory)
   const fallback = resolve(configDirectory)
 
   if (samePath(target, fallback)) {
     rmSync(pointerPath, { force: true })
+    rmSync(backupPointerPath, { force: true })
     return
   }
 
   mkdirSync(configDirectory, { recursive: true })
-  const tempPath = `${pointerPath}.${process.pid}.tmp`
   const payload: DataLocationFile = { version: 1, directory: target }
-  writeFileSync(tempPath, JSON.stringify(payload), { encoding: 'utf8', mode: 0o600 })
+  writeAtomicPointer(backupPointerPath, JSON.stringify(payload))
+  writeAtomicPointer(pointerPath, JSON.stringify(payload))
+}
+
+function writeAtomicPointer(pointerPath: string, payload: string): void {
+  const tempPath = `${pointerPath}.${process.pid}.tmp`
+  writeFileSync(tempPath, payload, { encoding: 'utf8', mode: 0o600 })
   try {
     renameSync(tempPath, pointerPath)
   } catch (error) {
@@ -119,7 +132,8 @@ export function migrateDataDirectory(
 export function recoverDataDirectoryFromInstall(
   configDirectory: string,
   currentDirectory: string,
-  installDirectory: string
+  installDirectory: string,
+  pointerDirectory = configDirectory
 ): string {
   const current = resolve(currentDirectory)
   const install = resolve(installDirectory)
@@ -136,13 +150,13 @@ export function recoverDataDirectoryFromInstall(
     if (currentFreshness > 0 && currentFreshness > stableFreshness + 1_000) {
       const recovered = nextRecoveryDirectory(configDirectory)
       try {
-        migrateDataDirectory(configDirectory, current, recovered)
+        migrateDataDirectory(pointerDirectory, current, recovered)
         return recovered
       } catch {
         return current
       }
     }
-    writeDataDirectory(configDirectory, stable)
+    writeDataDirectory(pointerDirectory, stable)
     return stable
   }
 
@@ -153,7 +167,7 @@ export function recoverDataDirectoryFromInstall(
 
   const target = hasManagedData(stable) ? nextRecoveryDirectory(configDirectory) : stable
   try {
-    migrateDataDirectory(configDirectory, source, target)
+    migrateDataDirectory(pointerDirectory, source, target)
     return target
   } catch {
     return source

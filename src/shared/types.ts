@@ -21,6 +21,13 @@ export const PROXY_MODES = ['custom', 'system'] as const
 export type ProxyMode = (typeof PROXY_MODES)[number]
 export const DEFAULT_PROXY_TEST_URL = 'https://www.google.com/'
 
+export const GROUP_PATH_SEPARATOR = ' / '
+export const GROUP_NAME_MAX_LENGTH = 20
+export const GROUP_MAX_DEPTH = 3
+export const TRASH_RETENTION_OPTIONS = [3, 7, 15, 30] as const
+export type TrashRetentionDays = (typeof TRASH_RETENTION_OPTIONS)[number]
+export const DEFAULT_TRASH_RETENTION_DAYS: TrashRetentionDays = 7
+
 export interface ProxySettings {
   mode: ProxyMode
   enabled: boolean
@@ -83,6 +90,7 @@ export type LoginMode = 'login' | 'record'
 
 export interface AppSettings {
   autoLockMinutes: AutoLockMinutes
+  trashRetentionDays: TrashRetentionDays
   colorMode: ColorMode
   language: AppLanguage
   themePreset: ThemePreset
@@ -232,10 +240,35 @@ export interface AccountWithSite extends Account {
   site: Site
 }
 
+export interface GroupDefinition {
+  path: string
+  name: string
+  createdAt: string
+  updatedAt: string
+}
+
+export interface GroupCreateInput {
+  parentPath?: string
+  name: string
+}
+
+export interface DeletedAccountRecord {
+  account: StoredAccount
+  site: Site
+  deletedAt: string
+}
+
+export interface DeletedAccountWithSite extends Account {
+  site: Site
+  deletedAt: string
+}
+
 export interface VaultData {
   schemaVersion: 1
   sites: Site[]
   accounts: StoredAccount[]
+  groupDefinitions: GroupDefinition[]
+  deletedAccounts: DeletedAccountRecord[]
   favoriteGroups: string[]
   settings: AppSettings
 }
@@ -447,6 +480,8 @@ export interface AutologinApi {
     delete: (siteId: string) => Promise<void>
   }
   groups: {
+    list: () => Promise<GroupDefinition[]>
+    create: (input: GroupCreateInput) => Promise<GroupDefinition>
     listFavorites: () => Promise<string[]>
     setFavorite: (groupName: string, favorite: boolean) => Promise<string[]>
     rename: (fromName: string, toName: string) => Promise<void>
@@ -460,6 +495,8 @@ export interface AutologinApi {
     duplicate: (accountIds: string[]) => Promise<AccountWithSite[]>
     delete: (accountId: string) => Promise<void>
     deleteMany: (accountIds: string[]) => Promise<AccountDeleteResult>
+    listDeleted: () => Promise<DeletedAccountWithSite[]>
+    restore: (accountId: string) => Promise<AccountWithSite>
     reveal: (accountId: string) => Promise<PasswordReveal>
     copyUsername: (accountId: string) => Promise<void>
     copy: (accountId: string) => Promise<void>

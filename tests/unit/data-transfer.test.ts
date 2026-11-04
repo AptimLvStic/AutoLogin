@@ -36,6 +36,8 @@ function emptyVault(): VaultData {
     schemaVersion: 1,
     sites: [],
     accounts: [],
+    groupDefinitions: [],
+    deletedAccounts: [],
     favoriteGroups: [],
     settings: structuredClone(DEFAULT_APP_SETTINGS)
   }

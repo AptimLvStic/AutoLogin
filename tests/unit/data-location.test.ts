@@ -58,6 +58,31 @@ describe('data location recovery', () => {
     expect(readDataDirectory(config)).toBe(recovered)
   })
 
+  it('keeps a custom data location through installer userData changes', () => {
+    const stablePointerDirectory = createDirectory()
+    const oldUserData = createDirectory()
+    const newUserData = createDirectory()
+    const customData = createDirectory()
+    writeFileSync(join(customData, 'vault.enc'), 'custom-vault')
+
+    writeDataDirectory(stablePointerDirectory, customData)
+    writeDataDirectory(oldUserData, customData)
+
+    expect(readDataDirectory(stablePointerDirectory, [newUserData], newUserData)).toBe(
+      customData
+    )
+  })
+
+  it('falls back to the backup location pointer when the primary file is damaged', () => {
+    const stablePointerDirectory = createDirectory()
+    const userData = createDirectory()
+    const customData = createDirectory()
+    writeDataDirectory(stablePointerDirectory, customData)
+    writeFileSync(join(stablePointerDirectory, 'data-location.json'), '{damaged')
+
+    expect(readDataDirectory(stablePointerDirectory, [userData], userData)).toBe(customData)
+  })
+
   it('detects installation and nested paths', () => {
     expect(pathIsInside('C:\\Apps\\AutoLogin', 'C:\\Apps\\AutoLogin\\data')).toBe(true)
     expect(pathIsInside('C:\\Apps\\AutoLogin', 'C:\\Apps\\AutoLogin')).toBe(true)

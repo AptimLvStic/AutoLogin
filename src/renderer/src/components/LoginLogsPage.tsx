@@ -10,7 +10,12 @@ import {
   SearchX,
   Trash2
 } from 'lucide-react'
-import type { AccountWithSite, LoginLogEntry, Site } from '@shared/types'
+import type {
+  AccountWithSite,
+  GroupDefinition,
+  LoginLogEntry,
+  Site
+} from '@shared/types'
 import { useI18n } from '../i18n'
 import { ConfirmDialog, Modal } from './Modal'
 
@@ -23,11 +28,13 @@ const MAX_DELETE_COUNT = 100
 export function LoginLogsPage({
   sites,
   accounts,
+  groups,
   favoriteGroups,
   notify
 }: {
   sites: Site[]
   accounts: AccountWithSite[]
+  groups: GroupDefinition[]
   favoriteGroups: string[]
   notify: (kind: 'success' | 'error' | 'info', message: string) => void
 }): React.JSX.Element {
@@ -75,18 +82,21 @@ export function LoginLogsPage({
   )
 
   const groupOptions = useMemo(() => {
-    const groups = new Set<string>()
+    const names = new Set<string>()
+    for (const group of groups) {
+      if (group.path.trim()) names.add(group.path.trim())
+    }
     for (const site of sites) {
-      if (site.group?.trim()) groups.add(site.group.trim())
+      if (site.group?.trim()) names.add(site.group.trim())
     }
     for (const account of accounts) {
-      if (account.site.group?.trim()) groups.add(account.site.group.trim())
+      if (account.site.group?.trim()) names.add(account.site.group.trim())
     }
     for (const group of favoriteGroups) {
-      if (group.trim()) groups.add(group.trim())
+      if (group.trim()) names.add(group.trim())
     }
-    return [...groups].sort((left, right) => left.localeCompare(right, language))
-  }, [accounts, favoriteGroups, language, sites])
+    return [...names].sort((left, right) => left.localeCompare(right, language))
+  }, [accounts, favoriteGroups, groups, language, sites])
 
   const selectedSite = sites.find((site) => site.id === siteId)
   const filtered = useMemo(

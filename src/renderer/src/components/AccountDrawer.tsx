@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import {
   ArrowRight,
   Check,
+  ChevronDown,
   CirclePlay,
   Copy,
   Eye,
@@ -91,10 +92,12 @@ export function AccountDrawer({
     Partial<Record<SelectorTestField, SelectorTestResult>>
   >({})
   const [selectorTesting, setSelectorTesting] = useState<SelectorTestField | null>(null)
+  const [sitePickerOpen, setSitePickerOpen] = useState(false)
   const [recipeDetails, setRecipeDetails] = useState<AccountRecipe | null>(null)
   const [confirmRecipeDelete, setConfirmRecipeDelete] = useState<AccountRecipe | null>(null)
   const [recipeBusy, setRecipeBusy] = useState(false)
   const revealTimer = useRef<number | null>(null)
+  const sitePickerRef = useRef<HTMLDivElement>(null)
 
   const selectedSite = useMemo(
     () => sites.find((site) => site.id === selectedSiteId),
@@ -106,6 +109,28 @@ export function AccountDrawer({
       if (revealTimer.current) window.clearTimeout(revealTimer.current)
     }
   }, [])
+
+  useEffect(() => {
+    if (!sitePickerOpen) return
+    const closeOnPointer = (event: PointerEvent): void => {
+      if (
+        event.target instanceof Node &&
+        sitePickerRef.current?.contains(event.target)
+      ) {
+        return
+      }
+      setSitePickerOpen(false)
+    }
+    const closeOnEscape = (event: KeyboardEvent): void => {
+      if (event.key === 'Escape') setSitePickerOpen(false)
+    }
+    document.addEventListener('pointerdown', closeOnPointer)
+    document.addEventListener('keydown', closeOnEscape)
+    return () => {
+      document.removeEventListener('pointerdown', closeOnPointer)
+      document.removeEventListener('keydown', closeOnEscape)
+    }
+  }, [sitePickerOpen])
 
   function hideRevealedPassword(): void {
     if (revealTimer.current) {
@@ -137,6 +162,7 @@ export function AccountDrawer({
 
   function handleSiteChange(siteId: string): void {
     setSelectedSiteId(siteId)
+    setSitePickerOpen(false)
     const site = sites.find((entry) => entry.id === siteId)
     if (site) {
       setSiteName(site.name)
@@ -177,7 +203,6 @@ export function AccountDrawer({
       return
     }
     if (
-      mode === 'edit' &&
       loginStrategy === 'manual' &&
       (!manualSelectors.username?.trim() || !manualSelectors.password?.trim())
     ) {
@@ -510,24 +535,63 @@ export function AccountDrawer({
 
             <div className="account-form__grid">
               {!account && siteMode === 'existing' && (
-                <label className="field account-form__span-2">
+                <div className="field account-form__span-2">
                   <span className="field__label">{tr('选择站点', 'Select site', '選擇站點')}</span>
-                  <span className="input-shell input-shell--select">
-                    <Globe2 size={17} />
-                    <select
-                      className="select-control"
-                      value={selectedSiteId}
-                      onChange={(event) => handleSiteChange(event.target.value)}
+                  <div className="site-picker" ref={sitePickerRef}>
+                    <button
+                      type="button"
+                      className={`site-picker__trigger${sitePickerOpen ? ' is-open' : ''}`}
+                      aria-label={tr('选择站点', 'Select site', '選擇站點')}
+                      aria-haspopup="listbox"
+                      aria-expanded={sitePickerOpen}
+                      onClick={() => setSitePickerOpen((current) => !current)}
                     >
-                      <option value="">{tr('请选择已有站点', 'Choose an existing site', '請選擇現有站點')}</option>
+                      <Globe2 size={17} />
+                      <span>
+                        <strong>
+                          {selectedSite?.name ??
+                            tr('请选择已有站点', 'Choose an existing site', '請選擇現有站點')}
+                        </strong>
+                        <small>
+                          {selectedSite
+                            ? safeHostname(selectedSite.startUrl)
+                            : tr('从本地站点中选择', 'Choose from saved sites', '從本機站點中選擇')}
+                        </small>
+                      </span>
+                      <ChevronDown
+                        size={16}
+                        className={sitePickerOpen ? 'is-open' : ''}
+                      />
+                    </button>
+                    {sitePickerOpen && (
+                      <div
+                        className="site-picker__menu"
+                        role="listbox"
+                        aria-label={tr('已有站点列表', 'Saved sites', '現有站點清單')}
+                      >
                       {sites.map((site) => (
-                        <option key={site.id} value={site.id}>
-                          {site.name} · {safeHostname(site.startUrl)}
-                        </option>
+                          <button
+                            type="button"
+                            role="option"
+                            key={site.id}
+                            aria-selected={site.id === selectedSiteId}
+                            className={site.id === selectedSiteId ? 'is-selected' : ''}
+                            onClick={() => handleSiteChange(site.id)}
+                          >
+                            <span className={`monogram ${toneClass(site.id)}`}>
+                              {site.name.slice(0, 1).toUpperCase()}
+                            </span>
+                            <span>
+                              <strong>{site.name}</strong>
+                              <small>{safeHostname(site.startUrl)}</small>
+                            </span>
+                            {site.id === selectedSiteId && <Check size={14} />}
+                          </button>
                       ))}
-                    </select>
-                  </span>
-                </label>
+                      </div>
+                    )}
+                  </div>
+                </div>
               )}
 
               <label className="field">
@@ -681,7 +745,7 @@ export function AccountDrawer({
 
             {error && <p className="form-error">{error}</p>}
 
-            {account && (
+            {(
               <>
                 <section
                   className="account-login-strategy"
@@ -699,12 +763,12 @@ export function AccountDrawer({
                         onChange={() => setLoginStrategy('auto')}
                       />
                       <span>
-                        <strong>{tr('自动录制', 'Automatic recording', '自動錄製')}</strong>
+                        <strong>{tr('自动识别', 'Auto detect', '自動識別')}</strong>
                         <small>
                           {tr(
-                            '优先回放录制流程，失败时自动识别表单',
-                            'Replay a recorded flow, then fall back to form detection',
-                            '優先回放錄製流程，失敗時自動辨識表單'
+                            '自动识别登录表单；已录制流程会优先回放',
+                            'Detect the login form, using recorded flows first when available',
+                            '自動辨識登入表單；已錄製流程會優先回放'
                           )}
                         </small>
                       </span>
@@ -733,7 +797,7 @@ export function AccountDrawer({
                   </div>
                 </section>
 
-                {loginStrategy === 'auto' && (
+                {account && loginStrategy === 'auto' && (
                 <section className="drawer-recipes" aria-label={tr('录制流程', 'Recorded flows', '錄製流程')}>
                   <header className="drawer-recipes__header">
                     <div>

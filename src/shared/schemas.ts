@@ -164,6 +164,11 @@ const interfaceScaleSchema = z
   .max(INTERFACE_SCALE_MAX)
   .multipleOf(5)
 
+const groupOrderSchema = z
+  .array(groupNameSchema)
+  .max(500)
+  .refine((groups) => new Set(groups).size === groups.length, '分组顺序不能包含重复项')
+
 export const proxySettingsSchema = z
   .object({
     mode: z.enum(PROXY_MODES).default('custom'),
@@ -216,7 +221,8 @@ export const appSettingsSchema = z.object({
   themePreset: themePresetSchema.default('magpie'),
   customTheme: themeColorsSchema.default(defaultThemeColors),
   interfaceScale: interfaceScaleSchema.default(100),
-  proxy: proxySettingsSchema.default(defaultProxySettings)
+  proxy: proxySettingsSchema.default(defaultProxySettings),
+  groupOrder: groupOrderSchema.default([])
 })
 
 export const appSettingsPatchSchema = z
@@ -227,7 +233,8 @@ export const appSettingsPatchSchema = z
     themePreset: themePresetSchema.optional(),
     customTheme: themeColorsSchema.optional(),
     interfaceScale: interfaceScaleSchema.optional(),
-    proxy: proxySettingsSchema.optional()
+    proxy: proxySettingsSchema.optional(),
+    groupOrder: groupOrderSchema.optional()
   })
   .strict()
   .refine((value) => Object.keys(value).length > 0, {
@@ -285,11 +292,14 @@ export const accountBatchStrategyInputSchema = z
   })
   .strict()
 
-export const accountDuplicateInputSchema = z
+export const accountIdsSchema = z
   .array(idSchema)
   .min(1)
   .max(100)
   .refine((ids) => new Set(ids).size === ids.length, '账号标识不能重复')
+
+export const accountDuplicateInputSchema = accountIdsSchema
+export const accountDeleteManyInputSchema = accountIdsSchema
 
 export const loginStartSchema = z.object({
   accountId: idSchema,
@@ -346,6 +356,8 @@ export const loginLogDeleteSchema = z
   .min(1)
   .max(100)
   .refine((ids) => new Set(ids).size === ids.length, { message: '日志标识不能重复' })
+
+export const appLogQuerySchema = z.number().int().min(1).max(500).optional()
 
 export const proxyTestInputSchema = proxySettingsSchema
 

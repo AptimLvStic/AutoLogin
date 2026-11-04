@@ -227,8 +227,6 @@ export function LoginLogsPage({
     <>
       <section className="page-section logs-page">
         <nav className="page-breadcrumb" aria-label={tr('面包屑', 'Breadcrumb', '麵包屑')}>
-          <span>{tr('工作台', 'Workspace', '工作台')}</span>
-          <ChevronRight size={12} />
           <h2>{tr('登录日志', 'Login history', '登入日誌')}</h2>
         </nav>
 
@@ -486,46 +484,47 @@ export function LoginLogsPage({
           width="620px"
           className="log-detail-modal"
         >
-          <div className="log-detail-summary">
-            <span className={`log-status is-${detailEntry.status}`}>
-              {statusLabel(detailEntry.status, tr)}
-            </span>
-            <strong>{detailEntry.siteName}</strong>
-            <span>{detailEntry.accountLabel}</span>
+          <div className="log-detail-body">
+            <div className="log-detail-summary">
+              <span className={`log-status is-${detailEntry.status}`}>
+                {statusLabel(detailEntry.status, tr)}
+              </span>
+              <strong>{detailEntry.siteName}</strong>
+            </div>
+            <dl className="log-detail-grid">
+              <div>
+                <dt>{tr('站点', 'Site', '站點')}</dt>
+                <dd>{detailEntry.siteName}</dd>
+              </div>
+              <div>
+                <dt>{tr('分组', 'Group', '分組')}</dt>
+                <dd>{displayGroup(detailEntry.groupName, tr)}</dd>
+              </div>
+              <div>
+                <dt>{tr('账号', 'Account', '帳號')}</dt>
+                <dd>{detailEntry.accountLabel}</dd>
+              </div>
+              <div>
+                <dt>{tr('时间', 'Time', '時間')}</dt>
+                <dd>{formatDate(detailEntry.timestamp, { dateStyle: 'medium', timeStyle: 'medium' })}</dd>
+              </div>
+              <div>
+                <dt>{tr('任务标识', 'Batch ID', '任務識別碼')}</dt>
+                <dd><code>{detailEntry.batchId || '—'}</code></dd>
+              </div>
+            </dl>
+            <div className="log-detail-reason">
+              <strong>{tr('完整错误说明', 'Full explanation', '完整錯誤說明')}</strong>
+              <p>{detailEntry.reason}</p>
+            </div>
+            <p className="modal-description log-detail-redaction">
+              {tr(
+                '日志已在写入时脱敏，不包含密码、Cookie、验证码或带查询参数的完整 URL。',
+                'Logs are redacted at write time and never include passwords, cookies, verification codes or full URLs with query parameters.',
+                '日誌已在寫入時去識別化，不包含密碼、Cookie、驗證碼或帶查詢參數的完整網址。'
+              )}
+            </p>
           </div>
-          <dl className="log-detail-grid">
-            <div>
-              <dt>{tr('站点', 'Site', '站點')}</dt>
-              <dd>{detailEntry.siteName}</dd>
-            </div>
-            <div>
-              <dt>{tr('分组', 'Group', '分組')}</dt>
-              <dd>{displayGroup(detailEntry.groupName, tr)}</dd>
-            </div>
-            <div>
-              <dt>{tr('账号', 'Account', '帳號')}</dt>
-              <dd>{detailEntry.accountLabel}</dd>
-            </div>
-            <div>
-              <dt>{tr('时间', 'Time', '時間')}</dt>
-              <dd>{formatDate(detailEntry.timestamp, { dateStyle: 'medium', timeStyle: 'medium' })}</dd>
-            </div>
-            <div>
-              <dt>{tr('任务标识', 'Batch ID', '任務識別碼')}</dt>
-              <dd><code>{detailEntry.batchId || '—'}</code></dd>
-            </div>
-          </dl>
-          <div className="log-detail-reason">
-            <strong>{tr('完整错误说明', 'Full explanation', '完整錯誤說明')}</strong>
-            <p>{detailEntry.reason}</p>
-          </div>
-          <p className="modal-description">
-            {tr(
-              '日志已在写入时脱敏，不包含密码、Cookie、验证码或带查询参数的完整 URL。',
-              'Logs are redacted at write time and never include passwords, cookies, verification codes or full URLs with query parameters.',
-              '日誌已在寫入時去識別化，不包含密碼、Cookie、驗證碼或帶查詢參數的完整網址。'
-            )}
-          </p>
         </Modal>
       )}
     </>

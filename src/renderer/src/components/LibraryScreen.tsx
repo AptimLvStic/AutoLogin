@@ -2,11 +2,13 @@ import { forwardRef, useEffect, useMemo, useRef, useState } from 'react'
 import {
   ArrowRight,
   Check,
-  ChevronDown,
   ChevronRight,
   Copy,
+  Eye,
+  EyeOff,
   FileText,
   Globe2,
+  GripVertical,
   KeyRound,
   Layers3,
   LoaderCircle,
@@ -15,6 +17,7 @@ import {
   PanelLeftOpen,
   Pencil,
   Plus,
+  RefreshCw,
   Search,
   Settings,
   SlidersHorizontal,
@@ -22,6 +25,7 @@ import {
   Trash2,
   UserRound
 } from 'lucide-react'
+import Sortable from 'sortablejs'
 import type {
   AccountWithSite,
   AppSettings,
@@ -82,17 +86,15 @@ export function LibraryScreen({
   const { tr, language, formatDate } = useI18n()
   const [view, setView] = useState<LibraryView>('accounts')
   const [groupFilter, setGroupFilter] = useState<string | null>(null)
-  const [settingsExpanded, setSettingsExpanded] = useState(false)
   const [settingsModule, setSettingsModule] = useState<SettingsModule>('general')
-  const [collapsedSettingsOpen, setCollapsedSettingsOpen] = useState(false)
-  const [collapsedSettingsPosition, setCollapsedSettingsPosition] = useState({
-    top: 120,
-    left: 78
-  })
   const [sidebarCollapsed, setSidebarCollapsed] = useState(
     () => window.localStorage.getItem('autologin.sidebar.collapsed') === '1'
   )
   const [search, setSearch] = useState('')
+  const [searchExpanded, setSearchExpanded] = useState(false)
+  const [groupNavExpanded, setGroupNavExpanded] = useState(
+    () => window.localStorage.getItem('autologin.account.groups.collapsed') !== '1'
+  )
   const [selectedIds, setSelectedIds] = useState<Set<string>>(() => new Set())
   const [favoriteGroups, setFavoriteGroups] = useState<string[]>([])
   const [drawer, setDrawer] = useState<DrawerState | null>(null)
@@ -111,11 +113,12 @@ export function LibraryScreen({
   const [batchStrategyError, setBatchStrategyError] = useState('')
   const [batchStrategyBusy, setBatchStrategyBusy] = useState(false)
   const [duplicateBusy, setDuplicateBusy] = useState(false)
+  const [manualRefreshing, setManualRefreshing] = useState(false)
+  const [deleteSelectedOpen, setDeleteSelectedOpen] = useState(false)
+  const [deleteSelectedBusy, setDeleteSelectedBusy] = useState(false)
   const searchRef = useRef<HTMLInputElement>(null)
   const selectAllRef = useRef<HTMLInputElement>(null)
-  const settingsButtonRef = useRef<HTMLButtonElement>(null)
-  const settingsPopoverRef = useRef<HTMLDivElement>(null)
-  const collapsedSettingsCloseTimer = useRef<number | null>(null)
+  const groupListRef = useRef<HTMLDivElement>(null)
 
   const groups = useMemo<GroupSummary[]>(() => {
     const grouped = new Map<string, GroupSummary>()
@@ -147,14 +150,22 @@ export function LibraryScreen({
       grouped.set(key, current)
     }
 
+    const order = new Map(settings.groupOrder.map((name, index) => [name, index]))
     return [...grouped.values()]
       .map((group) => ({ ...group, accounts: [...group.accounts].sort(compareAccounts) }))
       .sort((left, right) => {
         if (left.actualName === null) return 1
         if (right.actualName === null) return -1
+        const leftOrder = order.get(left.name) ?? Number.MAX_SAFE_INTEGER
+        const rightOrder = order.get(right.name) ?? Number.MAX_SAFE_INTEGER
+        if (leftOrder !== rightOrder) return leftOrder - rightOrder
         return left.name.localeCompare(right.name, language)
       })
-  }, [accounts, language, sites, tr])
+  }, [accounts, language, settings.groupOrder, sites, tr])
+  const namedGroups = useMemo(
+    () => groups.filter((group) => group.actualName !== null),
+    [groups]
+  )
 
   const favoriteGroupSet = useMemo(() => new Set(favoriteGroups), [favoriteGroups])
   const favoriteAccounts = useMemo(
@@ -253,33 +264,6 @@ export function LibraryScreen({
   }, [view])
 
   useEffect(() => {
-    if (!collapsedSettingsOpen) return
-    const closeOnPointer = (event: PointerEvent): void => {
-      const target = event.target as Node
-      if (
-        settingsButtonRef.current?.contains(target) ||
-        settingsPopoverRef.current?.contains(target)
-      ) {
-        return
-      }
-      setCollapsedSettingsOpen(false)
-    }
-    const closeOnEscape = (event: KeyboardEvent): void => {
-      if (event.key === 'Escape') setCollapsedSettingsOpen(false)
-    }
-    document.addEventListener('pointerdown', closeOnPointer)
-    document.addEventListener('keydown', closeOnEscape)
-    return () => {
-      document.removeEventListener('pointerdown', closeOnPointer)
-      document.removeEventListener('keydown', closeOnEscape)
-    }
-  }, [collapsedSettingsOpen])
-
-  useEffect(() => {
-    if (!sidebarCollapsed) setCollapsedSettingsOpen(false)
-  }, [sidebarCollapsed])
-
-  useEffect(() => {
     if (!groupMenu) return
     const closeMenu = (): void => setGroupMenu(null)
     const closeOnPointer = (event: PointerEvent): void => {
@@ -305,19 +289,44 @@ export function LibraryScreen({
   }, [groupMenu])
 
   useEffect(() => {
-    return () => {
-      if (collapsedSettingsCloseTimer.current) {
-        window.clearTimeout(collapsedSettingsCloseTimer.current)
+    if (!searchExpanded) return
+    window.requestAnimationFrame(() => searchRef.current?.focus())
+  }, [searchExpanded])
+
+  useEffect(() => {
+    const list = groupListRef.current
+    if (!list || !groupNavExpanded || namedGroups.length < 2) return
+    const sortable = Sortable.create(list, {
+      animation: 180,
+      draggable: '.account-subnav__item--group',
+      handle: '.account-subnav__drag-handle',
+      ghostClass: 'is-drag-ghost',
+      chosenClass: 'is-dragging',
+      dragClass: 'is-dragging',
+      forceFallback: true,
+      fallbackOnBody: true,
+      fallbackTolerance: 4,
+      onEnd: (event) => {
+        const from = event.oldDraggableIndex
+        const to = event.newDraggableIndex
+        if (from === undefined || to === undefined || from === to) return
+        const order = namedGroups.map((group) => group.name)
+        const [moved] = order.splice(from, 1)
+        if (!moved) return
+        order.splice(to, 0, moved)
+        void saveGroupOrder(order)
       }
-    }
-  }, [])
+    })
+    return () => sortable.destroy()
+  }, [groupNavExpanded, namedGroups, onRefresh, notify, tr])
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent): void => {
       if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'k') {
         if (view !== 'accounts' && view !== 'favorites') return
         event.preventDefault()
-        searchRef.current?.focus()
+        setSearchExpanded(true)
+        window.requestAnimationFrame(() => searchRef.current?.focus())
       }
     }
     window.addEventListener('keydown', onKeyDown)
@@ -335,6 +344,7 @@ export function LibraryScreen({
   function switchView(next: LibraryView): void {
     setView(next)
     setSearch('')
+    setSearchExpanded(false)
     setGroupFilter(null)
     setSelectedIds(new Set())
   }
@@ -343,6 +353,7 @@ export function LibraryScreen({
     setView('accounts')
     setGroupFilter(null)
     setSearch('')
+    setSearchExpanded(false)
     setSelectedIds(new Set())
   }
 
@@ -350,53 +361,8 @@ export function LibraryScreen({
     setView('accounts')
     setGroupFilter(group.key)
     setSearch('')
+    setSearchExpanded(false)
     setSelectedIds(new Set())
-  }
-
-  function toggleSettings(): void {
-    if (sidebarCollapsed) {
-      openCollapsedSettings()
-      return
-    }
-    if (view !== 'settings') {
-      setView('settings')
-      setSettingsExpanded(true)
-      return
-    }
-    setSettingsExpanded((value) => !value)
-  }
-
-  function openCollapsedSettings(): void {
-    if (!sidebarCollapsed) return
-    if (collapsedSettingsCloseTimer.current) {
-      window.clearTimeout(collapsedSettingsCloseTimer.current)
-      collapsedSettingsCloseTimer.current = null
-    }
-    const rect = settingsButtonRef.current?.getBoundingClientRect()
-    if (rect) {
-      setCollapsedSettingsPosition({
-        top: Math.max(52, Math.min(rect.top, window.innerHeight - 350)),
-        left: rect.right + 10
-      })
-    }
-    setCollapsedSettingsOpen(true)
-  }
-
-  function scheduleCollapsedSettingsClose(): void {
-    if (collapsedSettingsCloseTimer.current) {
-      window.clearTimeout(collapsedSettingsCloseTimer.current)
-    }
-    collapsedSettingsCloseTimer.current = window.setTimeout(() => {
-      setCollapsedSettingsOpen(false)
-      collapsedSettingsCloseTimer.current = null
-    }, 140)
-  }
-
-  function keepCollapsedSettingsOpen(): void {
-    if (collapsedSettingsCloseTimer.current) {
-      window.clearTimeout(collapsedSettingsCloseTimer.current)
-      collapsedSettingsCloseTimer.current = null
-    }
   }
 
   function toggleSidebar(): void {
@@ -410,10 +376,36 @@ export function LibraryScreen({
   function chooseSettingsModule(next: SettingsModule): void {
     setView('settings')
     setSettingsModule(next)
-    setSettingsExpanded(true)
     setSearch('')
+    setSearchExpanded(false)
     setSelectedIds(new Set())
-    setCollapsedSettingsOpen(false)
+  }
+
+  function openSettings(): void {
+    chooseSettingsModule(settingsModule)
+  }
+
+  function toggleGroupNavigation(): void {
+    setGroupNavExpanded((current) => {
+      const next = !current
+      window.localStorage.setItem('autologin.account.groups.collapsed', next ? '0' : '1')
+      return next
+    })
+  }
+
+  async function saveGroupOrder(groupOrder: string[]): Promise<void> {
+    try {
+      await window.autologin.settings.update({ groupOrder })
+      await onRefresh()
+    } catch (error) {
+      notify(
+        'error',
+        error instanceof Error
+          ? error.message
+          : tr('分组顺序保存失败', 'Could not save group order.', '分組順序儲存失敗')
+      )
+      await onRefresh()
+    }
   }
 
   async function toggleAccountFavorite(account: AccountWithSite): Promise<void> {
@@ -611,6 +603,7 @@ export function LibraryScreen({
     try {
       await window.autologin.accounts.duplicate([...selectedIds])
       setSelectedIds(new Set())
+      setBatchStrategyOpen(false)
       await onRefresh()
       notify(
         'success',
@@ -629,6 +622,52 @@ export function LibraryScreen({
       )
     } finally {
       setDuplicateBusy(false)
+    }
+  }
+
+  async function refreshAccounts(): Promise<void> {
+    setManualRefreshing(true)
+    try {
+      await refreshAll()
+    } catch (error) {
+      notify(
+        'error',
+        error instanceof Error
+          ? error.message
+          : tr('刷新账号失败', 'Could not refresh accounts.', '重新整理帳號失敗')
+      )
+    } finally {
+      setManualRefreshing(false)
+    }
+  }
+
+  async function deleteSelectedAccounts(): Promise<void> {
+    if (selectedIds.size === 0) return
+    const count = selectedIds.size
+    setDeleteSelectedBusy(true)
+    try {
+      const result = await window.autologin.accounts.deleteMany([...selectedIds])
+      setDeleteSelectedOpen(false)
+      setSelectedIds(new Set())
+      await onRefresh()
+      notify(
+        'success',
+        tr(
+          `已删除 ${result.deleted} 个账号`,
+          `Deleted ${result.deleted} account${result.deleted === 1 ? '' : 's'}.`,
+          `已刪除 ${result.deleted} 個帳號`
+        )
+      )
+    } catch (error) {
+      notify(
+        'error',
+        error instanceof Error
+          ? error.message
+          : tr('批量删除账号失败', 'Could not delete selected accounts.', '批次刪除帳號失敗')
+      )
+    } finally {
+      setDeleteSelectedBusy(false)
+      if (count === 0) setDeleteSelectedOpen(false)
     }
   }
 
@@ -746,126 +785,7 @@ export function LibraryScreen({
               <span>{tr('登录日志', 'Login history', '登入日誌')}</span>
             </button>
           </section>
-
-          <section className="sidebar-section sidebar-section--preferences">
-            <button
-              ref={settingsButtonRef}
-              className={`sidebar-nav__item sidebar-nav__item--expandable sidebar-nav__item--settings${
-                view === 'settings' ? ' is-active' : ''
-              }`}
-              onClick={toggleSettings}
-              onMouseEnter={openCollapsedSettings}
-              onMouseLeave={scheduleCollapsedSettingsClose}
-              onFocus={openCollapsedSettings}
-              aria-expanded={sidebarCollapsed ? collapsedSettingsOpen : settingsExpanded}
-              aria-haspopup={sidebarCollapsed ? 'menu' : undefined}
-              aria-label={tr('设置', 'Settings', '設定')}
-              title={tr('设置', 'Settings', '設定')}
-            >
-              <Settings size={17} />
-              <span>{tr('设置', 'Settings', '設定')}</span>
-              {settingsExpanded ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
-            </button>
-            <div
-              className={`sidebar-accordion${settingsExpanded ? ' is-expanded' : ''}`}
-              aria-hidden={!settingsExpanded}
-            >
-              <div className="sidebar-accordion__inner">
-                <button
-                  className={`sidebar-child-item${view === 'settings' && settingsModule === 'general' ? ' is-active' : ''}`}
-                  onClick={() => chooseSettingsModule('general')}
-                  tabIndex={settingsExpanded ? 0 : -1}
-                >
-                  {tr('通用设置', 'General', '一般設定')}
-                </button>
-                <button
-                  className={`sidebar-child-item${view === 'settings' && settingsModule === 'appearance' ? ' is-active' : ''}`}
-                  onClick={() => chooseSettingsModule('appearance')}
-                  tabIndex={settingsExpanded ? 0 : -1}
-                >
-                  {tr('外观主题', 'Appearance', '外觀主題')}
-                </button>
-                <button
-                  className={`sidebar-child-item${view === 'settings' && settingsModule === 'network' ? ' is-active' : ''}`}
-                  onClick={() => chooseSettingsModule('network')}
-                  tabIndex={settingsExpanded ? 0 : -1}
-                >
-                  {tr('网络代理', 'Network proxy', '網路代理')}
-                </button>
-                <button
-                  className={`sidebar-child-item${view === 'settings' && settingsModule === 'security' ? ' is-active' : ''}`}
-                  onClick={() => chooseSettingsModule('security')}
-                  tabIndex={settingsExpanded ? 0 : -1}
-                >
-                  {tr('安全与隐私', 'Security & privacy', '安全性與隱私')}
-                </button>
-                <button
-                  className={`sidebar-child-item${view === 'settings' && settingsModule === 'data' ? ' is-active' : ''}`}
-                  onClick={() => chooseSettingsModule('data')}
-                  tabIndex={settingsExpanded ? 0 : -1}
-                >
-                  {tr('数据与备份', 'Data & backups', '資料與備份')}
-                </button>
-                <button
-                  className={`sidebar-child-item${view === 'settings' && settingsModule === 'diary' ? ' is-active' : ''}`}
-                  onClick={() => chooseSettingsModule('diary')}
-                  tabIndex={settingsExpanded ? 0 : -1}
-                >
-                  {tr('软件日记', 'App diary', '軟體日記')}
-                </button>
-                <button
-                  className={`sidebar-child-item${view === 'settings' && settingsModule === 'about' ? ' is-active' : ''}`}
-                  onClick={() => chooseSettingsModule('about')}
-                  tabIndex={settingsExpanded ? 0 : -1}
-                >
-                  {tr('关于与更新', 'About & updates', '關於與更新')}
-                </button>
-              </div>
-            </div>
-          </section>
         </nav>
-
-        {sidebarCollapsed && collapsedSettingsOpen && (
-          <div
-            ref={settingsPopoverRef}
-            className="sidebar-settings-popover"
-            role="menu"
-            aria-label={tr('设置菜单', 'Settings menu', '設定選單')}
-            style={{
-              top: collapsedSettingsPosition.top,
-              left: collapsedSettingsPosition.left
-            }}
-            onMouseEnter={keepCollapsedSettingsOpen}
-            onMouseLeave={scheduleCollapsedSettingsClose}
-          >
-            <span className="sidebar-settings-popover__label">
-              {tr('设置', 'Settings', '設定')}
-            </span>
-            {(
-              [
-                ['general', tr('通用设置', 'General', '一般設定')],
-                ['appearance', tr('外观主题', 'Appearance', '外觀主題')],
-                ['network', tr('网络代理', 'Network proxy', '網路代理')],
-                ['security', tr('安全与隐私', 'Security & privacy', '安全性與隱私')],
-                ['data', tr('数据与备份', 'Data & backups', '資料與備份')],
-                ['diary', tr('软件日记', 'App diary', '軟體日記')],
-                ['about', tr('关于与更新', 'About & updates', '關於與更新')]
-              ] as const
-            ).map(([module, label]) => (
-              <button
-                type="button"
-                role="menuitem"
-                key={module}
-                className={`sidebar-settings-popover__item${
-                  view === 'settings' && settingsModule === module ? ' is-active' : ''
-                }`}
-                onClick={() => chooseSettingsModule(module)}
-              >
-                {label}
-              </button>
-            ))}
-          </div>
-        )}
 
         <div className="sidebar-bottom">
           <div
@@ -887,13 +807,24 @@ export function LibraryScreen({
           </div>
           <div className="sidebar-actions">
             <button
-              className="sidebar-action"
+              type="button"
+              className="sidebar-action sidebar-action--icon"
               onClick={() => void onLock()}
               aria-label={tr('立即锁定', 'Lock now', '立即鎖定')}
-              title={tr('立即锁定', 'Lock now', '立即鎖定')}
+              data-tooltip={tr('立即锁定', 'Lock now', '立即鎖定')}
             >
               <LockKeyhole size={17} />
-              <span>{tr('立即锁定', 'Lock now', '立即鎖定')}</span>
+            </button>
+            <button
+              type="button"
+              className={`sidebar-action sidebar-action--icon${
+                view === 'settings' ? ' is-active' : ''
+              }`}
+              onClick={openSettings}
+              aria-label={tr('设置', 'Settings', '設定')}
+              data-tooltip={tr('设置', 'Settings', '設定')}
+            >
+              <Settings size={17} />
             </button>
           </div>
         </div>
@@ -906,7 +837,6 @@ export function LibraryScreen({
           aria-label={tr('分组操作', 'Group actions', '分組操作')}
           style={{ left: groupMenu.left, top: groupMenu.top }}
         >
-          <span className="group-context-menu__label">{groupMenu.group.name}</span>
           <button
             type="button"
             role="menuitem"
@@ -957,8 +887,8 @@ export function LibraryScreen({
 
       {batchStrategyOpen && (
         <Modal
-          title={tr('批量设置登录方式', 'Set login method', '批次設定登入方式')}
-          eyebrow="BATCH LOGIN METHOD"
+          title={tr('批量操作', 'Batch actions', '批次操作')}
+          eyebrow="BATCH ACTIONS"
           onClose={() => setBatchStrategyOpen(false)}
           width="560px"
           className="batch-strategy-modal"
@@ -992,12 +922,12 @@ export function LibraryScreen({
                   }}
                 />
                 <span>
-                  <strong>{tr('自动录制', 'Automatic recording', '自動錄製')}</strong>
+                  <strong>{tr('自动识别', 'Auto detect', '自動識別')}</strong>
                   <small>
                     {tr(
-                      '优先回放录制流程，失败时自动识别表单',
+                      '优先回放已录制流程，失败时自动识别表单',
                       'Replay recorded flows, then fall back to form detection',
-                      '優先回放錄製流程，失敗時自動辨識表單'
+                      '優先回放已錄製流程，失敗時自動辨識表單'
                     )}
                   </small>
                 </span>
@@ -1074,6 +1004,21 @@ export function LibraryScreen({
 
             {batchStrategyError && <p className="form-error">{batchStrategyError}</p>}
             <div className="modal-actions">
+              <button
+                type="button"
+                className="button button--ghost"
+                onClick={() => void duplicateSelectedAccounts()}
+                disabled={duplicateBusy || batchStrategyBusy}
+              >
+                {duplicateBusy ? (
+                  <LoaderCircle size={15} className="spin" />
+                ) : (
+                  <Copy size={15} />
+                )}
+                {duplicateBusy
+                  ? tr('正在复制…', 'Copying…', '正在複製…')
+                  : tr('复制所选账号', 'Copy selected', '複製所選帳號')}
+              </button>
               <button
                 type="button"
                 className="button button--ghost"
@@ -1169,6 +1114,22 @@ export function LibraryScreen({
         />
       )}
 
+      {deleteSelectedOpen && (
+        <ConfirmDialog
+          title={tr('删除所选账号？', 'Delete selected accounts?', '刪除所選帳號？')}
+          description={tr(
+            `将永久删除 ${selectedAccountCount} 个账号及其录制流程和独立网站会话，此操作无法撤销。`,
+            `${selectedAccountCount} accounts, recorded flows and website sessions will be permanently deleted. This cannot be undone.`,
+            `將永久刪除 ${selectedAccountCount} 個帳號及其錄製流程和獨立網站工作階段，此操作無法復原。`
+          )}
+          confirmLabel={tr('删除账号', 'Delete accounts', '刪除帳號')}
+          danger
+          busy={deleteSelectedBusy}
+          onConfirm={() => void deleteSelectedAccounts()}
+          onClose={() => setDeleteSelectedOpen(false)}
+        />
+      )}
+
       <main className="library-main">
         <div className="library-content-scroll">
           {(view === 'accounts' || view === 'favorites') && (
@@ -1190,45 +1151,81 @@ export function LibraryScreen({
                     <span>{tr('全部账号', 'All accounts', '全部帳號')}</span>
                     <small>{accounts.length}</small>
                   </button>
-                  {groups
-                    .filter((group) => group.actualName)
-                    .map((group) => (
-                      <button
-                        type="button"
-                        key={group.key}
-                        className={`account-subnav__item${
-                          groupFilter === group.key ? ' is-active' : ''
-                        }`}
-                        onClick={() => chooseGroup(group)}
-                        onContextMenu={(event) => openGroupMenu(event, group)}
-                        onKeyDown={(event) => openGroupMenuFromKeyboard(event, group)}
-                        aria-haspopup="menu"
-                      >
-                        <Layers3 size={15} />
-                        <span>{group.name}</span>
-                        <small>{group.count}</small>
-                      </button>
-                    ))}
-                  <button
-                    type="button"
-                    className={`account-subnav__item${
-                      groupFilter === UNGROUPED_KEY ? ' is-active' : ''
-                    }`}
-                    onClick={() => {
-                      const ungrouped = groups.find((group) => group.key === UNGROUPED_KEY)
-                      if (ungrouped) chooseGroup(ungrouped)
-                      else {
-                        setView('accounts')
-                        setGroupFilter(UNGROUPED_KEY)
+                  <section className="account-subnav__groups">
+                    <button
+                      type="button"
+                      className="account-subnav__groups-toggle"
+                      onClick={toggleGroupNavigation}
+                      aria-expanded={groupNavExpanded}
+                      aria-label={
+                        groupNavExpanded
+                          ? tr('隐藏分组', 'Hide groups', '隱藏分組')
+                          : tr('显示分组', 'Show groups', '顯示分組')
                       }
-                    }}
-                  >
-                    <Globe2 size={15} />
-                    <span>{tr('未分组', 'Ungrouped', '未分組')}</span>
-                    <small>
-                      {groups.find((group) => group.key === UNGROUPED_KEY)?.count ?? 0}
-                    </small>
-                  </button>
+                    >
+                      <span>{tr('分组', 'Groups', '分組')}</span>
+                      {groupNavExpanded ? <Eye size={14} /> : <EyeOff size={14} />}
+                    </button>
+                    <div
+                      className={`account-subnav__groups-accordion${
+                        groupNavExpanded ? ' is-expanded' : ''
+                      }`}
+                      aria-hidden={!groupNavExpanded}
+                    >
+                      <div className="account-subnav__groups-inner">
+                        <div className="account-subnav__group-list" ref={groupListRef}>
+                          {namedGroups.map((group) => (
+                            <button
+                              type="button"
+                              key={group.key}
+                              className={`account-subnav__item account-subnav__item--group${
+                                groupFilter === group.key ? ' is-active' : ''
+                              }`}
+                              onClick={() => chooseGroup(group)}
+                              onContextMenu={(event) => openGroupMenu(event, group)}
+                              onKeyDown={(event) => openGroupMenuFromKeyboard(event, group)}
+                              aria-haspopup="menu"
+                              tabIndex={groupNavExpanded ? 0 : -1}
+                            >
+                              <span className="account-subnav__drag-handle" aria-hidden="true">
+                                <GripVertical size={13} />
+                              </span>
+                              <Layers3 size={15} />
+                              <span>{group.name}</span>
+                              <small>{group.count}</small>
+                            </button>
+                          ))}
+                        </div>
+                        <button
+                          type="button"
+                          className={`account-subnav__item account-subnav__item--group${
+                            groupFilter === UNGROUPED_KEY ? ' is-active' : ''
+                          }`}
+                          onClick={() => {
+                            const ungrouped = groups.find(
+                              (group) => group.key === UNGROUPED_KEY
+                            )
+                            if (ungrouped) chooseGroup(ungrouped)
+                            else {
+                              setView('accounts')
+                              setGroupFilter(UNGROUPED_KEY)
+                            }
+                          }}
+                          tabIndex={groupNavExpanded ? 0 : -1}
+                        >
+                          <span
+                            className="account-subnav__drag-handle account-subnav__drag-handle--placeholder"
+                            aria-hidden="true"
+                          />
+                          <Globe2 size={15} />
+                          <span>{tr('未分组', 'Ungrouped', '未分組')}</span>
+                          <small>
+                            {groups.find((group) => group.key === UNGROUPED_KEY)?.count ?? 0}
+                          </small>
+                        </button>
+                      </div>
+                    </div>
+                  </section>
                 </aside>
               )}
               <div className="library-view-main">
@@ -1281,8 +1278,27 @@ export function LibraryScreen({
               </header>
 
               <div className="library-toolbar">
-                <label className="search-field">
-                  <Search size={17} />
+                <div
+                  className={`search-field search-field--expandable${
+                    searchExpanded ? ' is-expanded' : ''
+                  }`}
+                >
+                  <button
+                    type="button"
+                    className="search-field__toggle"
+                    onClick={() => {
+                      if (searchExpanded) {
+                        setSearch('')
+                        setSearchExpanded(false)
+                      } else {
+                        setSearchExpanded(true)
+                      }
+                    }}
+                    aria-label={tr('搜索账号', 'Search accounts', '搜尋帳號')}
+                    aria-expanded={searchExpanded}
+                  >
+                    <Search size={17} />
+                  </button>
                   <input
                     ref={searchRef}
                     value={search}
@@ -1297,60 +1313,60 @@ export function LibraryScreen({
                           )
                     }
                     aria-label={tr('搜索账号', 'Search accounts', '搜尋帳號')}
+                    disabled={!searchExpanded}
+                    tabIndex={searchExpanded ? 0 : -1}
+                    onKeyDown={(event) => {
+                      if (event.key !== 'Escape') return
+                      setSearch('')
+                      setSearchExpanded(false)
+                    }}
                   />
-                  <kbd>Ctrl K</kbd>
-                </label>
-                <span className="result-count">
-                  {view === 'favorites' ? filteredFavorites.length : filteredAccounts.length}{' '}
-                  {(view === 'favorites' ? filteredFavorites.length : filteredAccounts.length) === 1
-                    ? 'ACCOUNT'
-                    : 'ACCOUNTS'}
-                </span>
-              </div>
-
-              {view === 'accounts' && selectedAccountCount > 0 && (
-                <div className="log-bulk-bar work-bulk-bar" aria-live="polite">
-                  <span>
-                    <strong>{selectedAccountCount}</strong>{' '}
-                    {tr('个账号已选', 'accounts selected', '個帳號已選')}
-                  </span>
-                  <div>
-                    <button className="text-button" onClick={() => setSelectedIds(new Set())}>
-                      {tr('取消选择', 'Clear selection', '取消選擇')}
-                    </button>
+                  <kbd aria-hidden={!searchExpanded}>Ctrl K</kbd>
+                </div>
+                {view === 'accounts' && (
+                  <div className="library-toolbar__actions">
                     <button
-                      className="button button--ghost"
-                      onClick={() => void duplicateSelectedAccounts()}
-                      disabled={duplicateBusy || Boolean(batchState?.active)}
+                      type="button"
+                      className="button button--ghost button--small"
+                      onClick={() => void refreshAccounts()}
+                      disabled={manualRefreshing}
                     >
-                      {duplicateBusy ? (
-                        <LoaderCircle size={15} className="spin" />
-                      ) : (
-                        <Copy size={15} />
-                      )}
-                      {duplicateBusy
-                        ? tr('正在复制…', 'Copying…', '正在複製…')
-                        : tr('复制账号', 'Copy accounts', '複製帳號')}
+                      <RefreshCw
+                        size={14}
+                        className={manualRefreshing ? 'spin' : undefined}
+                      />
+                      {tr('刷新', 'Refresh', '重新整理')}
                     </button>
                     <button
-                      className="button button--ghost"
+                      type="button"
+                      className="button button--ghost button--small"
                       onClick={openBatchStrategy}
-                      disabled={Boolean(batchState?.active)}
+                      disabled={selectedAccountCount === 0 || Boolean(batchState?.active)}
                     >
-                      <SlidersHorizontal size={15} />
-                      {tr('设置登录方式', 'Set login method', '設定登入方式')}
+                      <SlidersHorizontal size={14} />
+                      {tr('批量操作', 'Batch actions', '批次操作')}
                     </button>
                     <button
-                      className="button button--primary"
+                      type="button"
+                      className="button button--ghost button--small"
                       onClick={() => void openSelected()}
-                      disabled={Boolean(batchState?.active)}
+                      disabled={selectedAccountCount === 0 || Boolean(batchState?.active)}
                     >
-                      <Layers3 size={15} />
-                      {tr('打开已选', 'Open selected', '開啟已選')}
+                      <Layers3 size={14} />
+                      {tr('批量登录', 'Batch sign in', '批次登入')}
+                    </button>
+                    <button
+                      type="button"
+                      className="button button--danger-ghost button--small"
+                      onClick={() => setDeleteSelectedOpen(true)}
+                      disabled={selectedAccountCount === 0 || Boolean(batchState?.active)}
+                    >
+                      <Trash2 size={14} />
+                      {tr('删除账号', 'Delete accounts', '刪除帳號')}
                     </button>
                   </div>
-                </div>
-              )}
+                )}
+              </div>
 
               {view === 'accounts' ? (
                 <section className="account-list" aria-live="polite">
@@ -1368,6 +1384,8 @@ export function LibraryScreen({
                     />
                     <span>{tr('站点', 'Site', '站點')}</span>
                     <span>{tr('用户名', 'Username', '使用者名稱')}</span>
+                    <span>{tr('分组', 'Group', '分組')}</span>
+                    <span>{tr('最后更新', 'Last updated', '最後更新')}</span>
                     <span>{tr('状态', 'Status', '狀態')}</span>
                     <span />
                   </div>
@@ -1486,6 +1504,7 @@ export function LibraryScreen({
               module={settingsModule}
               settings={settings}
               appVersion={appVersion}
+              onModuleChange={chooseSettingsModule}
               onSettingsChange={async (patch) => {
                 await window.autologin.settings.update(patch)
                 await onRefresh()
@@ -1569,20 +1588,19 @@ function AccountListRow({
             <strong>{account.site.name}</strong>
             {account.favorite && <Star size={13} fill="currentColor" />}
           </div>
-          <span>
-            {account.username}
-            <em>·</em>
-            {displayGroup(account, tr)}
-          </span>
         </div>
       </div>
       <div className="account-username">
         <UserRound size={14} />
-        <span>
-          <strong>{account.username}</strong>
-          <small>{formatLastUsed(account.lastUsedAt)}</small>
-        </span>
+        <strong>{account.username}</strong>
       </div>
+      <div className="account-group-cell">
+        <Layers3 size={13} />
+        <span>{displayGroup(account, tr)}</span>
+      </div>
+      <time className="account-updated" dateTime={account.updatedAt}>
+        {formatLastUsed(account.updatedAt)}
+      </time>
       <div>
         <span
           className={`recipe-badge${

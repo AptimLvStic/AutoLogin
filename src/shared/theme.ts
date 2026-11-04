@@ -20,7 +20,7 @@ export const DEFAULT_PROXY_SETTINGS: ProxySettings = {
   host: '',
   port: 8080,
   bypassList: 'localhost, 127.0.0.1, ::1',
-  testUrl: 'https://api.github.com/zen'
+  testUrl: 'https://www.google.com/'
 }
 
 export const DEFAULT_APP_SETTINGS: AppSettings = {
@@ -30,7 +30,8 @@ export const DEFAULT_APP_SETTINGS: AppSettings = {
   themePreset: 'magpie',
   customTheme: DEFAULT_THEME_COLORS,
   interfaceScale: 100,
-  proxy: DEFAULT_PROXY_SETTINGS
+  proxy: DEFAULT_PROXY_SETTINGS,
+  groupOrder: []
 }
 
 interface ThemePresetDefinition {

@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   accountBatchStrategyInputSchema,
+  accountDeleteManyInputSchema,
   accountDuplicateInputSchema,
   accountCreateInputSchema,
   appSettingsPatchSchema,
@@ -65,8 +66,9 @@ describe('shared input schemas', () => {
         host: '',
         port: 8080,
         bypassList: 'localhost, 127.0.0.1, ::1',
-        testUrl: 'https://api.github.com/zen'
-      }
+        testUrl: 'https://www.google.com/'
+      },
+      groupOrder: []
     })
   })
 
@@ -147,6 +149,17 @@ describe('shared input schemas', () => {
     ).toBe(false)
     expect(accountDuplicateInputSchema.safeParse(['account-1', 'account-2']).success).toBe(true)
     expect(accountDuplicateInputSchema.safeParse([]).success).toBe(false)
+    expect(accountDeleteManyInputSchema.safeParse(['account-1', 'account-2']).success).toBe(true)
+    expect(accountDeleteManyInputSchema.safeParse([]).success).toBe(false)
+  })
+
+  it('accepts a persisted custom account group order', () => {
+    expect(appSettingsPatchSchema.safeParse({ groupOrder: ['Work', 'Clients'] }).success).toBe(
+      true
+    )
+    expect(
+      appSettingsPatchSchema.safeParse({ groupOrder: ['Work', 'Work'] }).success
+    ).toBe(false)
   })
 
 })

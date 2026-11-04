@@ -7,8 +7,10 @@ import { autoUpdater } from 'electron-updater'
 import {
   accountBatchStrategyInputSchema,
   accountCreateInputSchema,
+  accountDeleteManyInputSchema,
   accountDuplicateInputSchema,
   accountUpdateInputSchema,
+  appLogQuerySchema,
   appSettingsPatchSchema,
   changePasswordSchema,
   favoriteGroupInputSchema,
@@ -26,6 +28,7 @@ import {
 } from '@shared/schemas'
 import type {
   AccountBatchStrategyInput,
+  AccountDeleteResult,
   AccountWithSite,
   AboutInfo,
   AppUpdateState,
@@ -54,6 +57,7 @@ import type {
   VaultStatus
 } from '@shared/types'
 import { BackupManager } from './backups'
+import { appendAppLog, clearAppLogs, readAppLogs } from './app-log'
 import {
   CSV_TEMPLATE,
   mergeImportedLogins,
@@ -142,6 +146,11 @@ app.whenReady().then(() => {
     dirname(app.getPath('exe'))
   )
   initializeDataStores()
+  appendAppLog(dataDirectory, {
+    level: 'info',
+    category: 'startup',
+    message: `AutoLogin v${app.getVersion()} 已启动`
+  })
   try {
     backupManager.createFromVault(vault.path)
   } catch {
@@ -302,6 +311,11 @@ function registerIpc(): void {
       throw new Error(firstIssue(parsed.error))
     }
     const status = await vault.create(parsed.data)
+    appendAppLog(dataDirectory, {
+      level: 'success',
+      category: 'vault',
+      message: '本地保险库已创建'
+    })
     sessionIndex.replace([])
     ensureLoginManagers()
     applyInterfaceScale(vault.getSettings().interfaceScale)
@@ -315,6 +329,11 @@ function registerIpc(): void {
       throw new Error(firstIssue(parsed.error))
     }
     const status = await vault.unlock(parsed.data)
+    appendAppLog(dataDirectory, {
+      level: 'success',
+      category: 'vault',
+      message: '保险库已解锁'
+    })
     sessionIndex.replace(vault.requireData().accounts.map((account) => account.id))
     ensureLoginManagers()
     applyInterfaceScale(vault.getSettings().interfaceScale)
@@ -324,7 +343,13 @@ function registerIpc(): void {
   ipcMain.handle('vault:lock', (event) => {
     assertTrustedSender(event)
     void closeLoginManagers()
-    return vault.lock()
+    const status = vault.lock()
+    appendAppLog(dataDirectory, {
+      level: 'info',
+      category: 'vault',
+      message: '保险库已锁定'
+    })
+    return status
   })
   ipcMain.handle('vault:change-password', async (event, payload: unknown) => {
     assertTrustedSender(event)
@@ -460,6 +485,35 @@ function registerIpc(): void {
     vault.save()
     sessionIndex.remove(id)
   })
+  ipcMain.handle(
+    'accounts:delete-many',
+    async (event, payload: unknown): Promise<AccountDeleteResult> => {
+      assertTrustedSender(event)
+      const parsed = accountDeleteManyInputSchema.safeParse(payload)
+      if (!parsed.success) {
+        throw new Error(firstIssue(parsed.error))
+      }
+      const data = vault.requireData()
+      const requestedIds = new Set(parsed.data)
+      const existingIds = data.accounts
+        .filter((account) => requestedIds.has(account.id))
+        .map((account) => account.id)
+      if (existingIds.length === 0) {
+        return { deleted: 0 }
+      }
+
+      for (const id of existingIds) {
+        await batchManager?.clearSession(id)
+        await loginManager?.clearSession(id)
+        clearManagedSessionDirectories(dataDirectory, id)
+      }
+      const deletedSet = new Set(existingIds)
+      data.accounts = data.accounts.filter((account) => !deletedSet.has(account.id))
+      vault.save()
+      for (const id of existingIds) sessionIndex.remove(id)
+      return { deleted: existingIds.length }
+    }
+  )
   ipcMain.handle('accounts:reveal', (event, accountId: unknown): PasswordReveal => {
     assertTrustedSender(event)
     const id = requireId(accountId)
@@ -585,6 +639,16 @@ function registerIpc(): void {
       throw new Error(firstIssue(parsed.error))
     }
     const settings = vault.updateSettings(parsed.data)
+    if (parsed.data.proxy) {
+      appendAppLog(dataDirectory, {
+        level: 'info',
+        category: 'proxy',
+        message:
+          settings.proxy.mode === 'system'
+            ? '网络代理已切换为跟随系统'
+            : `网络代理配置已更新（${settings.proxy.enabled ? '自定义代理' : '直连'}）`
+      })
+    }
     applyInterfaceScale(settings.interfaceScale)
     await applySystemProxy(settings.proxy)
     return settings
@@ -595,7 +659,16 @@ function registerIpc(): void {
     if (!parsed.success) {
       throw new Error(firstIssue(parsed.error))
     }
-    return testProxy(parsed.data)
+    const result = await testProxy(parsed.data)
+    appendAppLog(dataDirectory, {
+      level: result.ok ? 'success' : 'error',
+      category: 'proxy',
+      message: `网络代理连通性测试${result.ok ? '成功' : '失败'}：${safeLogUrl(
+        parsed.data.testUrl
+      )}`,
+      details: sanitizeLogDetails(result.message)
+    })
+    return result
   })
 
   ipcMain.handle('data:export-vault', async (event): Promise<FileOperationResult> => {
@@ -825,6 +898,19 @@ function registerIpc(): void {
     }
     return { deleted: deleteLoginLogs(dataDirectory, parsed.data) }
   })
+  ipcMain.handle('app:list-app-logs', (event, payload: unknown): ReturnType<typeof readAppLogs> => {
+    assertTrustedSender(event)
+    const parsed = appLogQuerySchema.safeParse(payload)
+    if (!parsed.success) {
+      throw new Error(firstIssue(parsed.error))
+    }
+    return readAppLogs(dataDirectory, parsed.data ?? 200)
+  })
+  ipcMain.handle('app:clear-app-logs', (event): { deleted: number } => {
+    assertTrustedSender(event)
+    const deleted = clearAppLogs(dataDirectory)
+    return { deleted }
+  })
   ipcMain.handle('app:restart', async (event) => {
     assertTrustedSender(event)
     await closeLoginManagers()
@@ -910,6 +996,13 @@ function renameGroup(input: GroupRenameInput): void {
       data.favoriteGroups.map((groupName) => (groupName === fromName ? toName : groupName))
     )
   ]
+  data.settings.groupOrder = [
+    ...new Set(
+      data.settings.groupOrder.map((groupName) =>
+        groupName === fromName ? toName : groupName
+      )
+    )
+  ]
   vault.save()
 }
 
@@ -925,6 +1018,7 @@ function deleteGroup(groupName: string): number {
     site.updatedAt = now
   }
   data.favoriteGroups = data.favoriteGroups.filter((entry) => entry !== name)
+  data.settings.groupOrder = data.settings.groupOrder.filter((entry) => entry !== name)
   vault.save()
   return affected.length
 }
@@ -1986,4 +2080,17 @@ function isHttpUrl(value: string): boolean {
   } catch {
     return false
   }
+}
+
+function safeLogUrl(value: string): string {
+  try {
+    const url = new URL(value)
+    return `${url.origin}${url.pathname}`
+  } catch {
+    return '无效地址'
+  }
+}
+
+function sanitizeLogDetails(value: string): string {
+  return value.replace(/https?:\/\/[^\s]+/gi, (url) => safeLogUrl(url))
 }

@@ -53,6 +53,26 @@ describe('UpdateDialog Markdown', () => {
     expect(container.textContent).toContain('危险链接')
   })
 
+  it('converts release HTML and never exposes raw markup', () => {
+    act(() => {
+      root.render(
+        React.createElement(Markdown, {
+          content:
+            '<h2>更新内容</h2><ul><li><strong>稳定性改进</strong></li><li><a href="https://example.com">查看说明</a></li></ul><script>alert(1)</script>'
+        })
+      )
+    })
+
+    expect(container.querySelector('.markdown-content')).not.toBeNull()
+    expect(container.querySelector('script')).toBeNull()
+    expect(container.textContent).toContain('更新内容')
+    expect(container.textContent).toContain('稳定性改进')
+    expect(container.textContent).toContain('查看说明')
+    expect(container.textContent).not.toContain('<h2>')
+    expect(container.textContent).not.toContain('<li>')
+    expect(container.textContent).not.toContain('<script>')
+  })
+
   it('starts an available update and exposes restart after download', () => {
     const onDownload = vi.fn()
     const props = {

@@ -145,7 +145,7 @@ export function UpdateDialog({
 }
 
 export function Markdown({ content }: { content: string }): React.JSX.Element {
-  const lines = content.replace(/\r\n/g, '\n').split('\n')
+  const lines = normalizeMarkdown(content).split('\n')
   const blocks: React.ReactNode[] = []
   let index = 0
 
@@ -172,7 +172,13 @@ export function Markdown({ content }: { content: string }): React.JSX.Element {
       continue
     }
 
-    const heading = /^(#{1,4})\s+(.+)$/.exec(line)
+    if (/^\s*([-*_])(?:\s*\1){2,}\s*$/.test(line)) {
+      blocks.push(<hr key={`rule-${index}`} />)
+      index += 1
+      continue
+    }
+
+    const heading = /^(#{1,6})\s+(.+)$/.exec(line)
     if (heading) {
       const level = heading[1]?.length ?? 2
       const Tag = level <= 2 ? 'h3' : 'h4'
@@ -193,6 +199,18 @@ export function Markdown({ content }: { content: string }): React.JSX.Element {
             <li key={itemIndex}>{renderInline(item)}</li>
           ))}
         </ul>
+      )
+      continue
+    }
+
+    if (/^\s*>\s?/.test(line)) {
+      const quote: string[] = []
+      while (index < lines.length && /^\s*>\s?/.test(lines[index] ?? '')) {
+        quote.push((lines[index] ?? '').replace(/^\s*>\s?/, ''))
+        index += 1
+      }
+      blocks.push(
+        <blockquote key={`quote-${index}`}>{renderInline(quote.join(' '))}</blockquote>
       )
       continue
     }
@@ -219,9 +237,11 @@ export function Markdown({ content }: { content: string }): React.JSX.Element {
       const next = lines[index] ?? ''
       if (
         !next.trim() ||
-        /^(#{1,4})\s+/.test(next) ||
+        /^(#{1,6})\s+/.test(next) ||
         /^\s*[-*]\s+/.test(next) ||
+        /^\s*>\s?/.test(next) ||
         /^\s*\d+\.\s+/.test(next) ||
+        /^\s*([-*_])(?:\s*\1){2,}\s*$/.test(next) ||
         next.trim().startsWith('```')
       ) {
         break
@@ -236,14 +256,31 @@ export function Markdown({ content }: { content: string }): React.JSX.Element {
 }
 
 function renderInline(value: string): React.ReactNode[] {
-  const tokenPattern = /(\*\*[^*]+\*\*|`[^`]+`|\[[^\]]+\]\([^)]+\))/g
+  const tokenPattern =
+    /(!\[[^\]]*\]\([^)]+\)|\[[^\]]+\]\([^)]+\)|\*\*[^*]+\*\*|__[^_]+__|~~[^~]+~~|`[^`]+`|\*[^*]+\*|_[^_]+_)/g
   const parts = value.split(tokenPattern)
   return parts.map((part, index) => {
     if (part.startsWith('**') && part.endsWith('**')) {
       return <strong key={index}>{part.slice(2, -2)}</strong>
     }
+    if (part.startsWith('__') && part.endsWith('__')) {
+      return <strong key={index}>{part.slice(2, -2)}</strong>
+    }
+    if (part.startsWith('~~') && part.endsWith('~~')) {
+      return <del key={index}>{part.slice(2, -2)}</del>
+    }
     if (part.startsWith('`') && part.endsWith('`')) {
       return <code key={index}>{part.slice(1, -1)}</code>
+    }
+    if (part.startsWith('*') && part.endsWith('*')) {
+      return <em key={index}>{part.slice(1, -1)}</em>
+    }
+    if (part.startsWith('_') && part.endsWith('_')) {
+      return <em key={index}>{part.slice(1, -1)}</em>
+    }
+    const image = /^!\[([^\]]*)\]\(([^)]+)\)$/.exec(part)
+    if (image) {
+      return image[1] || ''
     }
     const link = /^\[([^\]]+)\]\(([^)]+)\)$/.exec(part)
     if (link) {
@@ -257,8 +294,31 @@ function renderInline(value: string): React.ReactNode[] {
       }
       return <span key={index}>{link[1]}</span>
     }
-    return part
+    return stripRawHtml(part)
   })
+}
+
+function normalizeMarkdown(value: string): string {
+  return stripRawHtml(
+    value
+      .replace(/\r\n?/g, '\n')
+      .replace(/\u00a0/g, ' ')
+      .replace(/<a\b[^>]*href=["']([^"']+)["'][^>]*>(.*?)<\/a>/gi, '[$2]($1)')
+      .replace(/<br\s*\/?>/gi, '\n')
+      .replace(/<li\b[^>]*>/gi, '\n- ')
+      .replace(/<\/(?:p|div|section|article|details|summary|h[1-6]|ul|ol)>/gi, '\n')
+  )
+}
+
+function stripRawHtml(value: string): string {
+  const decoded = value
+    .replace(/&nbsp;/gi, ' ')
+    .replace(/&amp;/gi, '&')
+    .replace(/&lt;/gi, '<')
+    .replace(/&gt;/gi, '>')
+    .replace(/&quot;/gi, '"')
+    .replace(/&#39;/gi, "'")
+  return decoded.replace(/<\/?[a-z][^>]*>/gi, '')
 }
 
 function isSafeHttpUrl(value: string): boolean {

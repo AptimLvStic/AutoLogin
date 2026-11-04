@@ -19,7 +19,7 @@ export type ProxyProtocol = (typeof PROXY_PROTOCOLS)[number]
 
 export const PROXY_MODES = ['custom', 'system'] as const
 export type ProxyMode = (typeof PROXY_MODES)[number]
-export const DEFAULT_PROXY_TEST_URL = 'https://api.github.com/zen'
+export const DEFAULT_PROXY_TEST_URL = 'https://www.google.com/'
 
 export interface ProxySettings {
   mode: ProxyMode
@@ -89,6 +89,7 @@ export interface AppSettings {
   customTheme: ThemeColors
   interfaceScale: number
   proxy: ProxySettings
+  groupOrder: string[]
 }
 
 export type AppSettingsPatch = Partial<AppSettings>
@@ -117,6 +118,25 @@ export interface LoginLogQuery {
 }
 
 export interface LoginLogDeleteResult {
+  deleted: number
+}
+
+export interface AccountDeleteResult {
+  deleted: number
+}
+
+export type AppLogLevel = 'info' | 'success' | 'warning' | 'error'
+
+export interface AppLogEntry {
+  id: string
+  timestamp: string
+  level: AppLogLevel
+  category: string
+  message: string
+  details?: string
+}
+
+export interface AppLogClearResult {
   deleted: number
 }
 
@@ -439,6 +459,7 @@ export interface AutologinApi {
     setStrategyBatch: (input: AccountBatchStrategyInput) => Promise<AccountWithSite[]>
     duplicate: (accountIds: string[]) => Promise<AccountWithSite[]>
     delete: (accountId: string) => Promise<void>
+    deleteMany: (accountIds: string[]) => Promise<AccountDeleteResult>
     reveal: (accountId: string) => Promise<PasswordReveal>
     copyUsername: (accountId: string) => Promise<void>
     copy: (accountId: string) => Promise<void>
@@ -479,6 +500,8 @@ export interface AutologinApi {
     listLoginLogs: (query?: LoginLogQuery) => Promise<LoginLogEntry[]>
     listFailureLogs: () => Promise<LoginLogEntry[]>
     deleteLoginLogs: (ids: string[]) => Promise<LoginLogDeleteResult>
+    listAppLogs: (limit?: number) => Promise<AppLogEntry[]>
+    clearAppLogs: () => Promise<AppLogClearResult>
     restart: () => Promise<void>
     reportActivity: () => void
     clearAllData: () => Promise<void>

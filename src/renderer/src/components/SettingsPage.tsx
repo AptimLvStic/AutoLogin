@@ -36,6 +36,7 @@ import {
   INTERFACE_SCALE_STEP,
   PROXY_PROTOCOLS,
   type AboutInfo,
+  type AppLogEntry,
   type AppLanguage,
   type AppSettings,
   type AppSettingsPatch,
@@ -67,13 +68,14 @@ export type SettingsModule =
   | 'network'
   | 'security'
   | 'data'
-  | 'diary'
+  | 'appLogs'
   | 'about'
 
 export function SettingsPage({
   module,
   settings,
   appVersion,
+  onModuleChange,
   onSettingsChange,
   onRefresh,
   onClearAllData,
@@ -82,12 +84,13 @@ export function SettingsPage({
   module: SettingsModule
   settings: AppSettings
   appVersion: string
+  onModuleChange: (module: SettingsModule) => void
   onSettingsChange: (patch: AppSettingsPatch) => Promise<void>
   onRefresh: () => Promise<void>
   onClearAllData: () => Promise<void>
   notify: (kind: 'success' | 'error' | 'info', message: string) => void
 }): React.JSX.Element {
-  const { tr } = useI18n()
+  const { tr, formatDate } = useI18n()
   const [autoLock, setAutoLock] = useState<AutoLockMinutes>(settings.autoLockMinutes)
   const [currentPassword, setCurrentPassword] = useState('')
   const [nextPassword, setNextPassword] = useState('')
@@ -116,6 +119,10 @@ export function SettingsPage({
   const [kdbxPassword, setKdbxPassword] = useState('')
   const [kdbxError, setKdbxError] = useState('')
   const [kdbxBusy, setKdbxBusy] = useState(false)
+  const [appLogs, setAppLogs] = useState<AppLogEntry[]>([])
+  const [appLogsLoading, setAppLogsLoading] = useState(false)
+  const [appLogsClearOpen, setAppLogsClearOpen] = useState(false)
+  const [appLogsClearing, setAppLogsClearing] = useState(false)
   const scaleSaveTimer = useRef<number | null>(null)
 
   useEffect(() => {
@@ -162,7 +169,52 @@ export function SettingsPage({
     if (module === 'data') {
       void loadBackups()
     }
+    if (module === 'appLogs') {
+      void loadAppLogs()
+    }
   }, [module])
+
+  async function loadAppLogs(): Promise<void> {
+    setAppLogsLoading(true)
+    try {
+      setAppLogs(await window.autologin.app.listAppLogs(200))
+    } catch (error) {
+      notify(
+        'error',
+        error instanceof Error
+          ? error.message
+          : tr('读取软件日志失败', 'Could not read app logs.', '讀取軟體日誌失敗')
+      )
+    } finally {
+      setAppLogsLoading(false)
+    }
+  }
+
+  async function clearApplicationLogs(): Promise<void> {
+    setAppLogsClearing(true)
+    try {
+      const result = await window.autologin.app.clearAppLogs()
+      setAppLogsClearOpen(false)
+      setAppLogs([])
+      notify(
+        'success',
+        tr(
+          `已清除 ${result.deleted} 条软件日志`,
+          `Cleared ${result.deleted} app log entries.`,
+          `已清除 ${result.deleted} 筆軟體日誌`
+        )
+      )
+    } catch (error) {
+      notify(
+        'error',
+        error instanceof Error
+          ? error.message
+          : tr('清除软件日志失败', 'Could not clear app logs.', '清除軟體日誌失敗')
+      )
+    } finally {
+      setAppLogsClearing(false)
+    }
+  }
 
   async function changeAutoLock(value: AutoLockMinutes): Promise<void> {
     setAutoLock(value)
@@ -267,7 +319,8 @@ export function SettingsPage({
         themePreset: DEFAULT_APP_SETTINGS.themePreset,
         customTheme: DEFAULT_APP_SETTINGS.customTheme,
         interfaceScale: DEFAULT_APP_SETTINGS.interfaceScale,
-        proxy: DEFAULT_APP_SETTINGS.proxy
+        proxy: DEFAULT_APP_SETTINGS.proxy,
+        groupOrder: []
       },
       translate(
         settings.language,
@@ -628,79 +681,46 @@ export function SettingsPage({
   }
 
   const title = settingsModuleTitle(module, tr)
-  const diaryEntries = [
-    {
-      version: '0.7.0',
-      date: '2026-11-03',
-      title: tr('账户管理与分组效率', 'Account and group workflow', '帳號與分組效率'),
-      notes: [
-        tr(
-          '新增批量切换自动录制 / 手动配置，并支持批量复制账号。',
-          'Added batch login-method changes and account duplication.',
-          '新增批次切換自動錄製 / 手動設定，並支援批次複製帳號。'
-        ),
-        tr(
-          '分组支持右键重命名、收藏和删除；收藏页只展示收藏账号。',
-          'Groups can be renamed, favorited and deleted from the context menu; Favorites now lists only favorite accounts.',
-          '分組支援右鍵重新命名、收藏和刪除；收藏頁只顯示收藏帳號。'
-        ),
-        tr(
-          '修复账号编辑抽屉底部遮挡，表单区域现在独立滚动。',
-          'Fixed drawer footer overlap with an independently scrolling form area.',
-          '修正帳號編輯抽屉底部遮擋，表單區域現在獨立捲動。'
-        ),
-        tr(
-          '新增软件日记，统一透明应用图标，并完善登录页与侧栏布局。',
-          'Added the app diary, transparent app icons and refined the sign-in and sidebar layouts.',
-          '新增軟體日記，統一透明應用程式圖示，並完善登入頁與側欄版面。'
-        )
-      ]
-    },
-    {
-      version: '0.6.0',
-      date: '2026-11-03',
-      title: tr('默认浏览器登录闭环', 'Default-browser login flow', '預設瀏覽器登入流程'),
-      notes: [
-        tr(
-          '完善默认浏览器自动填充与手动元素定位器。',
-          'Improved default-browser autofill and manual element selectors.',
-          '完善預設瀏覽器自動填入與手動元素定位器。'
-        ),
-        tr(
-          '修复升级安装后的账号数据保留问题。',
-          'Fixed account data retention after upgrading.',
-          '修正升級安裝後的帳號資料保留問題。'
-        )
-      ]
-    },
-    {
-      version: '0.5.0',
-      date: '2026-11-03',
-      title: tr('主题、导入与应用内更新', 'Themes, imports and in-app updates', '主題、匯入與應用程式內更新'),
-      notes: [
-        tr(
-          '新增主题、语言、代理、CSV / KDBX 导入与启动备份。',
-          'Added themes, languages, proxy settings, CSV / KDBX imports and startup backups.',
-          '新增主題、語言、代理、CSV / KDBX 匯入與啟動備份。'
-        ),
-        tr(
-          '新增应用内更新与默认浏览器多标签批量打开。',
-          'Added in-app updates and multi-tab batch opening in the default browser.',
-          '新增應用程式內更新與預設瀏覽器多分頁批次開啟。'
-        )
-      ]
-    }
+  const settingsModules: Array<[SettingsModule, string]> = [
+    ['general', tr('通用配置', 'General', '一般設定')],
+    ['appearance', tr('外观主题', 'Appearance', '外觀主題')],
+    ['network', tr('网络代理', 'Network proxy', '網路代理')],
+    ['security', tr('安全与隐私', 'Security & privacy', '安全性與隱私')],
+    ['data', tr('数据与备份', 'Data & backups', '資料與備份')],
+    ['appLogs', tr('软件日志', 'App logs', '軟體日誌')],
+    ['about', tr('关于与更新', 'About & updates', '關於與更新')]
   ]
   return (
     <>
       <section className="page-section settings-page settings-page--controlled">
         <header className="settings-page__header">
           <nav className="page-breadcrumb" aria-label={tr('面包屑', 'Breadcrumb', '麵包屑')}>
-            <span>{tr('偏好设置', 'Preferences', '偏好設定')}</span>
+            <span>{tr('工作台', 'Workspace', '工作台')}</span>
             <ChevronRight size={12} />
-          <h2>{title}</h2>
+            <span>{tr('设置', 'Settings', '設定')}</span>
+            <ChevronRight size={12} />
+            <h2>{title}</h2>
           </nav>
         </header>
+
+        <nav
+          className="settings-tabs"
+          role="tablist"
+          aria-label={tr('设置分类', 'Settings sections', '設定分類')}
+        >
+          {settingsModules.map(([nextModule, label]) => (
+            <button
+              type="button"
+              role="tab"
+              key={nextModule}
+              aria-selected={module === nextModule}
+              className={module === nextModule ? 'is-active' : ''}
+              onClick={() => onModuleChange(nextModule)}
+            >
+              {label}
+            </button>
+          ))}
+        </nav>
 
         {module === 'general' && (
           <SettingsPanel
@@ -1534,39 +1554,101 @@ export function SettingsPage({
           </SettingsPanel>
         )}
 
-        {module === 'diary' && (
+        {module === 'appLogs' && (
           <SettingsPanel
             icon={<BookOpen size={18} />}
-            title={tr('软件日记', 'App diary', '軟體日記')}
+            title={tr('软件日志', 'App logs', '軟體日誌')}
             description={tr(
-              '查看本地维护的版本更新日记，不收集任何使用记录。',
-              'Read the locally maintained release diary. No usage history is collected.',
-              '查看本機維護的版本更新日記，不收集任何使用記錄。'
+              '查看应用启动、保险库、网络代理和更新相关的本地运行日志。',
+              'Review local runtime logs for startup, vault, proxy and update events.',
+              '查看應用程式啟動、保險庫、網路代理和更新相關的本機執行日誌。'
             )}
           >
-            <div className="app-diary">
-              {diaryEntries.map((entry, index) => (
-                <article className="settings-card app-diary-entry" key={entry.version}>
-                  <header className="app-diary-entry__header">
-                    <div>
-                      <span className="app-diary-entry__version">v{entry.version}</span>
-                      {index === 0 && (
-                        <span className="app-diary-entry__current">
-                          {tr('当前版本', 'Current', '目前版本')}
-                        </span>
-                      )}
-                    </div>
-                    <time>{entry.date}</time>
-                  </header>
-                  <h4>{entry.title}</h4>
-                  <ul>
-                    {entry.notes.map((note) => (
-                      <li key={note}>{note}</li>
-                    ))}
-                  </ul>
-                </article>
-              ))}
+            <div className="settings-card app-logs-card">
+              <div className="app-logs-toolbar">
+                <div>
+                  <strong>{tr('本地运行记录', 'Local runtime logs', '本機執行記錄')}</strong>
+                  <small>
+                    {appLogs.length} {tr('条记录', 'entries', '筆記錄')}
+                  </small>
+                </div>
+                <div>
+                  <button
+                    type="button"
+                    className="button button--ghost button--small"
+                    onClick={() => void loadAppLogs()}
+                    disabled={appLogsLoading}
+                  >
+                    {appLogsLoading ? (
+                      <LoaderCircle size={14} className="spin" />
+                    ) : (
+                      <RefreshCw size={14} />
+                    )}
+                    {tr('刷新', 'Refresh', '重新整理')}
+                  </button>
+                  <button
+                    type="button"
+                    className="button button--danger-ghost button--small"
+                    onClick={() => setAppLogsClearOpen(true)}
+                    disabled={appLogs.length === 0 || appLogsLoading}
+                  >
+                    <Trash2 size={14} />
+                    {tr('清除日志', 'Clear logs', '清除日誌')}
+                  </button>
+                </div>
+              </div>
+
+              {appLogsLoading ? (
+                <div className="app-logs-empty">
+                  <LoaderCircle size={18} className="spin" />
+                  {tr('正在读取软件日志', 'Reading app logs', '正在讀取軟體日誌')}
+                </div>
+              ) : appLogs.length === 0 ? (
+                <div className="app-logs-empty">
+                  <BookOpen size={19} />
+                  {tr('暂无软件日志', 'No app logs yet', '暫無軟體日誌')}
+                </div>
+              ) : (
+                <div className="app-log-list">
+                  {appLogs.map((entry) => (
+                    <article className="app-log-row" key={entry.id}>
+                      <span className={`app-log-level is-${entry.level}`}>
+                        {appLogLevelLabel(entry.level, tr)}
+                      </span>
+                      <div className="app-log-row__content">
+                        <div>
+                          <strong>{entry.message}</strong>
+                          <span>{appLogCategoryLabel(entry.category, tr)}</span>
+                        </div>
+                        {entry.details && <p>{entry.details}</p>}
+                      </div>
+                      <time dateTime={entry.timestamp}>
+                        {formatDate(entry.timestamp, {
+                          dateStyle: 'short',
+                          timeStyle: 'medium'
+                        })}
+                      </time>
+                    </article>
+                  ))}
+                </div>
+              )}
             </div>
+
+            {appLogsClearOpen && (
+              <ConfirmDialog
+                title={tr('清除全部软件日志？', 'Clear all app logs?', '清除全部軟體日誌？')}
+                description={tr(
+                  `将永久删除当前 ${appLogs.length} 条软件日志，不会影响账号、登录日志或网站会话。`,
+                  `Permanently delete ${appLogs.length} app log entries. Accounts, login history and website sessions are unaffected.`,
+                  `將永久刪除目前 ${appLogs.length} 筆軟體日誌，不會影響帳號、登入日誌或網站工作階段。`
+                )}
+                confirmLabel={tr('确认清除', 'Clear logs', '確認清除')}
+                danger
+                busy={appLogsClearing}
+                onConfirm={() => void clearApplicationLogs()}
+                onClose={() => setAppLogsClearOpen(false)}
+              />
+            )}
           </SettingsPanel>
         )}
 
@@ -1786,9 +1868,6 @@ export function SettingsPage({
 }
 
 function SettingsPanel({
-  icon,
-  title,
-  description,
   children
 }: {
   icon: React.ReactNode
@@ -1798,13 +1877,6 @@ function SettingsPanel({
 }): React.JSX.Element {
   return (
     <section className="settings-panel">
-      <header className="settings-panel__header">
-        <span className="settings-icon">{icon}</span>
-        <div>
-          <h3>{title}</h3>
-          <p>{description}</p>
-        </div>
-      </header>
       <div className="settings-panel__body">{children}</div>
     </section>
   )
@@ -1835,15 +1907,42 @@ function settingsModuleTitle(
   tr: (zhCN: string, en: string, zhTW: string) => string
 ): string {
   const titles: Record<SettingsModule, string> = {
-    general: tr('通用设置', 'General', '一般設定'),
+    general: tr('通用配置', 'General', '一般設定'),
     appearance: tr('外观主题', 'Appearance', '外觀主題'),
     network: tr('网络代理', 'Network proxy', '網路代理'),
     security: tr('安全与隐私', 'Security & privacy', '安全性與隱私'),
     data: tr('数据与备份', 'Data & backups', '資料與備份'),
-    diary: tr('软件日记', 'App diary', '軟體日記'),
+    appLogs: tr('软件日志', 'App logs', '軟體日誌'),
     about: tr('关于与更新', 'About & updates', '關於與更新')
   }
   return titles[module]
+}
+
+function appLogLevelLabel(
+  level: AppLogEntry['level'],
+  tr: (zhCN: string, en: string, zhTW: string) => string
+): string {
+  if (level === 'success') return tr('成功', 'Success', '成功')
+  if (level === 'warning') return tr('提醒', 'Warning', '提醒')
+  if (level === 'error') return tr('错误', 'Error', '錯誤')
+  return tr('信息', 'Info', '資訊')
+}
+
+function appLogCategoryLabel(
+  category: string,
+  tr: (zhCN: string, en: string, zhTW: string) => string
+): string {
+  const labels: Record<string, [string, string, string]> = {
+    startup: ['应用启动', 'Startup', '應用程式啟動'],
+    vault: ['保险库', 'Vault', '保險庫'],
+    proxy: ['网络代理', 'Network proxy', '網路代理'],
+    update: ['应用更新', 'App update', '應用程式更新'],
+    data: ['数据操作', 'Data', '資料操作'],
+    login: ['登录任务', 'Login task', '登入工作'],
+    settings: ['设置', 'Settings', '設定']
+  }
+  const label = labels[category]
+  return label ? tr(label[0], label[1], label[2]) : category
 }
 
 function platformLabel(platform: string): string {

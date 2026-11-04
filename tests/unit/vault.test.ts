@@ -158,8 +158,9 @@ describe('VaultManager', () => {
         host: '',
         port: 8080,
         bypassList: 'localhost, 127.0.0.1, ::1',
-        testUrl: 'https://api.github.com/zen'
-      }
+        testUrl: 'https://www.google.com/'
+      },
+      groupOrder: []
     })
   })
 

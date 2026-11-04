@@ -40,6 +40,7 @@ import {
   type AppLanguage,
   type AppSettings,
   type AppSettingsPatch,
+  type AppUpdateState,
   type AutoLockMinutes,
   type BackupRecord,
   type ColorMode,
@@ -61,6 +62,7 @@ import {
 import { translate, useI18n } from '../i18n'
 import { ConfirmDialog, Modal } from './Modal'
 import { PasswordStrength } from './PasswordStrength'
+import { UpdateProgress } from './UpdateDialog'
 
 export type SettingsModule =
   | 'general'
@@ -74,19 +76,27 @@ export function SettingsPage({
   module,
   settings,
   appVersion,
+  updateState,
   onModuleChange,
   onSettingsChange,
   onRefresh,
   onClearAllData,
+  onDownloadUpdate,
+  onCancelUpdate,
+  onInstallUpdate,
   notify
 }: {
   module: SettingsModule
   settings: AppSettings
   appVersion: string
+  updateState: AppUpdateState | null
   onModuleChange: (module: SettingsModule) => void
   onSettingsChange: (patch: AppSettingsPatch) => Promise<void>
   onRefresh: () => Promise<void>
   onClearAllData: () => Promise<void>
+  onDownloadUpdate: () => Promise<void>
+  onCancelUpdate: () => Promise<void>
+  onInstallUpdate: () => Promise<void>
   notify: (kind: 'success' | 'error' | 'info', message: string) => void
 }): React.JSX.Element {
   const { tr, formatDate } = useI18n()
@@ -102,6 +112,9 @@ export function SettingsPage({
   const [locationBusy, setLocationBusy] = useState(false)
   const [updateResult, setUpdateResult] = useState<UpdateCheckResult | null>(null)
   const [checkingUpdates, setCheckingUpdates] = useState(false)
+  const [downloadUpdateBusy, setDownloadUpdateBusy] = useState(false)
+  const [cancelUpdateBusy, setCancelUpdateBusy] = useState(false)
+  const [installUpdateBusy, setInstallUpdateBusy] = useState(false)
   const [customTheme, setCustomTheme] = useState<ThemeColors>(settings.customTheme)
   const [interfaceScale, setInterfaceScale] = useState(settings.interfaceScale)
   const [fontSizeScale, setFontSizeScale] = useState(settings.fontSizeScale)
@@ -401,6 +414,36 @@ export function SettingsPage({
     } finally {
       await waitForLoadingFeedback(startedAt)
       setCheckingUpdates(false)
+    }
+  }
+
+  async function startUpdateDownload(): Promise<void> {
+    if (downloadUpdateBusy || cancelUpdateBusy || installUpdateBusy) return
+    setDownloadUpdateBusy(true)
+    try {
+      await onDownloadUpdate()
+    } finally {
+      setDownloadUpdateBusy(false)
+    }
+  }
+
+  async function cancelUpdateDownload(): Promise<void> {
+    if (cancelUpdateBusy || installUpdateBusy) return
+    setCancelUpdateBusy(true)
+    try {
+      await onCancelUpdate()
+    } finally {
+      setCancelUpdateBusy(false)
+    }
+  }
+
+  async function installDownloadedUpdate(): Promise<void> {
+    if (downloadUpdateBusy || cancelUpdateBusy || installUpdateBusy) return
+    setInstallUpdateBusy(true)
+    try {
+      await onInstallUpdate()
+    } finally {
+      setInstallUpdateBusy(false)
     }
   }
 
@@ -1689,6 +1732,110 @@ export function SettingsPage({
                   )}
                 </div>
               )}
+              {updateState &&
+                (updateState.phase === 'available' ||
+                  updateState.phase === 'downloading' ||
+                  updateState.phase === 'downloaded' ||
+                  updateState.phase === 'error') && (
+                  <section
+                    className={`settings-active-update is-${updateState.phase}`}
+                    aria-label={tr('应用内更新状态', 'In-app update status', '應用程式內更新狀態')}
+                  >
+                    <div className="settings-active-update__summary">
+                      <span className="settings-active-update__icon">
+                        {updateState.phase === 'downloading' ||
+                        downloadUpdateBusy ||
+                        installUpdateBusy ? (
+                          <LoaderCircle size={16} className="spin" />
+                        ) : updateState.phase === 'downloaded' ? (
+                          <Check size={16} />
+                        ) : updateState.phase === 'error' ? (
+                          <TriangleAlert size={16} />
+                        ) : (
+                          <Download size={16} />
+                        )}
+                      </span>
+                      <span>
+                        <strong>
+                          {updateState.latestVersion
+                            ? tr(
+                                `版本 v${updateState.latestVersion}`,
+                                `Version v${updateState.latestVersion}`,
+                                `版本 v${updateState.latestVersion}`
+                              )
+                            : tr('应用更新', 'Application update', '應用程式更新')}
+                        </strong>
+                        <small>
+                          {updateState.message ??
+                            tr('更新状态已同步', 'Update status synchronized', '更新狀態已同步')}
+                        </small>
+                      </span>
+                      {updateState.phase === 'available' && (
+                        <button
+                          type="button"
+                          className="button button--primary button--small"
+                          onClick={() => void startUpdateDownload()}
+                          disabled={downloadUpdateBusy || cancelUpdateBusy || installUpdateBusy}
+                        >
+                          {downloadUpdateBusy ? (
+                            <LoaderCircle size={13} className="spin" />
+                          ) : (
+                            <Download size={13} />
+                          )}
+                          {tr('立即更新', 'Update now', '立即更新')}
+                        </button>
+                      )}
+                      {updateState.phase === 'downloaded' && (
+                        <button
+                          type="button"
+                          className="button button--primary button--small"
+                          onClick={() => void installDownloadedUpdate()}
+                          disabled={downloadUpdateBusy || cancelUpdateBusy || installUpdateBusy}
+                        >
+                          {installUpdateBusy ? (
+                            <LoaderCircle size={13} className="spin" />
+                          ) : (
+                            <RefreshCw size={13} />
+                          )}
+                          {tr('重启并安装', 'Restart and install', '重新啟動並安裝')}
+                        </button>
+                      )}
+                      {updateState.phase === 'error' && (
+                        <button
+                          type="button"
+                          className="button button--ghost button--small"
+                          onClick={() => void checkUpdates()}
+                          disabled={
+                            checkingUpdates ||
+                            downloadUpdateBusy ||
+                            cancelUpdateBusy ||
+                            installUpdateBusy
+                          }
+                        >
+                          {checkingUpdates ? (
+                            <LoaderCircle size={13} className="spin" />
+                          ) : (
+                            <RefreshCw size={13} />
+                          )}
+                          {tr('重新检查', 'Check again', '重新檢查')}
+                        </button>
+                      )}
+                    </div>
+                    {(updateState.phase === 'downloading' ||
+                      updateState.phase === 'downloaded') && (
+                      <UpdateProgress
+                        className="settings-update-progress"
+                        state={updateState}
+                        cancelling={cancelUpdateBusy}
+                        onCancel={
+                          updateState.phase === 'downloading'
+                            ? () => void cancelUpdateDownload()
+                            : undefined
+                        }
+                      />
+                    )}
+                  </section>
+                )}
             </div>
           </SettingsPanel>
         )}

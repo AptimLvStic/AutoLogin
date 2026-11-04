@@ -78,6 +78,7 @@ describe('UpdateDialog Markdown', () => {
     const props = {
       onLater: vi.fn(),
       onDownload,
+      onCancel: vi.fn(async () => undefined),
       onInstall: vi.fn(),
       onOpenRelease: vi.fn(),
       onRetry: vi.fn()
@@ -132,5 +133,47 @@ describe('UpdateDialog Markdown', () => {
       )
     })
     expect(document.body.textContent).toContain('重启并安装')
+  })
+
+  it('shows download progress and cancels an active download', async () => {
+    const onCancel = vi.fn(async () => undefined)
+    act(() => {
+      root.render(
+        React.createElement(
+          I18nProvider,
+          {
+            language: 'zh-CN',
+            children: React.createElement(UpdateDialog, {
+              state: {
+                phase: 'downloading',
+                currentVersion: '0.8.5',
+                latestVersion: '0.8.6',
+                releaseNotes: '## 更新内容',
+                interactive: true,
+                percent: 42,
+                transferred: 42 * 1024 * 1024,
+                total: 100 * 1024 * 1024,
+                bytesPerSecond: 2 * 1024 * 1024
+              },
+              onLater: vi.fn(),
+              onDownload: vi.fn(),
+              onCancel,
+              onInstall: vi.fn(),
+              onOpenRelease: vi.fn(),
+              onRetry: vi.fn()
+            })
+          }
+        )
+      )
+    })
+
+    const progress = document.querySelector('[role="progressbar"]')
+    expect(progress?.getAttribute('aria-valuenow')).toBe('42')
+    const cancelButton = [...document.querySelectorAll<HTMLButtonElement>('button')].find(
+      (button) => button.textContent?.includes('取消下载')
+    )
+    expect(cancelButton).toBeDefined()
+    await act(async () => cancelButton?.click())
+    expect(onCancel).toHaveBeenCalledOnce()
   })
 })

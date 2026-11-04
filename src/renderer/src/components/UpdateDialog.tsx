@@ -1,4 +1,13 @@
-import { CheckCircle2, Download, ExternalLink, LoaderCircle, RefreshCw, TriangleAlert } from 'lucide-react'
+import { useState } from 'react'
+import {
+  CheckCircle2,
+  Download,
+  ExternalLink,
+  LoaderCircle,
+  RefreshCw,
+  TriangleAlert,
+  X
+} from 'lucide-react'
 import type { AppUpdateState } from '@shared/types'
 import { useI18n } from '../i18n'
 import { Modal } from './Modal'
@@ -7,6 +16,7 @@ export function UpdateDialog({
   state,
   onLater,
   onDownload,
+  onCancel,
   onInstall,
   onOpenRelease,
   onRetry
@@ -14,13 +24,14 @@ export function UpdateDialog({
   state: AppUpdateState
   onLater: () => void
   onDownload: () => void
+  onCancel: () => Promise<void>
   onInstall: () => void
   onOpenRelease: () => void
   onRetry: () => void
 }): React.JSX.Element {
   const { tr, formatDate } = useI18n()
+  const [cancelling, setCancelling] = useState(false)
   const latestVersion = state.latestVersion ? `v${state.latestVersion}` : ''
-  const progress = Math.max(0, Math.min(100, state.percent ?? 0))
   const releaseDate = state.releaseDate
     ? formatDate(state.releaseDate, { dateStyle: 'medium' })
     : ''
@@ -80,26 +91,20 @@ export function UpdateDialog({
       </div>
 
       {state.phase === 'downloading' && (
-        <div className="update-dialog__progress" aria-live="polite">
-          <div className="update-dialog__progress-meta">
-            <span>{tr('正在下载更新', 'Downloading update', '正在下載更新')}</span>
-            <strong>{Math.round(progress)}%</strong>
-          </div>
-          <div
-            className="update-dialog__progress-track"
-            role="progressbar"
-            aria-label={tr('更新下载进度', 'Update download progress', '更新下載進度')}
-            aria-valuemin={0}
-            aria-valuemax={100}
-            aria-valuenow={Math.round(progress)}
-          >
-            <span style={{ width: `${progress}%` }} />
-          </div>
-          <small>
-            {formatBytes(state.transferred)} / {formatBytes(state.total)}
-            {state.bytesPerSecond ? ` · ${formatBytes(state.bytesPerSecond)}/s` : ''}
-          </small>
-        </div>
+        <UpdateProgress
+          className="update-dialog__progress"
+          state={state}
+          cancelling={cancelling}
+          onCancel={async () => {
+            if (cancelling) return
+            setCancelling(true)
+            try {
+              await onCancel()
+            } finally {
+              setCancelling(false)
+            }
+          }}
+        />
       )}
 
       {state.phase === 'error' && state.message && (
@@ -121,12 +126,6 @@ export function UpdateDialog({
             {tr('立即更新', 'Update now', '立即更新')}
           </button>
         )}
-        {state.phase === 'downloading' && (
-          <button type="button" className="button button--primary" disabled>
-            <LoaderCircle size={15} className="spin" />
-            {tr('下载中', 'Downloading', '下載中')}
-          </button>
-        )}
         {state.phase === 'downloaded' && (
           <button type="button" className="button button--primary" onClick={onInstall}>
             <RefreshCw size={15} />
@@ -141,6 +140,74 @@ export function UpdateDialog({
         )}
       </div>
     </Modal>
+  )
+}
+
+export function UpdateProgress({
+  state,
+  onCancel,
+  cancelling = false,
+  className
+}: {
+  state: Pick<
+    AppUpdateState,
+    'phase' | 'percent' | 'transferred' | 'total' | 'bytesPerSecond'
+  >
+  onCancel?: () => void
+  cancelling?: boolean
+  className?: string
+}): React.JSX.Element {
+  const { tr } = useI18n()
+  const progress = Math.max(0, Math.min(100, state.percent ?? 0))
+
+  return (
+    <div className={`update-progress${className ? ` ${className}` : ''}`} aria-live="polite">
+      <div className="update-progress__meta">
+        <span>
+          {state.phase === 'downloaded'
+            ? tr('更新下载完成', 'Update downloaded', '更新下載完成')
+            : tr('正在下载更新', 'Downloading update', '正在下載更新')}
+        </span>
+        <strong>{Math.round(progress)}%</strong>
+      </div>
+      <div
+        className="update-progress__track"
+        role="progressbar"
+        aria-label={tr('更新下载进度', 'Update download progress', '更新下載進度')}
+        aria-valuemin={0}
+        aria-valuemax={100}
+        aria-valuenow={Math.round(progress)}
+      >
+        <span style={{ width: `${progress}%` }} />
+      </div>
+      <div className="update-progress__footer">
+        {state.phase === 'downloaded' ? (
+          <small>{tr('下载已完成', 'Download complete', '下載已完成')}</small>
+        ) : (
+          <small>
+            {formatBytes(state.transferred)} / {formatBytes(state.total)}
+            {state.bytesPerSecond ? ` · ${formatBytes(state.bytesPerSecond)}/s` : ''}
+          </small>
+        )}
+        {onCancel && state.phase === 'downloading' && (
+          <button
+            type="button"
+            className="button button--ghost button--small update-progress__cancel"
+            onClick={onCancel}
+            disabled={cancelling}
+          >
+            {cancelling ? (
+              <LoaderCircle size={13} className="spin" />
+            ) : (
+              <X size={13} />
+            )}
+            {cancelling
+              ? tr('正在取消…', 'Cancelling…', '正在取消…')
+              : tr('取消下载', 'Cancel download', '取消下載')}
+          </button>
+        )}
+      </div>
+    </div>
   )
 }
 

@@ -7787,14 +7787,17 @@ html[data-color-mode='dark'] .sidebar-nav::-webkit-scrollbar-thumb {
   text-underline-offset: 2px;
 }
 
-.update-dialog__progress {
+.update-progress {
   display: flex;
   flex-direction: column;
   gap: 7px;
+}
+
+.update-dialog__progress {
   margin: 16px 28px 0;
 }
 
-.update-dialog__progress-meta {
+.update-progress__meta {
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -7803,20 +7806,20 @@ html[data-color-mode='dark'] .sidebar-nav::-webkit-scrollbar-thumb {
   font-size: calc(10px * var(--font-scale, 1));
 }
 
-.update-dialog__progress-meta strong {
+.update-progress__meta strong {
   color: var(--ink);
   font-family: 'Manrope', sans-serif;
   font-size: calc(11px * var(--font-scale, 1));
 }
 
-.update-dialog__progress-track {
+.update-progress__track {
   height: 6px;
   overflow: hidden;
   border-radius: 999px;
   background: color-mix(in srgb, var(--ink) 7%, transparent);
 }
 
-.update-dialog__progress-track span {
+.update-progress__track span {
   display: block;
   height: 100%;
   border-radius: inherit;
@@ -7824,9 +7827,94 @@ html[data-color-mode='dark'] .sidebar-nav::-webkit-scrollbar-thumb {
   transition: width 180ms ease;
 }
 
-.update-dialog__progress small {
+.update-progress__footer {
+  display: flex;
+  min-height: 26px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.update-progress small {
   color: var(--muted-light);
   font-size: calc(9px * var(--font-scale, 1));
+}
+
+.update-progress__cancel {
+  min-height: 26px;
+  padding-inline: 8px;
+  color: var(--danger);
+  font-size: calc(9px * var(--font-scale, 1));
+}
+
+.settings-active-update {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin-top: 12px;
+  padding: 13px;
+  border: 1px solid var(--content-divider);
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--canvas) 24%, var(--card));
+}
+
+.settings-active-update.is-downloaded {
+  border-color: color-mix(in srgb, var(--success) 22%, var(--content-divider));
+}
+
+.settings-active-update.is-error {
+  border-color: color-mix(in srgb, var(--danger) 22%, var(--content-divider));
+}
+
+.settings-active-update__summary {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.settings-active-update__summary > span:nth-child(2) {
+  display: flex;
+  min-width: 0;
+  flex: 1;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.settings-active-update__summary strong {
+  color: var(--ink);
+  font-size: calc(11px * var(--font-scale, 1));
+  font-weight: 650;
+}
+
+.settings-active-update__summary small {
+  color: var(--muted);
+  font-size: calc(9px * var(--font-scale, 1));
+}
+
+.settings-active-update__icon {
+  display: inline-flex;
+  width: 32px;
+  height: 32px;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  border-radius: 9px;
+  background: var(--accent-pale);
+  color: var(--accent);
+}
+
+.settings-active-update.is-downloaded .settings-active-update__icon {
+  background: color-mix(in srgb, var(--success) 10%, var(--card));
+  color: var(--success);
+}
+
+.settings-active-update.is-error .settings-active-update__icon {
+  background: color-mix(in srgb, var(--danger) 9%, var(--card));
+  color: var(--danger);
+}
+
+.settings-update-progress {
+  padding-top: 2px;
 }
 
 .update-dialog__error {
@@ -9604,6 +9692,33 @@ body.is-resizing-account-subnav .library-view-layout--accounts {
   .account-name-line strong {
     font-size: calc(11px * var(--font-scale, 1));
   }
+}
+
+/* v0.8.5 update progress, form sizing and add-button polish */
+.account-add-button,
+.account-add-button:hover:not(:disabled) {
+  box-shadow: none;
+}
+
+.account-drawer__body > .segmented-control {
+  height: 48px;
+  min-height: 48px;
+  padding: 2px 3px;
+}
+
+.account-drawer__body > .segmented-control button {
+  height: 42px;
+  min-height: 42px;
+}
+
+.account-drawer__body .input-shell,
+.account-drawer__body .site-picker__trigger {
+  height: 48px;
+  min-height: 48px;
+}
+
+.account-drawer__body .input-shell input {
+  height: 42px;
 }
 
 @media (prefers-reduced-motion: reduce) {

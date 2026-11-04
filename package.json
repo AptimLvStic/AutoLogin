@@ -1,6 +1,6 @@
 {
   "name": "autologin",
-  "version": "0.8.4",
+  "version": "0.8.5",
   "description": "A calm, local-first login workspace for Windows.",
   "main": "./out/main/index.js",
   "author": "AutoLogin",
@@ -102,6 +102,7 @@
     }
   },
   "dependencies": {
+    "builder-util-runtime": "^9.7.0",
     "csv-parse": "^7.0.3",
     "electron-updater": "^6.8.11",
     "kdbxweb": "^2.1.1"

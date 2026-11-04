@@ -1,6 +1,13 @@
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync } from 'node:fs'
 import { join, resolve } from 'node:path'
-import { test, expect, _electron as electron, type ElectronApplication, type Page } from '@playwright/test'
+import {
+  test,
+  expect,
+  _electron as electron,
+  type ElectronApplication,
+  type Locator,
+  type Page
+} from '@playwright/test'
 import { assertChromiumBrowser, discoverDefaultBrowser } from '../../src/main/browser-discovery'
 import { CdpClient } from '../../src/main/cdp-client'
 import { startFixtureServer, type FixtureServer } from './fixtures'
@@ -243,6 +250,7 @@ test('saves and tests manual selectors, then uses them for login', async () => {
 
   await page.locator('.account-row').first().click()
   const drawer = page.locator('.account-drawer')
+  await expectAccountDrawerControlsAligned(drawer)
   await drawer.getByRole('radio', { name: /手动配置/ }).check()
   const selectorRows = drawer.locator('.selector-config-row')
   await expect(selectorRows).toHaveCount(3)
@@ -510,6 +518,7 @@ test('searches accounts and uses centered table columns with icon-only actions',
   const refreshButton = page.getByRole('button', { name: '刷新', exact: true })
   const batchButton = page.getByRole('button', { name: '批量操作', exact: true })
   await expect(addButton).toHaveText('')
+  await expect(addButton).toHaveCSS('box-shadow', 'none')
   await expect(refreshButton).toHaveText('')
   await expect(batchButton).toHaveText('')
   await expect(alphaRow.getByRole('button', { name: '登录', exact: true })).toHaveText('')
@@ -1095,6 +1104,47 @@ test('persists dark mode, language, themes and interface scale with separate res
     await updateDialog.getByRole('button', { name: '稍后提醒' }).click()
     await expect(updateDialog).toHaveCount(0)
   }
+  await application.evaluate(({ BrowserWindow }) => {
+    BrowserWindow.getAllWindows()[0]?.webContents.send('app:update-state', {
+      phase: 'available',
+      currentVersion: '0.8.5',
+      latestVersion: '99.0.0',
+      releaseName: 'AutoLogin v99.0.0',
+      releaseNotes: '## 更新内容\n\n- 下载进度测试',
+      interactive: true,
+      message: '发现新版本 v99.0.0'
+    })
+  })
+  await expect(updateDialog).toBeVisible()
+  await updateDialog.getByRole('button', { name: '稍后提醒' }).click()
+  await expect(updateDialog).toHaveCount(0)
+  await application.evaluate(({ BrowserWindow }) => {
+    BrowserWindow.getAllWindows()[0]?.webContents.send('app:update-state', {
+      phase: 'downloading',
+      currentVersion: '0.8.5',
+      latestVersion: '99.0.0',
+      releaseName: 'AutoLogin v99.0.0',
+      releaseNotes: '## 更新内容\n\n- 下载进度测试',
+      interactive: true,
+      percent: 48,
+      transferred: 48 * 1024 * 1024,
+      total: 100 * 1024 * 1024,
+      bytesPerSecond: 4 * 1024 * 1024,
+      message: '正在下载更新…'
+    })
+  })
+  const settingsUpdate = settings.locator('.settings-active-update')
+  await expect(settingsUpdate).toBeVisible()
+  await expect(settingsUpdate.getByRole('progressbar')).toHaveAttribute('aria-valuenow', '48')
+  await expect(settingsUpdate.getByRole('button', { name: '取消下载' })).toBeVisible()
+  await application.evaluate(({ BrowserWindow }) => {
+    BrowserWindow.getAllWindows()[0]?.webContents.send('app:update-state', {
+      phase: 'up-to-date',
+      currentVersion: '0.8.5',
+      interactive: true,
+      message: '当前已是最新版本'
+    })
+  })
 
   await settings.getByRole('tab', { name: '网络代理' }).click()
   await expect(settings.getByRole('heading', { name: '代理模式' })).toBeVisible()
@@ -1558,6 +1608,7 @@ async function addAccount(
   if ((await drawer.getByRole('button', { name: '新站点' }).count()) > 0) {
     await drawer.getByRole('button', { name: '新站点' }).click()
   }
+  await expectAccountDrawerControlsAligned(drawer)
   await expect(drawer.getByPlaceholder('例如：工作台')).toBeVisible()
   await drawer.getByPlaceholder('例如：工作台').fill(account.siteName)
   await drawer.getByPlaceholder('https://example.com/login').fill(account.startUrl)
@@ -1573,6 +1624,20 @@ async function addAccount(
   await expect(
     targetPage.locator('.account-row').filter({ hasText: account.siteName })
   ).toHaveCount(1)
+}
+
+async function expectAccountDrawerControlsAligned(drawer: Locator): Promise<void> {
+  const heights = await drawer
+    .locator(
+      '.account-drawer__body > .segmented-control, .account-drawer__body .input-shell, .account-drawer__body .site-picker__trigger'
+    )
+    .evaluateAll((elements) =>
+      elements
+        .filter((element) => element.getClientRects().length > 0)
+        .map((element) => element.getBoundingClientRect().height)
+    )
+  expect(heights.length).toBeGreaterThan(0)
+  expect(Math.max(...heights) - Math.min(...heights)).toBeLessThanOrEqual(1)
 }
 
 async function openLogPage(targetPage: Page, label: '登录日志' | '软件日志'): Promise<void> {

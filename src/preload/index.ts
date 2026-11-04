@@ -91,6 +91,7 @@ const api: AutologinApi = {
     checkForUpdates: () => invoke('app:check-for-updates'),
     getUpdateState: () => invoke('app:get-update-state'),
     downloadUpdate: () => invoke('app:download-update'),
+    cancelUpdate: () => invoke('app:cancel-update'),
     installUpdate: () => invoke('app:install-update'),
     openRepository: () => invoke('app:open-repository'),
     openReleases: () => invoke('app:open-releases'),

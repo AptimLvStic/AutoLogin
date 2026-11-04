@@ -4,6 +4,7 @@ import { basename, dirname, join, resolve } from 'node:path'
 import { randomUUID } from 'node:crypto'
 import type { IpcMainEvent, IpcMainInvokeEvent } from 'electron'
 import { autoUpdater } from 'electron-updater'
+import { CancellationToken } from 'builder-util-runtime'
 import {
   accountBatchStrategyInputSchema,
   accountCreateInputSchema,
@@ -133,6 +134,8 @@ let updateState: AppUpdateState = {
 }
 let updaterInitialized = false
 let startupUpdateCheckStarted = false
+let updateDownloadToken: CancellationToken | null = null
+let updateDownloadCancelled = false
 const pendingKdbxSelections = new Map<
   string,
   { path: string; fileName: string; size: number; expiresAt: number }
@@ -879,6 +882,10 @@ function registerIpc(): void {
   ipcMain.handle('app:download-update', async (event): Promise<AppUpdateState> => {
     assertTrustedSender(event)
     return downloadUpdate()
+  })
+  ipcMain.handle('app:cancel-update', async (event): Promise<AppUpdateState> => {
+    assertTrustedSender(event)
+    return cancelUpdate()
   })
   ipcMain.handle('app:install-update', async (event): Promise<void> => {
     assertTrustedSender(event)
@@ -1950,6 +1957,8 @@ function initializeAutoUpdater(): void {
     })
   })
   autoUpdater.on('update-downloaded', (info) => {
+    updateDownloadCancelled = false
+    updateDownloadToken = null
     publishUpdateState({
       ...updateState,
       phase: 'downloaded',
@@ -1960,6 +1969,7 @@ function initializeAutoUpdater(): void {
     })
   })
   autoUpdater.on('error', (error) => {
+    if (updateDownloadCancelled || updateDownloadToken?.cancelled) return
     if (updateState.phase === 'idle' || updateState.phase === 'up-to-date') return
     publishUpdateState({
       ...updateState,
@@ -2002,6 +2012,7 @@ async function checkForUpdates(interactive = true): Promise<UpdateCheckResult> {
     }
   }
 
+  updateDownloadCancelled = false
   publishUpdateState({
     phase: 'checking',
     currentVersion,
@@ -2101,9 +2112,26 @@ async function downloadUpdate(): Promise<AppUpdateState> {
     percent: 0,
     message: '正在下载更新…'
   })
+  updateDownloadCancelled = false
+  const token = new CancellationToken()
+  updateDownloadToken = token
   try {
-    await autoUpdater.downloadUpdate()
+    await autoUpdater.downloadUpdate(token)
   } catch (error) {
+    if (token.cancelled) {
+      if (updateDownloadToken === token) {
+        publishUpdateState({
+          ...getUpdateState(),
+          phase: 'available',
+          percent: 0,
+          bytesPerSecond: undefined,
+          transferred: undefined,
+          total: undefined,
+          message: '更新下载已取消'
+        })
+      }
+      return getUpdateState()
+    }
     const current = getUpdateState()
     publishUpdateState({
       ...current,
@@ -2111,6 +2139,10 @@ async function downloadUpdate(): Promise<AppUpdateState> {
       message: updateErrorMessage(error)
     })
     throw error
+  } finally {
+    if (updateDownloadToken === token) {
+      updateDownloadToken = null
+    }
   }
   const current = getUpdateState()
   if (current.phase !== 'downloaded') {
@@ -2121,6 +2153,24 @@ async function downloadUpdate(): Promise<AppUpdateState> {
       message: '更新已下载，重启后即可安装'
     })
   }
+  return getUpdateState()
+}
+
+async function cancelUpdate(): Promise<AppUpdateState> {
+  if (updateState.phase !== 'downloading' || !updateDownloadToken) {
+    return getUpdateState()
+  }
+  updateDownloadCancelled = true
+  updateDownloadToken.cancel()
+  publishUpdateState({
+    ...getUpdateState(),
+    phase: 'available',
+    percent: 0,
+    bytesPerSecond: undefined,
+    transferred: undefined,
+    total: undefined,
+    message: '更新下载已取消'
+  })
   return getUpdateState()
 }
 

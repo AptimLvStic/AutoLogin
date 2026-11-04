@@ -544,6 +544,7 @@ export interface AutologinApi {
     checkForUpdates: () => Promise<UpdateCheckResult>
     getUpdateState: () => Promise<AppUpdateState>
     downloadUpdate: () => Promise<AppUpdateState>
+    cancelUpdate: () => Promise<AppUpdateState>
     installUpdate: () => Promise<void>
     openRepository: () => Promise<void>
     openReleases: () => Promise<void>

@@ -32,6 +32,7 @@ import {
   TRASH_RETENTION_OPTIONS,
   type AccountWithSite,
   type AppSettings,
+  type AppUpdateState,
   type DeletedAccountWithSite,
   type GroupDefinition,
   type LoginBatchState,
@@ -77,11 +78,15 @@ export function LibraryScreen({
   sites,
   settings,
   appVersion,
+  updateState,
   batchState,
   onRefresh,
   onLock,
   onStartBatch,
   onRecord,
+  onDownloadUpdate,
+  onCancelUpdate,
+  onInstallUpdate,
   onCleared,
   notify
 }: {
@@ -89,11 +94,15 @@ export function LibraryScreen({
   sites: Site[]
   settings: AppSettings
   appVersion: string
+  updateState: AppUpdateState | null
   batchState: LoginBatchState | null
   onRefresh: () => Promise<void>
   onLock: () => Promise<void>
   onStartBatch: (accountIds: string[]) => Promise<boolean>
   onRecord: (account: AccountWithSite) => void
+  onDownloadUpdate: () => Promise<void>
+  onCancelUpdate: () => Promise<void>
+  onInstallUpdate: () => Promise<void>
   onCleared: () => void
   notify: (kind: 'success' | 'error' | 'info', message: string) => void
 }): React.JSX.Element {
@@ -2220,7 +2229,7 @@ export function LibraryScreen({
                   <div className="library-toolbar__actions">
                     <button
                       type="button"
-                      className="button button--primary button--small button--icon-only"
+                      className="account-add-button button button--primary button--small button--icon-only"
                       onClick={() => setDrawer({ mode: 'create' })}
                       aria-label={tr('添加账号', 'Add account', '新增帳號')}
                       title={tr('添加账号', 'Add account', '新增帳號')}
@@ -2510,6 +2519,7 @@ export function LibraryScreen({
               module={settingsModule}
               settings={settings}
               appVersion={appVersion}
+              updateState={updateState}
               onModuleChange={chooseSettingsModule}
               onSettingsChange={async (patch) => {
                 await window.autologin.settings.update(patch)
@@ -2517,6 +2527,9 @@ export function LibraryScreen({
               }}
               onRefresh={onRefresh}
               onClearAllData={clearAllData}
+              onDownloadUpdate={onDownloadUpdate}
+              onCancelUpdate={onCancelUpdate}
+              onInstallUpdate={onInstallUpdate}
               notify={notify}
             />
           )}

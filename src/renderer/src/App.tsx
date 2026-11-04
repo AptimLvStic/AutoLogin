@@ -35,7 +35,7 @@ export default function App(): React.JSX.Element {
   const [accounts, setAccounts] = useState<AccountWithSite[]>([])
   const [sites, setSites] = useState<Site[]>([])
   const [settings, setSettings] = useState<AppSettings>(DEFAULT_SETTINGS)
-  const [appVersion, setAppVersion] = useState('0.8.4')
+  const [appVersion, setAppVersion] = useState('0.8.5')
   const [loginTarget, setLoginTarget] = useState<LoginTarget | null>(null)
   const [batchState, setBatchState] = useState<LoginBatchState | null>(null)
   const [updateState, setUpdateState] = useState<AppUpdateState | null>(null)
@@ -336,6 +336,19 @@ export default function App(): React.JSX.Element {
     }
   }
 
+  async function cancelUpdate(): Promise<void> {
+    try {
+      setUpdateState(await window.autologin.app.cancelUpdate())
+    } catch (error) {
+      notify(
+        'error',
+        error instanceof Error
+          ? error.message
+          : translate(settings.language, '无法取消更新下载', 'Could not cancel the update download', '無法取消更新下載')
+      )
+    }
+  }
+
   async function installUpdate(): Promise<void> {
     try {
       await window.autologin.app.installUpdate()
@@ -412,11 +425,15 @@ export default function App(): React.JSX.Element {
           sites={sites}
           settings={settings}
           appVersion={appVersion}
+          updateState={updateState}
           batchState={batchState}
           onRefresh={loadData}
           onLock={lockVault}
           onStartBatch={startBatch}
           onRecord={openRecording}
+          onDownloadUpdate={downloadUpdate}
+          onCancelUpdate={cancelUpdate}
+          onInstallUpdate={installUpdate}
           onCleared={() => {
             setAccounts([])
             setSites([])
@@ -446,6 +463,7 @@ export default function App(): React.JSX.Element {
             setDismissedUpdateVersion(updateState.latestVersion ?? updateState.phase)
           }
           onDownload={() => void downloadUpdate()}
+          onCancel={cancelUpdate}
           onInstall={() => void installUpdate()}
           onOpenRelease={() => void window.autologin.app.openReleases()}
           onRetry={() => void retryUpdate()}

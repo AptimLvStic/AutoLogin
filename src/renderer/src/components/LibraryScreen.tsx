@@ -2174,31 +2174,6 @@ export function LibraryScreen({
                 </div>
               </header>
 
-              <div className="account-subnav-controls">
-                <button
-                  type="button"
-                  className="account-subnav-toggle button button--ghost button--small button--icon-only"
-                  onClick={handleSubnavToggle}
-                  aria-label={
-                    accountSubnavHidden
-                      ? tr('展开账号侧边栏', 'Expand account sidebar', '展開帳號側邊欄')
-                      : tr('隐藏账号侧边栏', 'Hide account sidebar', '隱藏帳號側邊欄')
-                  }
-                  aria-expanded={!accountSubnavHidden}
-                  title={
-                    accountSubnavHidden
-                      ? tr('展开账号侧边栏', 'Expand account sidebar', '展開帳號側邊欄')
-                      : tr('隐藏账号侧边栏', 'Hide account sidebar', '隱藏帳號側邊欄')
-                  }
-                >
-                  {accountSubnavHidden ? (
-                    <PanelLeftOpen size={14} />
-                  ) : (
-                    <PanelLeftClose size={14} />
-                  )}
-                </button>
-              </div>
-
               <div className="library-toolbar">
                 <div
                   className={`search-field search-field--expandable${
@@ -2313,6 +2288,31 @@ export function LibraryScreen({
                     </button>
                   </div>
                 )}
+              </div>
+
+              <div className="account-subnav-controls">
+                <button
+                  type="button"
+                  className="account-subnav-toggle button button--ghost button--small button--icon-only"
+                  onClick={handleSubnavToggle}
+                  aria-label={
+                    accountSubnavHidden
+                      ? tr('展开账号侧边栏', 'Expand account sidebar', '展開帳號側邊欄')
+                      : tr('隐藏账号侧边栏', 'Hide account sidebar', '隱藏帳號側邊欄')
+                  }
+                  aria-expanded={!accountSubnavHidden}
+                  title={
+                    accountSubnavHidden
+                      ? tr('展开账号侧边栏', 'Expand account sidebar', '展開帳號側邊欄')
+                      : tr('隐藏账号侧边栏', 'Hide account sidebar', '隱藏帳號側邊欄')
+                  }
+                >
+                  {accountSubnavHidden ? (
+                    <PanelLeftOpen size={14} />
+                  ) : (
+                    <PanelLeftClose size={14} />
+                  )}
+                </button>
               </div>
 
               <section className="account-list" aria-live="polite">

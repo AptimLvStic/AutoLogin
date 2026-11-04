@@ -9920,3 +9920,117 @@ body.is-resizing-account-subnav .library-view-layout--accounts {
     display: none;
   }
 }
+
+/* v0.8.4 account toolbar order and compact table headers */
+.account-subnav-controls {
+  margin-top: 12px;
+}
+
+.library-toolbar {
+  grid-template-columns: minmax(40px, 360px) minmax(0, 1fr);
+  align-items: center;
+}
+
+.library-toolbar__actions {
+  width: auto;
+  flex-wrap: nowrap;
+  justify-content: flex-end;
+  overflow-x: auto;
+}
+
+@container account-main (max-width: 760px) {
+  .library-toolbar {
+    grid-template-columns: minmax(40px, 1fr) auto;
+    align-items: center;
+  }
+
+  .search-field--expandable.is-expanded {
+    width: 100%;
+    max-width: 360px;
+  }
+
+  .library-toolbar__actions {
+    width: auto;
+    justify-content: flex-end;
+  }
+}
+
+.account-list__header > span,
+.account-row > .account-identity,
+.account-row > .account-username,
+.account-row > .account-group-cell,
+.account-row > .account-updated,
+.account-row > .account-status-cell {
+  min-width: 0;
+}
+
+@media (max-width: 1040px) {
+  .account-list__header,
+  .account-row {
+    grid-template-columns:
+      20px minmax(90px, 1.3fr) minmax(64px, 0.85fr) minmax(44px, 0.55fr)
+      72px 64px minmax(100px, auto);
+    gap: 5px;
+    padding-right: 8px;
+    padding-left: 8px;
+  }
+
+  .account-list__header > span.account-col--group,
+  .account-list__header > span.account-col--status {
+    display: block;
+  }
+
+  .account-row > div.account-group-cell,
+  .account-row > div.account-status-cell {
+    display: flex;
+  }
+}
+
+@container account-main (max-width: 700px) {
+  .account-list__header,
+  .account-row {
+    grid-template-columns:
+      20px minmax(84px, 1.2fr) minmax(58px, 0.75fr) minmax(40px, 0.5fr)
+      62px 58px minmax(96px, auto);
+    gap: 5px;
+    padding-right: 8px;
+    padding-left: 8px;
+  }
+
+  .account-list__header > span.account-col--group,
+  .account-list__header > span.account-col--status {
+    display: block;
+  }
+
+  .account-row > div.account-group-cell,
+  .account-row > div.account-status-cell {
+    display: flex;
+  }
+
+  .account-status-cell .recipe-badge {
+    gap: 4px;
+    padding: 0 5px;
+  }
+}
+
+@container account-main (max-width: 560px) {
+  .account-list__header,
+  .account-row {
+    grid-template-columns:
+      20px minmax(76px, 1.15fr) minmax(52px, 0.72fr) minmax(36px, 0.48fr)
+      56px 52px minmax(92px, auto);
+    gap: 4px;
+    padding-right: 6px;
+    padding-left: 6px;
+  }
+
+  .account-status-cell .recipe-badge {
+    width: 24px;
+    min-width: 24px;
+    justify-content: center;
+    gap: 0;
+    overflow: hidden;
+    padding: 0;
+    font-size: 0;
+  }
+}

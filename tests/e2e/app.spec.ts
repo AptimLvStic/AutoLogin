@@ -702,8 +702,8 @@ test('resizes, hides and restores the account subnav, and creates three group le
   expect(breadcrumbBox).not.toBeNull()
   expect(collapseBox).not.toBeNull()
   expect(toolbarBox).not.toBeNull()
-  expect(collapseBox!.y).toBeGreaterThanOrEqual(breadcrumbBox!.y + breadcrumbBox!.height - 1)
-  expect(collapseBox!.y + collapseBox!.height).toBeLessThanOrEqual(toolbarBox!.y + 1)
+  expect(toolbarBox!.y).toBeGreaterThanOrEqual(breadcrumbBox!.y + breadcrumbBox!.height - 1)
+  expect(collapseBox!.y).toBeGreaterThanOrEqual(toolbarBox!.y + toolbarBox!.height - 1)
   await expect(layout).not.toHaveClass(/is-account-subnav-hidden/)
   const dividerMetrics = await page.locator('.account-subnav-shell').evaluate((element) => {
     const shell = element.getBoundingClientRect()
@@ -812,6 +812,16 @@ test('resizes, hides and restores the account subnav, and creates three group le
   expect(compactLayout.display).toBe('grid')
   expect(compactLayout.columns.split(' ').length).toBeGreaterThan(1)
   expect(compactLayout.pageOverflow).toBe(false)
+  const tableHeaders = page.locator('.account-list__header')
+  for (const selector of [
+    '.account-col--site',
+    '.account-col--username',
+    '.account-col--group',
+    '.account-col--updated',
+    '.account-col--status'
+  ]) {
+    await expect(tableHeaders.locator(selector)).toBeVisible()
+  }
   const toolbarAlignment = await page.locator('.library-toolbar').evaluate((toolbar) => {
     const actions = toolbar.querySelector<HTMLElement>('.library-toolbar__actions')
     const toolbarRect = toolbar.getBoundingClientRect()
@@ -819,6 +829,31 @@ test('resizes, hides and restores the account subnav, and creates three group le
     return actionsRect ? Math.abs(toolbarRect.right - actionsRect.right) : Number.POSITIVE_INFINITY
   })
   expect(toolbarAlignment).toBeLessThan(6)
+  const toolbarRow = await page.locator('.library-toolbar').evaluate((toolbar) => {
+    const search = toolbar.querySelector<HTMLElement>('.search-field--expandable')
+    const add = toolbar.querySelector<HTMLElement>('.library-toolbar__actions .button--primary')
+    const searchRect = search?.getBoundingClientRect()
+    const addRect = add?.getBoundingClientRect()
+    return searchRect && addRect
+      ? {
+          searchCenter: searchRect.top + searchRect.height / 2,
+          addCenter: addRect.top + addRect.height / 2
+        }
+      : null
+  })
+  expect(toolbarRow).not.toBeNull()
+  expect(Math.abs(toolbarRow!.searchCenter - toolbarRow!.addCenter)).toBeLessThan(3)
+  await collapseButton.click()
+  await expect(layout).toHaveClass(/is-account-subnav-hidden/)
+  for (const selector of [
+    '.account-col--site',
+    '.account-col--username',
+    '.account-col--group',
+    '.account-col--updated',
+    '.account-col--status'
+  ]) {
+    await expect(tableHeaders.locator(selector)).toBeVisible()
+  }
   await expect(page.locator('.vault-indicator')).toHaveCSS('text-align', 'center')
 })
 

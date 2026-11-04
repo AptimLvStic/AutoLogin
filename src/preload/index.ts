@@ -41,6 +41,7 @@ const api: AutologinApi = {
   groups: {
     list: () => invoke('groups:list'),
     create: (input) => invoke('groups:create', input),
+    move: (input) => invoke('groups:move', input),
     listFavorites: () => invoke('groups:list-favorites'),
     setFavorite: (groupName, favorite) =>
       invoke('groups:set-favorite', { groupName, favorite }),
@@ -101,6 +102,7 @@ const api: AutologinApi = {
     listFailureLogs: () => invoke('app:list-failure-logs'),
     deleteLoginLogs: (ids) => invoke('app:delete-login-logs', ids),
     listAppLogs: (limit) => invoke('app:list-app-logs', limit),
+    deleteAppLogs: (ids) => invoke('app:delete-app-logs', ids),
     clearAppLogs: () => invoke('app:clear-app-logs'),
     restart: () => invoke('app:restart'),
     reportActivity: () => ipcRenderer.send('app:activity'),

@@ -32,6 +32,7 @@ export const DEFAULT_APP_SETTINGS: AppSettings = {
   themePreset: 'magpie',
   customTheme: DEFAULT_THEME_COLORS,
   interfaceScale: 100,
+  fontSizeScale: 100,
   proxy: DEFAULT_PROXY_SETTINGS,
   groupOrder: []
 }

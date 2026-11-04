@@ -10,12 +10,14 @@ import {
   accountDeleteManyInputSchema,
   accountDuplicateInputSchema,
   accountUpdateInputSchema,
+  appLogDeleteSchema,
   appLogQuerySchema,
   appSettingsPatchSchema,
   changePasswordSchema,
   favoriteGroupInputSchema,
   groupCreateInputSchema,
   groupDeleteInputSchema,
+  groupMoveInputSchema,
   groupRenameInputSchema,
   kdbxSelectionImportSchema,
   loginBatchStartSchema,
@@ -42,6 +44,8 @@ import type {
   FileOperationResult,
   GroupCreateInput,
   GroupDefinition,
+  GroupMoveInput,
+  GroupMoveResult,
   GroupRenameInput,
   KdbxSelection,
   LoginLogEntry,
@@ -63,7 +67,7 @@ import type {
   VaultStatus
 } from '@shared/types'
 import { BackupManager } from './backups'
-import { appendAppLog, clearAppLogs, readAppLogs } from './app-log'
+import { appendAppLog, clearAppLogs, deleteAppLogs, readAppLogs } from './app-log'
 import {
   CSV_TEMPLATE,
   mergeImportedLogins,
@@ -413,6 +417,14 @@ function registerIpc(): void {
       throw new Error(firstIssue(parsed.error))
     }
     return createGroup(parsed.data)
+  })
+  ipcMain.handle('groups:move', (event, payload: unknown): GroupMoveResult => {
+    assertTrustedSender(event)
+    const parsed = groupMoveInputSchema.safeParse(payload)
+    if (!parsed.success) {
+      throw new Error(firstIssue(parsed.error))
+    }
+    return moveGroup(parsed.data)
   })
   ipcMain.handle('groups:list-favorites', (event) => {
     assertTrustedSender(event)
@@ -946,6 +958,14 @@ function registerIpc(): void {
     }
     return readAppLogs(dataDirectory, parsed.data ?? 200)
   })
+  ipcMain.handle('app:delete-app-logs', (event, payload: unknown): { deleted: number } => {
+    assertTrustedSender(event)
+    const parsed = appLogDeleteSchema.safeParse(payload)
+    if (!parsed.success) {
+      throw new Error(firstIssue(parsed.error))
+    }
+    return { deleted: deleteAppLogs(dataDirectory, parsed.data) }
+  })
   ipcMain.handle('app:clear-app-logs', (event): { deleted: number } => {
     assertTrustedSender(event)
     const deleted = clearAppLogs(dataDirectory)
@@ -1059,6 +1079,81 @@ function renameGroup(input: GroupRenameInput): void {
   data.favoriteGroups = [...new Set(data.favoriteGroups.map(renamePath))]
   data.settings.groupOrder = [...new Set(data.settings.groupOrder.map(renamePath))]
   vault.save()
+}
+
+function moveGroup(input: GroupMoveInput): GroupMoveResult {
+  const data = vault.requireData()
+  ensureGroupDefinitions(data)
+  const fromPath = input.fromPath.trim()
+  const parentPath = input.parentPath?.trim() || undefined
+  if (!groupPathExists(data, fromPath)) {
+    throw new Error('分组不存在')
+  }
+  if (parentPath && !groupPathExists(data, parentPath)) {
+    throw new Error('目标分组不存在')
+  }
+  if (
+    parentPath === fromPath ||
+    parentPath?.startsWith(`${fromPath}${GROUP_PATH_SEPARATOR}`)
+  ) {
+    throw new Error('不能将分组移动到自身或其子分组中')
+  }
+
+  const currentParent = groupParentPath(fromPath)
+  if ((currentParent ?? undefined) === parentPath) {
+    return { fromPath, toPath: fromPath }
+  }
+
+  const groupName = fromPath.split(GROUP_PATH_SEPARATOR).at(-1) ?? fromPath
+  const toPath = parentPath
+    ? `${parentPath}${GROUP_PATH_SEPARATOR}${groupName}`
+    : groupName
+  const paths = allGroupPaths(data)
+  if (paths.some((path) => path === toPath && path !== fromPath)) {
+    throw new Error('目标分组下已存在同名分组')
+  }
+
+  const movedPaths = paths.filter(
+    (path) => path === fromPath || path.startsWith(`${fromPath}${GROUP_PATH_SEPARATOR}`)
+  )
+  const relativeDepth = Math.max(
+    0,
+    ...movedPaths.map((path) => groupDepth(path) - groupDepth(fromPath))
+  )
+  const targetDepth = parentPath ? groupDepth(parentPath) : 0
+  if (targetDepth + 1 + relativeDepth > GROUP_MAX_DEPTH) {
+    throw new Error(`分组最多支持 ${GROUP_MAX_DEPTH} 级`)
+  }
+
+  const now = new Date().toISOString()
+  const movePath = (path: string): string => {
+    if (path === fromPath) return toPath
+    if (path.startsWith(`${fromPath}${GROUP_PATH_SEPARATOR}`)) {
+      return `${toPath}${path.slice(fromPath.length)}`
+    }
+    return path
+  }
+
+  data.groupDefinitions = data.groupDefinitions.map((group) => ({
+    ...group,
+    path: movePath(group.path),
+    updatedAt: now
+  }))
+  for (const site of data.sites) {
+    if (!site.group) continue
+    const next = movePath(site.group)
+    if (next !== site.group) {
+      site.group = next
+      site.updatedAt = now
+    }
+  }
+  for (const record of data.deletedAccounts) {
+    if (record.site.group) record.site.group = movePath(record.site.group)
+  }
+  data.favoriteGroups = [...new Set(data.favoriteGroups.map(movePath))]
+  data.settings.groupOrder = [...new Set(data.settings.groupOrder.map(movePath))]
+  vault.save()
+  return { fromPath, toPath }
 }
 
 function deleteGroup(groupName: string): number {

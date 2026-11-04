@@ -14,7 +14,6 @@ import {
   LoaderCircle,
   RefreshCw,
   SlidersHorizontal,
-  Star,
   Trash2,
   UserRound,
   X
@@ -75,7 +74,6 @@ export function AccountDrawer({
   const [siteGroup, setSiteGroup] = useState(initialSite?.group ?? '')
   const [username, setUsername] = useState(account?.username ?? '')
   const [password, setPassword] = useState('')
-  const [favorite, setFavorite] = useState(account?.favorite ?? false)
   const [showPassword, setShowPassword] = useState(false)
   const [revealedPassword, setRevealedPassword] = useState('')
   const [busy, setBusy] = useState(false)
@@ -96,11 +94,13 @@ export function AccountDrawer({
   >({})
   const [selectorTesting, setSelectorTesting] = useState<SelectorTestField | null>(null)
   const [sitePickerOpen, setSitePickerOpen] = useState(false)
+  const [groupPickerOpen, setGroupPickerOpen] = useState(false)
   const [recipeDetails, setRecipeDetails] = useState<AccountRecipe | null>(null)
   const [confirmRecipeDelete, setConfirmRecipeDelete] = useState<AccountRecipe | null>(null)
   const [recipeBusy, setRecipeBusy] = useState(false)
   const revealTimer = useRef<number | null>(null)
   const sitePickerRef = useRef<HTMLDivElement>(null)
+  const groupPickerRef = useRef<HTMLDivElement>(null)
 
   const selectedSite = useMemo(
     () => sites.find((site) => site.id === selectedSiteId),
@@ -138,6 +138,28 @@ export function AccountDrawer({
       document.removeEventListener('keydown', closeOnEscape)
     }
   }, [sitePickerOpen])
+
+  useEffect(() => {
+    if (!groupPickerOpen) return
+    const closeOnPointer = (event: PointerEvent): void => {
+      if (
+        event.target instanceof Node &&
+        groupPickerRef.current?.contains(event.target)
+      ) {
+        return
+      }
+      setGroupPickerOpen(false)
+    }
+    const closeOnEscape = (event: KeyboardEvent): void => {
+      if (event.key === 'Escape') setGroupPickerOpen(false)
+    }
+    document.addEventListener('pointerdown', closeOnPointer)
+    document.addEventListener('keydown', closeOnEscape)
+    return () => {
+      document.removeEventListener('pointerdown', closeOnPointer)
+      document.removeEventListener('keydown', closeOnEscape)
+    }
+  }, [groupPickerOpen])
 
   function hideRevealedPassword(): void {
     if (revealTimer.current) {
@@ -259,7 +281,6 @@ export function AccountDrawer({
         saved = await window.autologin.accounts.update(account.id, {
           label: site.name,
           username: username.trim(),
-          favorite,
           loginStrategy,
           manualSelectors,
           ...(password ? { password } : {})
@@ -271,7 +292,6 @@ export function AccountDrawer({
           label: site.name,
           username: username.trim(),
           password,
-          favorite,
           loginStrategy,
           manualSelectors
         })
@@ -627,25 +647,78 @@ export function AccountDrawer({
                 </span>
               </label>
 
-              <label className="field">
+              <div className="field">
                 <span className="field__label">{tr('站点分组（可选）', 'Site group (optional)', '站點分組（選填）')}</span>
-                <span className="input-shell">
-                  <Layers3 size={17} />
-                  <select
-                    className="select-control"
-                    value={siteGroup}
-                    onChange={(event) => setSiteGroup(event.target.value)}
+                <div className="site-picker group-picker" ref={groupPickerRef}>
+                  <button
+                    type="button"
+                    className={`site-picker__trigger${groupPickerOpen ? ' is-open' : ''}`}
                     aria-label={tr('站点分组', 'Site group', '站點分組')}
+                    aria-haspopup="listbox"
+                    aria-expanded={groupPickerOpen}
+                    onClick={() => setGroupPickerOpen((current) => !current)}
                   >
-                    <option value="">{tr('未分组', 'Ungrouped', '未分組')}</option>
-                    {groupOptions.map((group) => (
-                      <option key={group.path} value={group.path}>
-                        {group.path}
-                      </option>
-                    ))}
-                  </select>
-                </span>
-              </label>
+                    <Layers3 size={17} />
+                    <span>
+                      <strong>{siteGroup || tr('未分组', 'Ungrouped', '未分組')}</strong>
+                      <small>
+                        {siteGroup
+                          ? tr('当前分组', 'Current group', '目前分組')
+                          : tr('默认分组', 'Default group', '預設分組')}
+                      </small>
+                    </span>
+                    <ChevronDown
+                      size={16}
+                      className={groupPickerOpen ? 'is-open' : ''}
+                    />
+                  </button>
+                  {groupPickerOpen && (
+                    <div
+                      className="site-picker__menu group-picker__menu"
+                      role="listbox"
+                      aria-label={tr('站点分组列表', 'Site groups', '站點分組清單')}
+                    >
+                      <button
+                        type="button"
+                        role="option"
+                        aria-selected={siteGroup === ''}
+                        className={siteGroup === '' ? 'is-selected' : ''}
+                        onClick={() => {
+                          setSiteGroup('')
+                          setGroupPickerOpen(false)
+                        }}
+                      >
+                        <Layers3 size={15} />
+                        <span>
+                          <strong>{tr('未分组', 'Ungrouped', '未分組')}</strong>
+                          <small>{tr('不归入站点分组', 'No site group', '不歸入站點分組')}</small>
+                        </span>
+                        {siteGroup === '' && <Check size={14} />}
+                      </button>
+                      {groupOptions.map((group) => (
+                        <button
+                          type="button"
+                          role="option"
+                          key={group.path}
+                          aria-selected={group.path === siteGroup}
+                          className={group.path === siteGroup ? 'is-selected' : ''}
+                          onClick={() => {
+                            setSiteGroup(group.path)
+                            setGroupPickerOpen(false)
+                          }}
+                        >
+                          <Layers3 size={15} />
+                          <span>
+                            <strong>{group.path}</strong>
+                            <small>{tr('站点分组', 'Site group', '站點分組')}</small>
+                          </span>
+                          {group.path === siteGroup && <Check size={14} />}
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              </div>
 
               <label className="field">
                 <span className="field__label">{tr('用户名', 'Username', '使用者名稱')}</span>
@@ -711,18 +784,6 @@ export function AccountDrawer({
                     type="checkbox"
                     checked={autoSubmit}
                     onChange={(event) => setAutoSubmit(event.target.checked)}
-                  />
-                  <span className="switch" aria-hidden="true" />
-                </label>
-                <label className="switch-row">
-                  <span>
-                    <strong>{tr('加入收藏', 'Add to favorites', '加入收藏')}</strong>
-                    <small>{tr('在收藏页快速访问', 'Quick access from Favorites', '在收藏頁快速存取')}</small>
-                  </span>
-                  <input
-                    type="checkbox"
-                    checked={favorite}
-                    onChange={(event) => setFavorite(event.target.checked)}
                   />
                   <span className="switch" aria-hidden="true" />
                 </label>

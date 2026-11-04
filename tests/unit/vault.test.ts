@@ -127,7 +127,11 @@ describe('VaultManager', () => {
     await manager.create('correct horse battery staple')
 
     manager.updateSettings({ autoLockMinutes: 30, trashRetentionDays: 30 })
-    manager.updateSettings({ themePreset: 'custom', interfaceScale: 115 })
+    manager.updateSettings({
+      themePreset: 'custom',
+      interfaceScale: 115,
+      fontSizeScale: 125
+    })
     manager.updateSettings({
       customTheme: {
         background: '#EEF2F3',
@@ -146,6 +150,7 @@ describe('VaultManager', () => {
       language: 'zh-CN',
       themePreset: 'custom',
       interfaceScale: 115,
+      fontSizeScale: 125,
       customTheme: {
         background: '#EEF2F3',
         surface: '#F8FAFA',

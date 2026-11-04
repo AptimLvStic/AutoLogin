@@ -1,19 +1,18 @@
-import { forwardRef, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import { forwardRef, useEffect, useMemo, useRef, useState } from 'react'
 import {
   ArchiveRestore,
-  ArrowRight,
   Check,
   ChevronDown,
   ChevronRight,
   Copy,
-  Eye,
-  EyeOff,
-  FileText,
+  FileClock,
+  FolderInput,
   Globe2,
   GripVertical,
   KeyRound,
   Layers3,
   LoaderCircle,
+  LogIn,
   LockKeyhole,
   PanelLeftClose,
   PanelLeftOpen,
@@ -23,12 +22,10 @@ import {
   Search,
   Settings,
   SlidersHorizontal,
-  Star,
   Trash2,
   Undo2,
   UserRound
 } from 'lucide-react'
-import Sortable from 'sortablejs'
 import {
   GROUP_MAX_DEPTH,
   GROUP_PATH_SEPARATOR,
@@ -45,11 +42,13 @@ import {
 } from '@shared/types'
 import { useI18n } from '../i18n'
 import { AccountDrawer } from './AccountDrawer'
+import { AppLogsPage } from './AppLogsPage'
 import { LoginLogsPage } from './LoginLogsPage'
 import { ConfirmDialog, Modal } from './Modal'
 import { SettingsPage, type SettingsModule } from './SettingsPage'
 
-type LibraryView = 'accounts' | 'favorites' | 'logs' | 'trash' | 'settings'
+type LibraryView = 'accounts' | 'loginLogs' | 'appLogs' | 'trash' | 'settings'
+type GroupDropPosition = 'before' | 'after' | 'inside'
 type DrawerState = { mode: 'create'; siteId?: string } | { mode: 'edit'; accountId: string }
 type Translate = (
   zhCN: string,
@@ -107,9 +106,19 @@ export function LibraryScreen({
   )
   const [search, setSearch] = useState('')
   const [searchExpanded, setSearchExpanded] = useState(false)
-  const [groupNavExpanded, setGroupNavExpanded] = useState(
-    () => window.localStorage.getItem('autologin.account.groups.collapsed') !== '1'
-  )
+  const [collapsedGroupPaths, setCollapsedGroupPaths] = useState<Set<string>>(() => {
+    try {
+      const stored = window.localStorage.getItem('autologin.account.groups.collapsedPaths')
+      const values = stored ? (JSON.parse(stored) as unknown) : []
+      return new Set(
+        Array.isArray(values)
+          ? values.filter((value): value is string => typeof value === 'string')
+          : []
+      )
+    } catch {
+      return new Set()
+    }
+  })
   const [accountSubnavWidth, setAccountSubnavWidth] = useState(() => {
     const savedValue = window.localStorage.getItem('autologin.account.subnav.width')
     const saved = savedValue === null ? Number.NaN : Number(savedValue)
@@ -120,7 +129,6 @@ export function LibraryScreen({
   const [accountSubnavHidden, setAccountSubnavHidden] = useState(
     () => window.localStorage.getItem('autologin.account.subnav.hidden') === '1'
   )
-  const [edgeToggleLeft, setEdgeToggleLeft] = useState<number | null>(null)
   const [groupDefinitions, setGroupDefinitions] = useState<GroupDefinition[]>([])
   const [deletedAccounts, setDeletedAccounts] = useState<DeletedAccountWithSite[]>([])
   const [groupCreateState, setGroupCreateState] = useState<{
@@ -139,8 +147,12 @@ export function LibraryScreen({
   const [restoringAccountId, setRestoringAccountId] = useState<string | null>(null)
   const [trashRetentionSaving, setTrashRetentionSaving] = useState(false)
   const [selectedIds, setSelectedIds] = useState<Set<string>>(() => new Set())
-  const [favoriteGroups, setFavoriteGroups] = useState<string[]>([])
   const [drawer, setDrawer] = useState<DrawerState | null>(null)
+  const [draggedGroupPath, setDraggedGroupPath] = useState<string | null>(null)
+  const [groupDropTarget, setGroupDropTarget] = useState<{
+    path: string
+    position: GroupDropPosition
+  } | null>(null)
   const [groupMenu, setGroupMenu] = useState<{
     group: GroupSummary
     left: number
@@ -148,6 +160,10 @@ export function LibraryScreen({
   } | null>(null)
   const [renameGroupTarget, setRenameGroupTarget] = useState<GroupSummary | null>(null)
   const [renameGroupValue, setRenameGroupValue] = useState('')
+  const [moveGroupTarget, setMoveGroupTarget] = useState<GroupSummary | null>(null)
+  const [moveGroupDestination, setMoveGroupDestination] = useState('')
+  const [moveGroupBusy, setMoveGroupBusy] = useState(false)
+  const [moveGroupError, setMoveGroupError] = useState('')
   const [deleteGroupTarget, setDeleteGroupTarget] = useState<GroupSummary | null>(null)
   const [groupActionBusy, setGroupActionBusy] = useState(false)
   const [batchStrategyOpen, setBatchStrategyOpen] = useState(false)
@@ -161,9 +177,8 @@ export function LibraryScreen({
   const [deleteSelectedBusy, setDeleteSelectedBusy] = useState(false)
   const searchRef = useRef<HTMLInputElement>(null)
   const selectAllRef = useRef<HTMLInputElement>(null)
-  const groupListRef = useRef<HTMLDivElement>(null)
   const groupCreateInputRef = useRef<HTMLInputElement>(null)
-  const accountSubnavShellRef = useRef<HTMLDivElement>(null)
+  const draggedGroupPathRef = useRef<string | null>(null)
   const subnavResizeRef = useRef<{
     startX: number
     startWidth: number
@@ -227,20 +242,80 @@ export function LibraryScreen({
     () => groups.filter((group) => group.actualName !== null),
     [groups]
   )
-
-  const favoriteGroupSet = useMemo(() => new Set(favoriteGroups), [favoriteGroups])
-  const favoriteAccounts = useMemo(
+  const groupsWithChildren = useMemo(
     () =>
-      accounts.filter(
-        (account) =>
-          account.favorite ||
-          Boolean(account.site.group?.trim() && favoriteGroupSet.has(account.site.group.trim()))
-      ).sort(compareAccounts),
-    [accounts, favoriteGroupSet]
+      new Set(
+        namedGroups
+          .map((group) => group.actualName)
+          .filter((path): path is string => Boolean(path) && groups.some(
+            (candidate) => candidate.parentPath === path
+          ))
+      ),
+    [groups, namedGroups]
   )
+  const visibleNamedGroups = useMemo(
+    () =>
+      namedGroups.filter((group) => {
+        if (!group.actualName) return false
+        const segments = group.actualName.split(GROUP_PATH_SEPARATOR)
+        return segments
+          .slice(0, -1)
+          .every(
+            (_, index) =>
+              !collapsedGroupPaths.has(
+                segments.slice(0, index + 1).join(GROUP_PATH_SEPARATOR)
+              )
+          )
+      }),
+    [collapsedGroupPaths, namedGroups]
+  )
+
   const currentGroup = groupFilter
     ? groups.find((group) => group.key === groupFilter) ?? null
     : null
+  const currentBreadcrumb = useMemo(() => {
+    if (!currentGroup) {
+      return [{ label: tr('全部账号', 'All accounts', '全部帳號'), path: null as string | null }]
+    }
+    if (!currentGroup.actualName) {
+      return [
+        {
+          label: tr('未分组', 'Ungrouped', '未分組'),
+          path: null as string | null
+        }
+      ]
+    }
+    const segments = currentGroup.actualName.split(GROUP_PATH_SEPARATOR).filter(Boolean)
+    return segments.map((label, index) => ({
+      label,
+      path: segments.slice(0, index + 1).join(GROUP_PATH_SEPARATOR)
+    }))
+  }, [currentGroup, tr])
+  const moveGroupDestinations = useMemo(() => {
+    if (!moveGroupTarget?.actualName) return []
+    const sourcePath = moveGroupTarget.actualName
+    const sourceLevel = groupLevel(sourcePath)
+    const sourceMaxLevel = Math.max(
+      sourceLevel,
+      ...groups
+        .filter(
+          (group) =>
+            group.actualName === sourcePath ||
+            group.actualName?.startsWith(`${sourcePath}${GROUP_PATH_SEPARATOR}`)
+        )
+        .map((group) => groupLevel(group.actualName ?? group.key))
+    )
+    return groups.filter((group) => {
+      if (!group.actualName) return false
+      if (
+        group.actualName === sourcePath ||
+        group.actualName.startsWith(`${sourcePath}${GROUP_PATH_SEPARATOR}`)
+      ) {
+        return false
+      }
+      return groupLevel(group.actualName) + 1 + (sourceMaxLevel - sourceLevel) <= GROUP_MAX_DEPTH
+    })
+  }, [groups, moveGroupTarget])
 
   const filteredAccounts = useMemo(() => {
     const query = search.trim().toLocaleLowerCase(language)
@@ -262,17 +337,6 @@ export function LibraryScreen({
       .sort(compareAccounts)
   }, [accounts, groupFilter, language, search])
 
-  const filteredFavorites = useMemo(() => {
-    const query = search.trim().toLocaleLowerCase(language)
-    if (!query) return favoriteAccounts
-    return favoriteAccounts.filter((account) =>
-      [account.label, account.username, account.site.name, account.site.group ?? '']
-        .join(' ')
-        .toLocaleLowerCase(language)
-        .includes(query)
-    )
-  }, [favoriteAccounts, language, search])
-
   const visibleSelectedIds = useMemo(
     () =>
       filteredAccounts.filter((account) => selectedIds.has(account.id)).map((account) => account.id),
@@ -293,21 +357,15 @@ export function LibraryScreen({
 
   useEffect(() => {
     let cancelled = false
-    void Promise.all([
-      window.autologin.groups.list(),
-      window.autologin.groups.listFavorites(),
-      window.autologin.accounts.listDeleted()
-    ])
-      .then(([nextGroups, nextFavorites, nextDeleted]) => {
+    void Promise.all([window.autologin.groups.list(), window.autologin.accounts.listDeleted()])
+      .then(([nextGroups, nextDeleted]) => {
         if (cancelled) return
         setGroupDefinitions(nextGroups)
-        setFavoriteGroups(nextFavorites)
         setDeletedAccounts(nextDeleted)
       })
       .catch(() => {
         if (cancelled) return
         setGroupDefinitions([])
-        setFavoriteGroups([])
         setDeletedAccounts([])
       })
     return () => {
@@ -398,6 +456,10 @@ export function LibraryScreen({
 
   useEffect(() => {
     if (!copyMenu) return
+    let scrollArmed = false
+    const armScrollClose = window.requestAnimationFrame(() => {
+      scrollArmed = true
+    })
     const close = (): void => setCopyMenu(null)
     const closeOnPointer = (event: PointerEvent): void => {
       if (event.target instanceof Element && event.target.closest('.account-copy-menu')) {
@@ -405,18 +467,22 @@ export function LibraryScreen({
       }
       close()
     }
+    const closeOnScroll = (): void => {
+      if (scrollArmed) close()
+    }
     const closeOnEscape = (event: KeyboardEvent): void => {
       if (event.key === 'Escape') close()
     }
     document.addEventListener('pointerdown', closeOnPointer)
     document.addEventListener('keydown', closeOnEscape)
     window.addEventListener('resize', close)
-    window.addEventListener('scroll', close, true)
+    window.addEventListener('scroll', closeOnScroll, true)
     return () => {
+      window.cancelAnimationFrame(armScrollClose)
       document.removeEventListener('pointerdown', closeOnPointer)
       document.removeEventListener('keydown', closeOnEscape)
       window.removeEventListener('resize', close)
-      window.removeEventListener('scroll', close, true)
+      window.removeEventListener('scroll', closeOnScroll, true)
     }
   }, [copyMenu])
 
@@ -427,60 +493,10 @@ export function LibraryScreen({
 
   useEffect(() => () => subnavResizeCleanupRef.current?.(), [])
 
-  useLayoutEffect(() => {
-    if (view !== 'accounts') {
-      setEdgeToggleLeft(null)
-      return
-    }
-    const shell = accountSubnavShellRef.current
-    if (!shell) return
-
-    const updatePosition = (): void => {
-      const rect = shell.getBoundingClientRect()
-      const next = accountSubnavHidden ? rect.left + 8 : rect.right - 12
-      setEdgeToggleLeft((current) =>
-        current !== null && Math.abs(current - next) < 0.5 ? current : next
-      )
-    }
-
-    updatePosition()
-    const observer = new ResizeObserver(updatePosition)
-    observer.observe(shell)
-    window.addEventListener('resize', updatePosition)
-    return () => {
-      observer.disconnect()
-      window.removeEventListener('resize', updatePosition)
-    }
-  }, [accountSubnavHidden, accountSubnavWidth, sidebarCollapsed, view])
-
-  useEffect(() => {
-    const list = groupListRef.current
-    if (!list || !groupNavExpanded || namedGroups.length < 2) return
-    const sortable = Sortable.create(list, {
-      animation: 180,
-      draggable: '.account-subnav__group-row',
-      handle: '.account-subnav__drag-handle',
-      ghostClass: 'is-drag-ghost',
-      chosenClass: 'is-dragging',
-      dragClass: 'is-dragging',
-      forceFallback: true,
-      fallbackOnBody: true,
-      fallbackTolerance: 4,
-      onEnd: () => {
-        const order = [...list.querySelectorAll<HTMLElement>('[data-group-path]')]
-          .map((element) => element.dataset.groupPath)
-          .filter((path): path is string => Boolean(path))
-        if (order.length === 0) return
-        void saveGroupOrder(order)
-      }
-    })
-    return () => sortable.destroy()
-  }, [groupNavExpanded, namedGroups, onRefresh, notify, tr])
-
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent): void => {
       if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'k') {
-        if (view !== 'accounts' && view !== 'favorites') return
+        if (view !== 'accounts') return
         event.preventDefault()
         setSearchExpanded(true)
         window.requestAnimationFrame(() => searchRef.current?.focus())
@@ -491,14 +507,12 @@ export function LibraryScreen({
   }, [view])
 
   async function refreshAll(): Promise<void> {
-    const [, nextGroups, nextFavoriteGroups, nextDeleted] = await Promise.all([
+    const [, nextGroups, nextDeleted] = await Promise.all([
       onRefresh(),
       window.autologin.groups.list(),
-      window.autologin.groups.listFavorites(),
       window.autologin.accounts.listDeleted()
     ])
     setGroupDefinitions(nextGroups)
-    setFavoriteGroups(nextFavoriteGroups)
     setDeletedAccounts(nextDeleted)
   }
 
@@ -526,6 +540,10 @@ export function LibraryScreen({
     setSelectedIds(new Set())
   }
 
+  function chooseLogView(next: 'loginLogs' | 'appLogs'): void {
+    switchView(next)
+  }
+
   function toggleSidebar(): void {
     setSidebarCollapsed((current) => {
       const next = !current
@@ -546,10 +564,31 @@ export function LibraryScreen({
     chooseSettingsModule(settingsModule)
   }
 
-  function toggleGroupNavigation(): void {
-    setGroupNavExpanded((current) => {
-      const next = !current
-      window.localStorage.setItem('autologin.account.groups.collapsed', next ? '0' : '1')
+  function toggleGroupExpanded(path: string): void {
+    setCollapsedGroupPaths((current) => {
+      const next = new Set(current)
+      if (next.has(path)) next.delete(path)
+      else next.add(path)
+      window.localStorage.setItem(
+        'autologin.account.groups.collapsedPaths',
+        JSON.stringify([...next])
+      )
+      return next
+    })
+  }
+
+  function expandGroupAncestors(path: string | undefined): void {
+    if (!path) return
+    setCollapsedGroupPaths((current) => {
+      const next = new Set(current)
+      const segments = path.split(GROUP_PATH_SEPARATOR)
+      for (let index = 1; index <= segments.length; index += 1) {
+        next.delete(segments.slice(0, index).join(GROUP_PATH_SEPARATOR))
+      }
+      window.localStorage.setItem(
+        'autologin.account.groups.collapsedPaths',
+        JSON.stringify([...next])
+      )
       return next
     })
   }
@@ -851,35 +890,192 @@ export function LibraryScreen({
     }
   }
 
-  async function toggleAccountFavorite(account: AccountWithSite): Promise<void> {
+  function beginGroupDrag(
+    event: React.DragEvent<HTMLSpanElement>,
+    group: GroupSummary
+  ): void {
+    if (!group.actualName) return
+    event.dataTransfer.effectAllowed = 'move'
+    event.dataTransfer.setData('text/plain', group.actualName)
+    draggedGroupPathRef.current = group.actualName
+    setDraggedGroupPath(group.actualName)
+  }
+
+  function resolveGroupDropPosition(
+    draggedPath: string,
+    target: GroupSummary,
+    position: GroupDropPosition
+  ): GroupDropPosition | null {
+    const targetPath = target.actualName
+    if (!targetPath || targetPath === draggedPath) return null
+    if (targetPath.startsWith(`${draggedPath}${GROUP_PATH_SEPARATOR}`)) return null
+
+    if (position === 'inside') {
+      const source = groups.find((group) => group.actualName === draggedPath)
+      if (!source) return null
+      const sourceLevel = groupLevel(draggedPath)
+      const sourceMaxLevel = Math.max(
+        sourceLevel,
+        ...groups
+          .filter(
+            (group) =>
+              group.actualName === draggedPath ||
+              group.actualName?.startsWith(`${draggedPath}${GROUP_PATH_SEPARATOR}`)
+          )
+          .map((group) => groupLevel(group.actualName ?? group.key))
+      )
+      const resultDepth = groupLevel(targetPath) + 1 + (sourceMaxLevel - sourceLevel)
+      return resultDepth <= GROUP_MAX_DEPTH ? 'inside' : null
+    }
+
+    const targetParent = groupParentPath(targetPath)
+    if (targetParent?.startsWith(`${draggedPath}${GROUP_PATH_SEPARATOR}`)) return null
+    return position
+  }
+
+  function hoverGroupDropTarget(
+    event: React.DragEvent<HTMLDivElement>,
+    group: GroupSummary
+  ): void {
+    const activePath = draggedGroupPathRef.current ?? draggedGroupPath
+    if (!activePath) return
+    const rect = event.currentTarget.getBoundingClientRect()
+    const offset = (event.clientY - rect.top) / Math.max(1, rect.height)
+    const requested: GroupDropPosition =
+      offset < 0.3 ? 'before' : offset > 0.7 ? 'after' : 'inside'
+    const resolved = resolveGroupDropPosition(activePath, group, requested)
+    if (!resolved) {
+      setGroupDropTarget(null)
+      return
+    }
+    event.preventDefault()
+    event.dataTransfer.dropEffect = 'move'
+    setGroupDropTarget({ path: group.actualName ?? group.key, position: resolved })
+  }
+
+  async function finishGroupDrop(
+    event: React.DragEvent<HTMLDivElement>,
+    target: GroupSummary
+  ): Promise<void> {
+    event.preventDefault()
+    const draggedPath = draggedGroupPathRef.current ?? draggedGroupPath
+    const dropTarget = groupDropTarget
+    draggedGroupPathRef.current = null
+    setDraggedGroupPath(null)
+    setGroupDropTarget(null)
+    if (!draggedPath || !dropTarget || dropTarget.path !== target.actualName) return
+
+    const destinationParent =
+      dropTarget.position === 'inside'
+        ? target.actualName ?? undefined
+        : groupParentPath(target.actualName ?? target.key) ?? undefined
+    const currentParent = groupParentPath(draggedPath) ?? undefined
+
+    if (destinationParent === currentParent) {
+      const siblings = groups
+        .filter(
+          (group) =>
+            group.actualName &&
+            (group.parentPath ?? undefined) === destinationParent
+        )
+        .map((group) => group.actualName as string)
+      const nextSiblings = siblings.filter((path) => path !== draggedPath)
+      const targetIndex = nextSiblings.indexOf(target.actualName ?? '')
+      if (targetIndex < 0) return
+      nextSiblings.splice(
+        targetIndex + (dropTarget.position === 'after' ? 1 : 0),
+        0,
+        draggedPath
+      )
+      if (nextSiblings.join('\0') === siblings.join('\0')) return
+      const nextOrder = groups
+        .map((group) => group.actualName)
+        .filter((path): path is string => Boolean(path))
+      const siblingSet = new Set(siblings)
+      let siblingIndex = 0
+      for (let index = 0; index < nextOrder.length; index += 1) {
+        const currentPath = nextOrder[index]
+        if (!currentPath || !siblingSet.has(currentPath)) continue
+        const replacement = nextSiblings[siblingIndex]
+        if (replacement) nextOrder[index] = replacement
+        siblingIndex += 1
+      }
+      await saveGroupOrder(nextOrder)
+      return
+    }
+
+    setGroupActionBusy(true)
     try {
-      await window.autologin.accounts.update(account.id, { favorite: !account.favorite })
-      await onRefresh()
+      const result = await window.autologin.groups.move({
+        fromPath: draggedPath,
+        ...(destinationParent ? { parentPath: destinationParent } : {})
+      })
+      expandGroupAncestors(result.toPath)
+      setGroupFilter(result.toPath)
+      await refreshAll()
+      notify(
+        'success',
+        tr(
+          `分组已移动到“${destinationParent ?? tr('顶层分组', 'Top level', '第一層分組')}”`,
+          `Group moved to “${destinationParent ?? 'top level'}”.`,
+          `分組已移動到「${destinationParent ?? '第一層分組'}」`
+        )
+      )
     } catch (error) {
       notify(
         'error',
         error instanceof Error
           ? error.message
-          : tr('收藏状态更新失败', 'Could not update favorite.', '收藏狀態更新失敗')
+          : tr('移动分组失败', 'Could not move group.', '移動分組失敗')
       )
+      await refreshAll()
+    } finally {
+      setGroupActionBusy(false)
     }
   }
 
-  async function toggleGroupFavorite(group: GroupSummary): Promise<void> {
+  function openMoveGroupDialog(group: GroupSummary): void {
     if (!group.actualName) return
+    setMoveGroupTarget(group)
+    setMoveGroupDestination(group.parentPath ?? '')
+    setMoveGroupError('')
+  }
+
+  async function submitMoveGroup(event: React.FormEvent): Promise<void> {
+    event.preventDefault()
+    if (!moveGroupTarget?.actualName) return
+    const destination = moveGroupDestination || undefined
+    if (destination === (moveGroupTarget.parentPath ?? undefined)) {
+      setMoveGroupTarget(null)
+      return
+    }
+    setMoveGroupBusy(true)
+    setMoveGroupError('')
     try {
-      const next = await window.autologin.groups.setFavorite(
-        group.actualName,
-        !favoriteGroupSet.has(group.actualName)
-      )
-      setFavoriteGroups(next)
-    } catch (error) {
+      const result = await window.autologin.groups.move({
+        fromPath: moveGroupTarget.actualName,
+        ...(destination ? { parentPath: destination } : {})
+      })
+      expandGroupAncestors(result.toPath)
+      setGroupFilter(result.toPath)
+      await refreshAll()
+      setMoveGroupTarget(null)
       notify(
-        'error',
+        'success',
+        tr(
+          `分组已移动到“${destination ?? tr('顶层分组', 'Top level', '第一層分組')}”`,
+          `Group moved to “${destination ?? 'top level'}”.`,
+          `分組已移動到「${destination ?? '第一層分組'}」`
+        )
+      )
+    } catch (error) {
+      setMoveGroupError(
         error instanceof Error
           ? error.message
-          : tr('分组收藏更新失败', 'Could not update group favorite.', '分組收藏更新失敗')
+          : tr('移动分组失败', 'Could not move group.', '移動分組失敗')
       )
+    } finally {
+      setMoveGroupBusy(false)
     }
   }
 
@@ -1166,10 +1362,6 @@ export function LibraryScreen({
     notify('success', tr('账号已移入回收站', 'Account moved to Recycle Bin.', '帳號已移至回收站'))
   }
 
-  const headerTitle =
-    view === 'favorites'
-      ? tr('收藏', 'Favorites', '收藏')
-      : currentGroup?.name ?? tr('全部账号', 'All accounts', '全部帳號')
   return (
     <div className={`app-shell${sidebarCollapsed ? ' is-sidebar-collapsed' : ''}`}>
       <aside className={`sidebar${sidebarCollapsed ? ' is-collapsed' : ''}`}>
@@ -1212,23 +1404,15 @@ export function LibraryScreen({
               <small>{accounts.length}</small>
             </button>
             <button
-              className={`sidebar-nav__item${view === 'favorites' ? ' is-active' : ''}`}
-              onClick={() => switchView('favorites')}
-              aria-label={tr('收藏', 'Favorites', '收藏')}
-              title={tr('收藏', 'Favorites', '收藏')}
+              className={`sidebar-nav__item${
+                view === 'loginLogs' || view === 'appLogs' ? ' is-active' : ''
+              }`}
+              onClick={() => chooseLogView('loginLogs')}
+              aria-label={tr('日志', 'Logs', '日誌')}
+              title={tr('日志', 'Logs', '日誌')}
             >
-              <Star size={17} />
-              <span>{tr('收藏', 'Favorites', '收藏')}</span>
-              <small>{favoriteAccounts.length}</small>
-            </button>
-            <button
-              className={`sidebar-nav__item${view === 'logs' ? ' is-active' : ''}`}
-              onClick={() => switchView('logs')}
-              aria-label={tr('登录日志', 'Login history', '登入日誌')}
-              title={tr('登录日志', 'Login history', '登入日誌')}
-            >
-              <FileText size={17} />
-              <span>{tr('登录日志', 'Login history', '登入日誌')}</span>
+              <FileClock size={17} />
+              <span>{tr('日志', 'Logs', '日誌')}</span>
             </button>
             <button
               className={`sidebar-nav__item${view === 'trash' ? ' is-active' : ''}`}
@@ -1304,27 +1488,6 @@ export function LibraryScreen({
           >
             <Pencil size={14} />
             {tr('重命名分组', 'Rename group', '重新命名分組')}
-          </button>
-          <button
-            type="button"
-            role="menuitem"
-            onClick={() => {
-              const group = groupMenu.group
-              setGroupMenu(null)
-              void toggleGroupFavorite(group)
-            }}
-          >
-            <Star
-              size={14}
-              fill={
-                favoriteGroupSet.has(groupMenu.group.actualName ?? '')
-                  ? 'currentColor'
-                  : 'none'
-              }
-            />
-            {favoriteGroupSet.has(groupMenu.group.actualName ?? '')
-              ? tr('取消收藏分组', 'Remove group favorite', '取消收藏分組')
-              : tr('收藏分组', 'Favorite group', '收藏分組')}
           </button>
           <button
             type="button"
@@ -1620,7 +1783,7 @@ export function LibraryScreen({
                   data-autofocus
                   value={renameGroupValue}
                   onChange={(event) => setRenameGroupValue(event.target.value)}
-                  maxLength={40}
+                  maxLength={20}
                   placeholder={tr('输入新的分组名称', 'Enter a new group name', '輸入新的分組名稱')}
                 />
               </span>
@@ -1640,13 +1803,82 @@ export function LibraryScreen({
                 disabled={
                   groupActionBusy ||
                   !renameGroupValue.trim() ||
-                  renameGroupValue.trim() === renameGroupTarget.actualName
+                  renameGroupValue.trim() === renameGroupTarget.name
                 }
               >
                 {groupActionBusy ? <LoaderCircle size={15} className="spin" /> : <Check size={15} />}
                 {groupActionBusy
                   ? tr('正在保存…', 'Saving…', '正在儲存…')
                   : tr('保存名称', 'Save name', '儲存名稱')}
+              </button>
+            </div>
+          </form>
+        </Modal>
+      )}
+
+      {moveGroupTarget && (
+        <Modal
+          title={tr('移动分组', 'Move group', '移動分組')}
+          eyebrow="GROUP MOVE"
+          onClose={() => {
+            if (!moveGroupBusy) setMoveGroupTarget(null)
+          }}
+          width="480px"
+          className="group-move-modal"
+        >
+          <form className="group-move-form" onSubmit={(event) => void submitMoveGroup(event)}>
+            <p className="modal-description">
+              {tr(
+                `将“${moveGroupTarget.name}”移动到新的父级分组。子分组会随父级一起移动。`,
+                `Move “${moveGroupTarget.name}” under a new parent. Child groups move with it.`,
+                `將「${moveGroupTarget.name}」移動到新的父級分組。子分組會隨父級一起移動。`
+              )}
+            </p>
+            <label className="field">
+              <span className="field__label">{tr('目标分组', 'Destination', '目標分組')}</span>
+              <select
+                className="filter-control"
+                data-autofocus
+                value={moveGroupDestination}
+                onChange={(event) => {
+                  setMoveGroupDestination(event.target.value)
+                  setMoveGroupError('')
+                }}
+              >
+                <option value="">{tr('顶层分组', 'Top level', '第一層分組')}</option>
+                {moveGroupDestinations.map((group) => (
+                  <option key={group.actualName} value={group.actualName ?? ''}>
+                    {group.actualName}
+                  </option>
+                ))}
+              </select>
+            </label>
+            {moveGroupError && <p className="form-error">{moveGroupError}</p>}
+            <div className="modal-actions">
+              <button
+                type="button"
+                className="button button--ghost"
+                onClick={() => setMoveGroupTarget(null)}
+                disabled={moveGroupBusy}
+              >
+                {tr('取消', 'Cancel', '取消')}
+              </button>
+              <button
+                type="submit"
+                className="button button--primary"
+                disabled={
+                  moveGroupBusy ||
+                  moveGroupDestination === (moveGroupTarget.parentPath ?? '')
+                }
+              >
+                {moveGroupBusy ? (
+                  <LoaderCircle size={15} className="spin" />
+                ) : (
+                  <FolderInput size={15} />
+                )}
+                {moveGroupBusy
+                  ? tr('正在移动…', 'Moving…', '正在移動…')
+                  : tr('确认移动', 'Move group', '確認移動')}
               </button>
             </div>
           </form>
@@ -1691,10 +1923,10 @@ export function LibraryScreen({
 
       <main className="library-main">
         <div className="library-content-scroll">
-          {(view === 'accounts' || view === 'favorites') && (
+          {view === 'accounts' && (
             <div
-              className={`library-view-layout${view === 'accounts' ? ' library-view-layout--accounts' : ''}${
-                view === 'accounts' && accountSubnavHidden ? ' is-account-subnav-hidden' : ''
+              className={`library-view-layout library-view-layout--accounts${
+                accountSubnavHidden ? ' is-account-subnav-hidden' : ''
               }`}
               style={
                 {
@@ -1702,8 +1934,8 @@ export function LibraryScreen({
                 } as React.CSSProperties
               }
             >
-              {view === 'accounts' && (
-                <div className="account-subnav-shell" ref={accountSubnavShellRef}>
+              {(
+                <div className="account-subnav-shell">
                 {!accountSubnavHidden && (
                 <aside
                   className="account-subnav"
@@ -1731,58 +1963,98 @@ export function LibraryScreen({
                     </button>
                   </div>
                   <section className="account-subnav__groups">
-                    <button
-                      type="button"
-                      className="account-subnav__groups-toggle"
-                      onClick={toggleGroupNavigation}
-                      aria-expanded={groupNavExpanded}
-                      aria-label={
-                        groupNavExpanded
-                          ? tr('隐藏分组', 'Hide groups', '隱藏分組')
-                          : tr('显示分组', 'Show groups', '顯示分組')
-                      }
-                    >
-                      <span>{tr('分组', 'Groups', '分組')}</span>
-                      {groupNavExpanded ? <Eye size={14} /> : <EyeOff size={14} />}
-                    </button>
-                    <div
-                      className={`account-subnav__groups-accordion${
-                        groupNavExpanded ? ' is-expanded' : ''
-                      }`}
-                      aria-hidden={!groupNavExpanded}
-                    >
-                      <div className="account-subnav__groups-inner">
-                        <div className="account-subnav__group-list" ref={groupListRef}>
-                          {namedGroups.map((group) => (
+                    <div className="account-subnav__group-list">
+                      {visibleNamedGroups.map((group) => {
+                        const hasChildren = groupsWithChildren.has(group.actualName ?? '')
+                        const isCollapsed = collapsedGroupPaths.has(group.actualName ?? '')
+                        return (
                             <div
-                              className="account-subnav__group-row"
+                              className={`account-subnav__group-row${
+                                groupDropTarget?.path === group.actualName
+                                  ? ` is-drop-${groupDropTarget.position}`
+                                  : ''
+                              }${draggedGroupPath === group.actualName ? ' is-dragging' : ''}`}
                               key={group.key}
                               data-group-path={group.actualName ?? group.key}
+                              onDragOver={(event) => hoverGroupDropTarget(event, group)}
+                              onDragLeave={(event) => {
+                                if (
+                                  event.relatedTarget instanceof Node &&
+                                  event.currentTarget.contains(event.relatedTarget)
+                                ) {
+                                  return
+                                }
+                                setGroupDropTarget(null)
+                              }}
+                              onDrop={(event) => void finishGroupDrop(event, group)}
                               style={
                                 {
                                   '--group-depth': Math.max(0, group.level - 1)
                                 } as React.CSSProperties
                               }
                             >
-                              <button
-                                type="button"
-                                className={`account-subnav__item account-subnav__item--group${
+                              <span
+                                className="account-subnav__drag-handle"
+                                draggable
+                                onDragStart={(event) => beginGroupDrag(event, group)}
+                                onDragEnd={() => {
+                                  draggedGroupPathRef.current = null
+                                  setDraggedGroupPath(null)
+                                  setGroupDropTarget(null)
+                                }}
+                                aria-hidden="true"
+                              >
+                                <GripVertical size={13} />
+                              </span>
+                              <div
+                                className={`account-subnav__group-main${
                                   groupFilter === group.key ? ' is-active' : ''
                                 }`}
-                                onClick={() => chooseGroup(group)}
-                                onContextMenu={(event) => openGroupMenu(event, group)}
-                                onKeyDown={(event) => openGroupMenuFromKeyboard(event, group)}
-                                aria-haspopup="menu"
-                                tabIndex={groupNavExpanded ? 0 : -1}
-                                title={group.actualName ?? group.name}
                               >
-                                <span className="account-subnav__drag-handle" aria-hidden="true">
-                                  <GripVertical size={13} />
-                                </span>
-                                <Layers3 size={15} />
-                                <span>{group.name}</span>
-                                <small>{group.count}</small>
-                              </button>
+                                <button
+                                  type="button"
+                                  className="account-subnav__item account-subnav__item--group"
+                                  onClick={() => chooseGroup(group)}
+                                  onContextMenu={(event) => openGroupMenu(event, group)}
+                                  onKeyDown={(event) => openGroupMenuFromKeyboard(event, group)}
+                                  aria-haspopup="menu"
+                                  title={group.actualName ?? group.name}
+                                >
+                                  <Layers3 size={15} />
+                                  <span>{group.name}</span>
+                                  <small>{group.count}</small>
+                                </button>
+                                <button
+                                  type="button"
+                                  className="account-subnav__group-toggle"
+                                  onClick={() => {
+                                    if (group.actualName) toggleGroupExpanded(group.actualName)
+                                  }}
+                                  disabled={!hasChildren}
+                                  aria-label={
+                                    hasChildren
+                                      ? isCollapsed
+                                        ? tr(
+                                            `展开“${group.name}”`,
+                                            `Expand “${group.name}”`,
+                                            `展開「${group.name}」`
+                                          )
+                                        : tr(
+                                            `收起“${group.name}”`,
+                                            `Collapse “${group.name}”`,
+                                            `收起「${group.name}」`
+                                          )
+                                      : tr('无子分组', 'No subgroups', '無子分組')
+                                  }
+                                  aria-expanded={hasChildren ? !isCollapsed : undefined}
+                                >
+                                  {isCollapsed ? (
+                                    <ChevronRight size={14} />
+                                  ) : (
+                                    <ChevronDown size={14} />
+                                  )}
+                                </button>
+                              </div>
                               {groupLevel(group.actualName ?? group.key) < GROUP_MAX_DEPTH && (
                                 <button
                                   type="button"
@@ -1799,71 +2071,48 @@ export function LibraryScreen({
                                 </button>
                               )}
                             </div>
-                          ))}
-                        </div>
-                        <button
-                          type="button"
-                          className={`account-subnav__item account-subnav__item--group${
+                        )
+                      })}
+                      <div className="account-subnav__group-row account-subnav__group-row--ungrouped">
+                        <span
+                          className="account-subnav__drag-handle account-subnav__drag-handle--placeholder"
+                          aria-hidden="true"
+                        />
+                        <div
+                          className={`account-subnav__group-main${
                             groupFilter === UNGROUPED_KEY ? ' is-active' : ''
                           }`}
-                          onClick={() => {
-                            const ungrouped = groups.find(
-                              (group) => group.key === UNGROUPED_KEY
-                            )
-                            if (ungrouped) chooseGroup(ungrouped)
-                            else {
-                              setView('accounts')
-                              setGroupFilter(UNGROUPED_KEY)
-                            }
-                          }}
-                          tabIndex={groupNavExpanded ? 0 : -1}
                         >
+                          <button
+                            type="button"
+                            className="account-subnav__item account-subnav__item--group"
+                            onClick={() => {
+                              const ungrouped = groups.find(
+                                (group) => group.key === UNGROUPED_KEY
+                              )
+                              if (ungrouped) chooseGroup(ungrouped)
+                              else {
+                                setView('accounts')
+                                setGroupFilter(UNGROUPED_KEY)
+                              }
+                            }}
+                          >
+                            <Globe2 size={15} />
+                            <span>{tr('未分组', 'Ungrouped', '未分組')}</span>
+                            <small>
+                              {groups.find((group) => group.key === UNGROUPED_KEY)?.count ?? 0}
+                            </small>
+                          </button>
                           <span
-                            className="account-subnav__drag-handle account-subnav__drag-handle--placeholder"
+                            className="account-subnav__group-toggle account-subnav__group-toggle--spacer"
                             aria-hidden="true"
                           />
-                          <Globe2 size={15} />
-                          <span>{tr('未分组', 'Ungrouped', '未分組')}</span>
-                          <small>
-                            {groups.find((group) => group.key === UNGROUPED_KEY)?.count ?? 0}
-                          </small>
-                        </button>
+                        </div>
                       </div>
                     </div>
                   </section>
                 </aside>
                 )}
-                <button
-                  type="button"
-                  className="account-subnav__edge-toggle"
-                  onClick={handleSubnavToggle}
-                  onPointerDown={(event) => beginSubnavResize(event, true)}
-                  style={
-                    edgeToggleLeft === null
-                      ? { visibility: 'hidden' }
-                      : { left: `${edgeToggleLeft}px` }
-                  }
-                  aria-label={
-                    accountSubnavHidden
-                      ? tr('展开账号侧边栏', 'Expand account sidebar', '展開帳號側邊欄')
-                      : tr('隐藏账号侧边栏', 'Hide account sidebar', '隱藏帳號側邊欄')
-                  }
-                  title={
-                    accountSubnavHidden
-                      ? tr(
-                          '展开账号侧边栏；向右拖动可调整宽度',
-                          'Expand account sidebar; drag right to resize',
-                          '展開帳號側邊欄；向右拖曳可調整寬度'
-                        )
-                      : tr(
-                          '隐藏账号侧边栏；拖动可调整宽度',
-                          'Hide account sidebar; drag to resize',
-                          '隱藏帳號側邊欄；拖曳可調整寬度'
-                        )
-                  }
-                >
-                  {accountSubnavHidden ? <PanelLeftOpen size={13} /> : <PanelLeftClose size={13} />}
-                </button>
                 {!accountSubnavHidden && (
                   <div
                     className="account-subnav__resizer"
@@ -1878,13 +2127,25 @@ export function LibraryScreen({
               <div className="library-view-main">
               <header className="library-header page-breadcrumb-bar">
                 <nav className="page-breadcrumb" aria-label={tr('面包屑', 'Breadcrumb', '麵包屑')}>
-                  {view === 'accounts' && (
-                    <>
-                      <span>{tr('账号', 'Accounts', '帳號')}</span>
-                      <ChevronRight size={12} />
-                    </>
-                  )}
-                  <h1>{headerTitle}</h1>
+                  <span>{tr('账号', 'Accounts', '帳號')}</span>
+                  {currentBreadcrumb.map((crumb, index) => {
+                    const isLast = index === currentBreadcrumb.length - 1
+                    return (
+                      <span className="page-breadcrumb__segment" key={crumb.path ?? 'all'}>
+                        <ChevronRight size={12} />
+                        {isLast ? (
+                          <h1 title={crumb.path ?? undefined}>{crumb.label}</h1>
+                        ) : (
+                          <span
+                            className="page-breadcrumb__crumb page-breadcrumb__crumb--static"
+                            title={crumb.path ?? undefined}
+                          >
+                            {crumb.label}
+                          </span>
+                        )}
+                      </span>
+                    )
+                  })}
                 </nav>
                 <div className="library-header__actions">
                   {batchState && batchState.total > 0 && (
@@ -1893,7 +2154,7 @@ export function LibraryScreen({
                       className={`batch-status${batchState.active ? ' is-active' : ''}${
                         batchState.failed > 0 ? ' has-failures' : ''
                       }`}
-                      onClick={() => switchView('logs')}
+                      onClick={() => switchView('loginLogs')}
                       aria-label={tr('查看登录结果日志', 'View login result logs', '查看登入結果日誌')}
                     >
                       {batchState.active ? (
@@ -1912,6 +2173,31 @@ export function LibraryScreen({
                   )}
                 </div>
               </header>
+
+              <div className="account-subnav-controls">
+                <button
+                  type="button"
+                  className="account-subnav-toggle button button--ghost button--small button--icon-only"
+                  onClick={handleSubnavToggle}
+                  aria-label={
+                    accountSubnavHidden
+                      ? tr('展开账号侧边栏', 'Expand account sidebar', '展開帳號側邊欄')
+                      : tr('隐藏账号侧边栏', 'Hide account sidebar', '隱藏帳號側邊欄')
+                  }
+                  aria-expanded={!accountSubnavHidden}
+                  title={
+                    accountSubnavHidden
+                      ? tr('展开账号侧边栏', 'Expand account sidebar', '展開帳號側邊欄')
+                      : tr('隐藏账号侧边栏', 'Hide account sidebar', '隱藏帳號側邊欄')
+                  }
+                >
+                  {accountSubnavHidden ? (
+                    <PanelLeftOpen size={14} />
+                  ) : (
+                    <PanelLeftClose size={14} />
+                  )}
+                </button>
+              </div>
 
               <div className="library-toolbar">
                 <div
@@ -1939,15 +2225,11 @@ export function LibraryScreen({
                     ref={searchRef}
                     value={search}
                     onChange={(event) => setSearch(event.target.value)}
-                    placeholder={
-                      view === 'favorites'
-                        ? tr('搜索收藏账号', 'Search favorite accounts', '搜尋收藏帳號')
-                        : tr(
-                            '搜索站点、账号、用户名或分组',
-                            'Search sites, accounts, usernames or groups',
-                            '搜尋站點、帳號、使用者名稱或分組'
-                          )
-                    }
+                    placeholder={tr(
+                      '搜索站点、账号、用户名或分组',
+                      'Search sites, accounts, usernames or groups',
+                      '搜尋站點、帳號、使用者名稱或分組'
+                    )}
                     aria-label={tr('搜索账号', 'Search accounts', '搜尋帳號')}
                     disabled={!searchExpanded}
                     tabIndex={searchExpanded ? 0 : -1}
@@ -1963,57 +2245,77 @@ export function LibraryScreen({
                   <div className="library-toolbar__actions">
                     <button
                       type="button"
-                      className="button button--primary button--small"
+                      className="button button--primary button--small button--icon-only"
                       onClick={() => setDrawer({ mode: 'create' })}
+                      aria-label={tr('添加账号', 'Add account', '新增帳號')}
+                      title={tr('添加账号', 'Add account', '新增帳號')}
                     >
                       <Plus size={14} />
-                      {tr('添加账号', 'Add account', '新增帳號')}
                     </button>
                     <button
                       type="button"
-                      className="button button--ghost button--small"
+                      className="button button--ghost button--small button--icon-only"
                       onClick={() => void refreshAccounts()}
                       disabled={manualRefreshing}
+                      aria-label={tr('刷新', 'Refresh', '重新整理')}
+                      title={tr('刷新', 'Refresh', '重新整理')}
                     >
                       <RefreshCw
                         size={14}
                         className={manualRefreshing ? 'spin' : undefined}
                       />
-                      {tr('刷新', 'Refresh', '重新整理')}
                     </button>
                     <button
                       type="button"
-                      className="button button--ghost button--small"
+                      className="button button--ghost button--small button--icon-only"
+                      onClick={() => {
+                        if (currentGroup) openMoveGroupDialog(currentGroup)
+                      }}
+                      disabled={
+                        !currentGroup?.actualName ||
+                        groupActionBusy ||
+                        selectedAccountCount > 0
+                      }
+                      aria-label={tr('移动分组', 'Move group', '移動分組')}
+                      title={tr('移动分组', 'Move group', '移動分組')}
+                    >
+                      <FolderInput size={14} />
+                    </button>
+                    <button
+                      type="button"
+                      className="button button--ghost button--small button--icon-only"
                       onClick={openBatchStrategy}
                       disabled={selectedAccountCount === 0 || Boolean(batchState?.active)}
+                      aria-label={tr('批量操作', 'Batch actions', '批次操作')}
+                      title={tr('批量操作', 'Batch actions', '批次操作')}
                     >
                       <SlidersHorizontal size={14} />
-                      {tr('批量操作', 'Batch actions', '批次操作')}
                     </button>
                     <button
                       type="button"
-                      className="button button--ghost button--small"
+                      className="button button--ghost button--small button--icon-only"
                       onClick={() => void openSelected()}
                       disabled={selectedAccountCount === 0 || Boolean(batchState?.active)}
+                      aria-label={tr('批量登录', 'Batch sign in', '批次登入')}
+                      title={tr('批量登录', 'Batch sign in', '批次登入')}
                     >
                       <Layers3 size={14} />
-                      {tr('批量登录', 'Batch sign in', '批次登入')}
                     </button>
                     <button
                       type="button"
-                      className="button button--danger-ghost button--small"
+                      className="button button--danger-ghost button--small button--icon-only"
                       onClick={() => setDeleteSelectedOpen(true)}
                       disabled={selectedAccountCount === 0 || Boolean(batchState?.active)}
+                      aria-label={tr('删除账号', 'Delete accounts', '刪除帳號')}
+                      title={tr('删除账号', 'Delete accounts', '刪除帳號')}
                     >
                       <Trash2 size={14} />
-                      {tr('删除账号', 'Delete accounts', '刪除帳號')}
                     </button>
                   </div>
                 )}
               </div>
 
-              {view === 'accounts' ? (
-                <section className="account-list" aria-live="polite">
+              <section className="account-list" aria-live="polite">
                   <div className="account-list__header accounts-table__header">
                     <SelectionCheckbox
                       ref={selectAllRef}
@@ -2047,7 +2349,6 @@ export function LibraryScreen({
                       tr={tr}
                       formatLastUsed={(value) => formatLastUsed(value, tr, formatDate)}
                       onToggleSelection={() => toggleAccountSelection(account.id)}
-                      onToggleFavorite={() => void toggleAccountFavorite(account)}
                       onEdit={() => setDrawer({ mode: 'edit', accountId: account.id })}
                       onCopy={(event) => openCopyMenu(event, account)}
                       onLogin={() => void openAccount(account)}
@@ -2081,73 +2382,23 @@ export function LibraryScreen({
                       )}
                     />
                   )}
-                </section>
-              ) : (
-                <div className="favorite-workspace">
-                  <section className="favorite-accounts">
-                    <header className="favorite-accounts__header">
-                      <div>
-                        <h3>{tr('收藏账号', 'Favorite accounts', '收藏帳號')}</h3>
-                        <p>
-                          {tr(
-                            '账号收藏和分组收藏中的账号会集中显示在这里。',
-                            'Accounts favorited directly or through a group appear here.',
-                            '帳號收藏和分組收藏中的帳號會集中顯示在這裡。'
-                          )}
-                        </p>
-                      </div>
-                      <span>{filteredFavorites.length}</span>
-                    </header>
-
-                    {favoriteAccounts.length === 0 ? (
-                      <CompactEmptyState
-                        title={tr('还没有收藏账号', 'No favorite accounts yet', '還沒有收藏帳號')}
-                        description={tr(
-                          '在账号编辑面板中收藏账号，或在账号页右键收藏一个分组。',
-                          'Favorite an account in its edit panel, or right-click a group on the Accounts page.',
-                          '在帳號編輯面板中收藏帳號，或在帳號頁右鍵收藏一個分組。'
-                        )}
-                      />
-                    ) : filteredFavorites.length === 0 ? (
-                      <CompactEmptyState
-                        title={tr('没有匹配的收藏', 'No matching favorites', '沒有符合的收藏')}
-                        description={tr('尝试更换搜索关键词。', 'Try another search.', '嘗試更換搜尋關鍵字。')}
-                      />
-                    ) : (
-                      <div className="account-list favorite-account-list">
-                        {filteredFavorites.map((account, index) => (
-                          <AccountListRow
-                            key={account.id}
-                            account={account}
-                            checked={false}
-                            index={index}
-                            showSelection={false}
-                            showFavorite
-                            tr={tr}
-                            formatLastUsed={(value) => formatLastUsed(value, tr, formatDate)}
-                            onToggleFavorite={() => void toggleAccountFavorite(account)}
-                            onEdit={() => setDrawer({ mode: 'edit', accountId: account.id })}
-                            onCopy={(event) => openCopyMenu(event, account)}
-                            onLogin={() => void openAccount(account)}
-                          />
-                        ))}
-                      </div>
-                    )}
-                  </section>
-                </div>
-              )}
+              </section>
               </div>
             </div>
           )}
 
-          {view === 'logs' && (
+          {view === 'loginLogs' && (
             <LoginLogsPage
               sites={sites}
               accounts={accounts}
               groups={groupDefinitions}
-              favoriteGroups={favoriteGroups}
               notify={notify}
+              onNavigate={chooseLogView}
             />
+          )}
+
+          {view === 'appLogs' && (
+            <AppLogsPage notify={notify} onNavigate={chooseLogView} />
           )}
 
           {view === 'trash' && (
@@ -2295,12 +2546,9 @@ function AccountListRow({
   account,
   checked,
   index,
-  showSelection = true,
-  showFavorite = true,
   tr,
   formatLastUsed,
   onToggleSelection,
-  onToggleFavorite,
   onEdit,
   onCopy,
   onLogin
@@ -2308,35 +2556,28 @@ function AccountListRow({
   account: AccountWithSite
   checked: boolean
   index: number
-  showSelection?: boolean
-  showFavorite?: boolean
   tr: Translate
   formatLastUsed: (value?: string) => string
   onToggleSelection?: () => void
-  onToggleFavorite?: () => void
   onEdit: () => void
   onCopy: (event: React.MouseEvent<HTMLButtonElement>) => void
   onLogin: () => void
 }): React.JSX.Element {
   return (
     <article
-      className={`account-row${showSelection ? '' : ' account-row--favorite'}${
-        checked ? ' is-selected' : ''
-      }`}
+      className={`account-row${checked ? ' is-selected' : ''}`}
       style={{ '--row-index': index } as React.CSSProperties}
       onClick={onEdit}
     >
-      {showSelection && (
-        <SelectionCheckbox
-          checked={checked}
-          label={tr(
-            `选择站点 ${account.site.name}`,
-            `Select ${account.site.name}`,
-            `選擇站點 ${account.site.name}`
-          )}
-          onChange={() => onToggleSelection?.()}
-        />
-      )}
+      <SelectionCheckbox
+        checked={checked}
+        label={tr(
+          `选择站点 ${account.site.name}`,
+          `Select ${account.site.name}`,
+          `選擇站點 ${account.site.name}`
+        )}
+        onChange={() => onToggleSelection?.()}
+      />
       <div className="account-identity">
         <span className={`monogram ${toneClass(account.siteId)}`}>
           {account.site.name.slice(0, 1).toUpperCase()}
@@ -2344,7 +2585,6 @@ function AccountListRow({
         <div>
           <div className="account-name-line">
             <strong>{account.site.name}</strong>
-            {account.favorite && <Star size={13} fill="currentColor" />}
           </div>
         </div>
       </div>
@@ -2372,44 +2612,31 @@ function AccountListRow({
         </span>
       </div>
       <div className="account-actions">
-        {showFavorite && (
-          <button
-            className={`icon-button icon-button--small${account.favorite ? ' is-active' : ''}`}
-            onClick={(event) => {
-              event.stopPropagation()
-              onToggleFavorite?.()
-            }}
-            aria-label={
-              account.favorite
-                ? tr('取消账号收藏', 'Remove account favorite', '取消帳號收藏')
-                : tr('收藏账号', 'Favorite account', '收藏帳號')
-            }
-          >
-            <Star size={15} fill={account.favorite ? 'currentColor' : 'none'} />
-          </button>
-        )}
         <button
-          className="row-login-button"
+          className="row-login-button row-action-button--icon"
           onClick={(event) => {
             event.stopPropagation()
             onLogin()
           }}
+          aria-label={tr('登录', 'Sign in', '登入')}
+          title={tr('登录', 'Sign in', '登入')}
         >
-          {tr('登录', 'Sign in', '登入')}
-          <ArrowRight size={15} />
+          <LogIn size={15} />
         </button>
         <button
-          className="row-edit-button"
+          className="row-edit-button row-action-button--icon"
           onClick={(event) => {
             event.stopPropagation()
             onEdit()
           }}
+          aria-label={tr('编辑', 'Edit', '編輯')}
+          title={tr('编辑', 'Edit', '編輯')}
         >
-          {tr('编辑', 'Edit', '編輯')}
           <Pencil size={14} />
         </button>
         <button
           className="icon-button icon-button--small account-copy-trigger"
+          onPointerDown={(event) => event.stopPropagation()}
           onClick={(event) => {
             event.stopPropagation()
             onCopy(event)

@@ -13,6 +13,7 @@ export type AppLanguage = (typeof APP_LANGUAGES)[number]
 export const INTERFACE_SCALE_MIN = 80
 export const INTERFACE_SCALE_MAX = 125
 export const INTERFACE_SCALE_STEP = 5
+export const FONT_SIZE_SCALE_OPTIONS = [80, 100, 125, 150] as const
 
 export const PROXY_PROTOCOLS = ['http', 'https', 'socks5'] as const
 export type ProxyProtocol = (typeof PROXY_PROTOCOLS)[number]
@@ -96,6 +97,7 @@ export interface AppSettings {
   themePreset: ThemePreset
   customTheme: ThemeColors
   interfaceScale: number
+  fontSizeScale: number
   proxy: ProxySettings
   groupOrder: string[]
 }
@@ -145,6 +147,10 @@ export interface AppLogEntry {
 }
 
 export interface AppLogClearResult {
+  deleted: number
+}
+
+export interface AppLogDeleteResult {
   deleted: number
 }
 
@@ -250,6 +256,16 @@ export interface GroupDefinition {
 export interface GroupCreateInput {
   parentPath?: string
   name: string
+}
+
+export interface GroupMoveInput {
+  fromPath: string
+  parentPath?: string
+}
+
+export interface GroupMoveResult {
+  fromPath: string
+  toPath: string
 }
 
 export interface DeletedAccountRecord {
@@ -482,6 +498,7 @@ export interface AutologinApi {
   groups: {
     list: () => Promise<GroupDefinition[]>
     create: (input: GroupCreateInput) => Promise<GroupDefinition>
+    move: (input: GroupMoveInput) => Promise<GroupMoveResult>
     listFavorites: () => Promise<string[]>
     setFavorite: (groupName: string, favorite: boolean) => Promise<string[]>
     rename: (fromName: string, toName: string) => Promise<void>
@@ -538,6 +555,7 @@ export interface AutologinApi {
     listFailureLogs: () => Promise<LoginLogEntry[]>
     deleteLoginLogs: (ids: string[]) => Promise<LoginLogDeleteResult>
     listAppLogs: (limit?: number) => Promise<AppLogEntry[]>
+    deleteAppLogs: (ids: string[]) => Promise<AppLogDeleteResult>
     clearAppLogs: () => Promise<AppLogClearResult>
     restart: () => Promise<void>
     reportActivity: () => void

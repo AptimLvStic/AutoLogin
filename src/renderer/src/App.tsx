@@ -35,7 +35,7 @@ export default function App(): React.JSX.Element {
   const [accounts, setAccounts] = useState<AccountWithSite[]>([])
   const [sites, setSites] = useState<Site[]>([])
   const [settings, setSettings] = useState<AppSettings>(DEFAULT_SETTINGS)
-  const [appVersion, setAppVersion] = useState('0.8.1')
+  const [appVersion, setAppVersion] = useState('0.8.3')
   const [loginTarget, setLoginTarget] = useState<LoginTarget | null>(null)
   const [batchState, setBatchState] = useState<LoginBatchState | null>(null)
   const [updateState, setUpdateState] = useState<AppUpdateState | null>(null)
@@ -136,6 +136,7 @@ export default function App(): React.JSX.Element {
       settings.customTheme
     )
     const root = document.documentElement.style
+    root.setProperty('--font-scale', String(settings.fontSizeScale / 100))
     const isDark = settings.colorMode === 'dark'
     const isMagpie = settings.themePreset === 'magpie'
     const sidebarBackground = isDark
@@ -199,7 +200,13 @@ export default function App(): React.JSX.Element {
         height: 40
       })
       .catch(() => undefined)
-  }, [settings.colorMode, settings.customTheme, settings.language, settings.themePreset])
+  }, [
+    settings.colorMode,
+    settings.customTheme,
+    settings.fontSizeScale,
+    settings.language,
+    settings.themePreset
+  ])
 
   useEffect(() => {
     let lastReport = 0

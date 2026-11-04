@@ -17,6 +17,7 @@ import type {
   Site
 } from '@shared/types'
 import { useI18n } from '../i18n'
+import { LogsTabs, type LogView } from './LogsTabs'
 import { ConfirmDialog, Modal } from './Modal'
 
 type LogStatusFilter = 'all' | LoginLogEntry['status']
@@ -29,14 +30,14 @@ export function LoginLogsPage({
   sites,
   accounts,
   groups,
-  favoriteGroups,
-  notify
+  notify,
+  onNavigate
 }: {
   sites: Site[]
   accounts: AccountWithSite[]
   groups: GroupDefinition[]
-  favoriteGroups: string[]
   notify: (kind: 'success' | 'error' | 'info', message: string) => void
+  onNavigate: (view: LogView) => void
 }): React.JSX.Element {
   const { tr, formatDate, language } = useI18n()
   const [entries, setEntries] = useState<LoginLogEntry[]>([])
@@ -92,11 +93,8 @@ export function LoginLogsPage({
     for (const account of accounts) {
       if (account.site.group?.trim()) names.add(account.site.group.trim())
     }
-    for (const group of favoriteGroups) {
-      if (group.trim()) names.add(group.trim())
-    }
     return [...names].sort((left, right) => left.localeCompare(right, language))
-  }, [accounts, favoriteGroups, groups, language, sites])
+  }, [accounts, groups, language, sites])
 
   const selectedSite = sites.find((site) => site.id === siteId)
   const filtered = useMemo(
@@ -237,8 +235,12 @@ export function LoginLogsPage({
     <>
       <section className="page-section logs-page">
         <nav className="page-breadcrumb" aria-label={tr('面包屑', 'Breadcrumb', '麵包屑')}>
+          <span>{tr('日志', 'Logs', '日誌')}</span>
+          <ChevronRight size={12} />
           <h2>{tr('登录日志', 'Login history', '登入日誌')}</h2>
         </nav>
+
+        <LogsTabs active="loginLogs" onChange={onNavigate} />
 
         <div className="log-filters">
           <label className="field">

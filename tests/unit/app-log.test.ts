@@ -6,6 +6,7 @@ import {
   appLogPath,
   appendAppLog,
   clearAppLogs,
+  deleteAppLogs,
   readAppLogs
 } from '../../src/main/app-log'
 
@@ -61,5 +62,26 @@ describe('app log storage', () => {
     expect(logs).toHaveLength(500)
     expect(logs[0]?.message).toBe('entry-504')
     expect(logs.at(-1)?.message).toBe('entry-5')
+  })
+
+  it('deletes selected entries without affecting the remaining log', () => {
+    const directory = mkdtempSync(join(tmpdir(), 'autologin-app-log-'))
+    directories.push(directory)
+
+    const first = appendAppLog(directory, {
+      level: 'info',
+      category: 'test',
+      message: 'first'
+    })
+    appendAppLog(directory, {
+      level: 'warning',
+      category: 'test',
+      message: 'second'
+    })
+
+    expect(deleteAppLogs(directory, [first.id])).toBe(1)
+    const remaining = readAppLogs(directory)
+    expect(remaining).toHaveLength(1)
+    expect(remaining[0]?.message).toBe('second')
   })
 })

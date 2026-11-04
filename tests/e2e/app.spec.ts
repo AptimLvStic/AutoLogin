@@ -314,7 +314,12 @@ test('pauses on a captcha and resumes after manual verification', async () => {
   await page.locator('.batch-status').click()
   const logsPage = page.locator('.logs-page')
   await expect(logsPage.getByRole('heading', { name: '登录日志' })).toBeVisible()
-  await expect(logsPage.locator('.page-breadcrumb > span')).toHaveCount(0)
+  await expect(logsPage.locator('.logs-tabs')).toBeVisible()
+  await expect(logsPage.getByRole('tab', { name: '登录日志' })).toHaveAttribute(
+    'aria-selected',
+    'true'
+  )
+  await expect(logsPage.locator('.page-breadcrumb > span')).toHaveText('日志')
   await expect(logsPage.locator('.log-table__row')).toContainText('验证码登录')
   await expect(logsPage.locator('.log-table__row')).toContainText('待人工')
   expect(
@@ -375,7 +380,7 @@ test('pauses on a captcha and resumes after manual verification', async () => {
   })
   await expect(page.locator('.batch-status')).toContainText('成功 1 / 失败 0')
 
-  await page.locator('.sidebar-nav__item').filter({ hasText: '登录日志' }).click()
+  await openLogPage(page, '登录日志')
   await logsPage.getByLabel('状态').selectOption('manual')
   const manualRow = logsPage.locator('.log-table__row').filter({ hasText: '待人工' })
   await manualRow.getByRole('checkbox').check()
@@ -443,7 +448,7 @@ test('stops automation when a site redirects outside trusted origins', async () 
     })
 })
 
-test('searches accounts and filters favorites', async () => {
+test('searches accounts and uses centered table columns with icon-only actions', async () => {
   await createVault(page)
   await addAccount(page, {
     siteName: '搜索站点 A',
@@ -478,13 +483,38 @@ test('searches accounts and filters favorites', async () => {
   await page.getByRole('button', { name: '搜索账号', exact: true }).click()
   await expect(searchField).toHaveClass(/is-expanded/)
 
-  await alphaRow.click()
-  const accountDrawer = page.locator('.account-drawer')
-  await accountDrawer.getByRole('checkbox', { name: /加入收藏/ }).check()
-  await accountDrawer.getByRole('button', { name: '保存修改' }).click()
-  await page.locator('.sidebar-nav__item').filter({ hasText: '收藏' }).click()
-  await expect(alphaRow).toBeVisible()
-  await expect(page.locator('.account-row').filter({ hasText: '搜索站点 B' })).toHaveCount(0)
+  await expect(page.locator('.account-list__header .account-col--site')).toHaveCSS(
+    'text-align',
+    'left'
+  )
+  const centeredColumns = [
+    '.account-col--username',
+    '.account-col--group',
+    '.account-col--updated',
+    '.account-col--status'
+  ]
+  for (const selector of centeredColumns) {
+    await expect(page.locator(`.account-list__header ${selector}`)).toHaveCSS(
+      'text-align',
+      'center'
+    )
+  }
+  const firstRow = page.locator('.account-row').first()
+  await expect(firstRow.locator('.account-identity')).toHaveCSS('justify-content', 'flex-start')
+  await expect(firstRow.locator('.account-username')).toHaveCSS('justify-content', 'center')
+  await expect(firstRow.locator('.account-group-cell')).toHaveCSS('justify-content', 'center')
+  await expect(firstRow.locator('.account-updated')).toHaveCSS('text-align', 'center')
+  await expect(firstRow.locator('.account-status-cell')).toHaveCSS('justify-content', 'center')
+
+  const addButton = page.getByRole('button', { name: '添加账号', exact: true })
+  const refreshButton = page.getByRole('button', { name: '刷新', exact: true })
+  const batchButton = page.getByRole('button', { name: '批量操作', exact: true })
+  await expect(addButton).toHaveText('')
+  await expect(refreshButton).toHaveText('')
+  await expect(batchButton).toHaveText('')
+  await expect(alphaRow.getByRole('button', { name: '登录', exact: true })).toHaveText('')
+  await expect(alphaRow.getByRole('button', { name: '编辑', exact: true })).toHaveText('')
+  await expect(page.locator('.sidebar-nav__item').filter({ hasText: '收藏' })).toHaveCount(0)
 
   await page.locator('.sidebar-nav__item').filter({ hasText: '账号' }).click()
   await page.getByRole('button', { name: '搜索账号', exact: true }).click()
@@ -496,7 +526,7 @@ test('searches accounts and filters favorites', async () => {
   await expect(searchField).not.toHaveClass(/is-expanded/)
 })
 
-test('reorders account groups with drag and persists the order', async () => {
+test('reorders sibling groups and moves a group with breadcrumb and toast updates', async () => {
   await createVault(page)
   await addAccount(page, {
     siteName: '分组拖拽 A',
@@ -516,29 +546,63 @@ test('reorders account groups with drag and persists the order', async () => {
   })
 
   const alphaGroup = page
-    .locator('.account-subnav__item--group')
+    .locator('.account-subnav__group-row')
     .filter({ hasText: 'Alpha' })
   const betaGroup = page
-    .locator('.account-subnav__item--group')
+    .locator('.account-subnav__group-row')
     .filter({ hasText: 'Beta' })
   await expect(page.locator('.account-subnav__item--group')).toHaveCount(3)
   await expect(alphaGroup).toBeVisible()
   await expect(betaGroup).toBeVisible()
 
-  const source = await betaGroup.locator('.account-subnav__drag-handle').boundingBox()
-  const target = await alphaGroup.boundingBox()
-  expect(source).not.toBeNull()
-  expect(target).not.toBeNull()
-  await page.mouse.move(source!.x + source!.width / 2, source!.y + source!.height / 2)
-  await page.mouse.down()
-  await page.mouse.move(target!.x + target!.width / 2, target!.y + 4, { steps: 12 })
-  await page.mouse.up()
+  await betaGroup
+    .locator('.account-subnav__drag-handle')
+    .dragTo(alphaGroup.locator('.account-subnav__item--group'), {
+      targetPosition: { x: 24, y: 2 }
+    })
 
   await expect
     .poll(() => page.evaluate(async () => (await window.autologin.settings.get()).groupOrder))
     .toEqual(['Beta', 'Alpha'])
   await expect(page.locator('.account-subnav__item--group').nth(0)).toContainText('Beta')
   await expect(page.locator('.account-subnav__item--group').nth(1)).toContainText('Alpha')
+
+  await page
+    .locator('.account-subnav__item--group')
+    .filter({ hasText: 'Beta' })
+    .click()
+  const moveGroupButton = page.getByRole('button', { name: '移动分组', exact: true })
+  await expect(moveGroupButton).toBeEnabled()
+  await moveGroupButton.click()
+  const moveDialog = page.locator('.group-move-modal')
+  await expect(moveDialog).toBeVisible()
+  await moveDialog.getByLabel('目标分组').selectOption({ label: 'Alpha' })
+  await moveDialog.getByRole('button', { name: '确认移动' }).click()
+  await expect(page.locator('.toast')).toContainText('分组已移动到“Alpha”')
+  const toastPlacement = await page.locator('.toast').evaluate((element) => {
+    const rect = element.getBoundingClientRect()
+    const style = getComputedStyle(element)
+    return {
+      centerDelta: Math.abs(rect.left + rect.width / 2 - window.innerWidth / 2),
+      top: rect.top,
+      background: style.backgroundColor,
+      color: style.color
+    }
+  })
+  expect(toastPlacement.centerDelta).toBeLessThan(4)
+  expect(toastPlacement.top).toBeLessThan(100)
+  expect(toastPlacement.background).not.toBe('rgba(28, 37, 33, 0.96)')
+  await expect(page.locator('.page-breadcrumb')).toContainText('Alpha')
+  await expect(page.locator('.page-breadcrumb h1')).toHaveText('Beta')
+  await expect(page.locator('.page-breadcrumb button')).toHaveCount(0)
+  const movedGroup = page.locator('.account-subnav__group-row').filter({ hasText: 'Beta' })
+  await expect(movedGroup).toBeVisible()
+  const alphaRow = page.locator('.account-subnav__group-row').filter({ hasText: 'Alpha' })
+  expect(
+    await movedGroup.evaluate((element) => Number.parseFloat(getComputedStyle(element).paddingLeft))
+  ).toBeGreaterThan(
+    await alphaRow.evaluate((element) => Number.parseFloat(getComputedStyle(element).paddingLeft))
+  )
 })
 
 test('bulk deletes selected accounts after confirmation', async () => {
@@ -629,27 +693,32 @@ test('resizes, hides and restores the account subnav, and creates three group le
   await page.getByRole('button', { name: '展开账号侧边栏' }).click()
   await expect(subnav).toBeVisible()
 
-  const edgeToggle = page.locator('.account-subnav__edge-toggle')
-  const edgeToggleBox = await edgeToggle.boundingBox()
-  expect(edgeToggleBox).not.toBeNull()
-  const widthBeforeEdgeDrag = await subnav.evaluate(
-    (element) => element.getBoundingClientRect().width
-  )
-  await page.mouse.move(
-    edgeToggleBox!.x + edgeToggleBox!.width / 2,
-    edgeToggleBox!.y + edgeToggleBox!.height / 2
-  )
-  await page.mouse.down()
-  await page.mouse.move(
-    edgeToggleBox!.x + edgeToggleBox!.width / 2 + 36,
-    edgeToggleBox!.y + edgeToggleBox!.height / 2,
-    { steps: 6 }
-  )
-  await page.mouse.up()
-  await expect
-    .poll(() => subnav.evaluate((element) => element.getBoundingClientRect().width))
-    .toBeGreaterThan(widthBeforeEdgeDrag + 20)
+  await expect(page.locator('.account-subnav__edge-toggle')).toHaveCount(0)
+  const collapseButton = page.getByRole('button', { name: '隐藏账号侧边栏' })
+  await expect(collapseButton).toHaveText('')
+  const breadcrumbBox = await page.locator('.library-header').boundingBox()
+  const collapseBox = await collapseButton.boundingBox()
+  const toolbarBox = await page.locator('.library-toolbar').boundingBox()
+  expect(breadcrumbBox).not.toBeNull()
+  expect(collapseBox).not.toBeNull()
+  expect(toolbarBox).not.toBeNull()
+  expect(collapseBox!.y).toBeGreaterThanOrEqual(breadcrumbBox!.y + breadcrumbBox!.height - 1)
+  expect(collapseBox!.y + collapseBox!.height).toBeLessThanOrEqual(toolbarBox!.y + 1)
   await expect(layout).not.toHaveClass(/is-account-subnav-hidden/)
+  const dividerMetrics = await page.locator('.account-subnav-shell').evaluate((element) => {
+    const shell = element.getBoundingClientRect()
+    const parent = element.parentElement?.getBoundingClientRect()
+    const style = getComputedStyle(element)
+    return {
+      height: shell.height,
+      parentHeight: parent?.height ?? 0,
+      borderRightWidth: style.borderRightWidth,
+      borderRightStyle: style.borderRightStyle
+    }
+  })
+  expect(dividerMetrics.height).toBeCloseTo(dividerMetrics.parentHeight, 0)
+  expect(Number.parseFloat(dividerMetrics.borderRightWidth)).toBeGreaterThan(0)
+  expect(dividerMetrics.borderRightStyle).toBe('solid')
   await expect
     .poll(() =>
       page.locator('.library-content-scroll').evaluate(
@@ -657,16 +726,6 @@ test('resizes, hides and restores the account subnav, and creates three group le
       )
     )
     .toBe(true)
-  const edgeCenterBeforeGroups = await edgeToggle.evaluate((element) => {
-    const rect = element.getBoundingClientRect()
-    return rect.top + rect.height / 2
-  })
-  expect(
-    await page.evaluate(
-      (center) => Math.abs(center - window.innerHeight / 2),
-      edgeCenterBeforeGroups
-    )
-  ).toBeLessThan(70)
 
   await page.getByRole('button', { name: '新增一级分组' }).click()
   const groupPopover = page.locator('.group-create-popover')
@@ -677,6 +736,27 @@ test('resizes, hides and restores the account subnav, and creates three group le
 
   const parentRow = page.locator('.account-subnav__group-row').filter({ hasText: 'Parent' })
   await expect(parentRow).toHaveCount(1)
+  const groupRowStructure = await parentRow.evaluate((element) => {
+    const children = Array.from(element.children) as HTMLElement[]
+    const main = element.querySelector<HTMLElement>(':scope > .account-subnav__group-main')
+    return {
+      rowContainers: children.map((child) =>
+        child.classList.contains('account-subnav__drag-handle')
+          ? 'drag'
+          : child.classList.contains('account-subnav__group-main')
+            ? 'main'
+            : child.classList.contains('account-subnav__add-group')
+              ? 'add'
+              : 'other'
+      ),
+      mainContainers: main
+        ? Array.from(main.children).map((child) => child.className)
+        : []
+    }
+  })
+  expect(groupRowStructure.rowContainers).toEqual(['drag', 'main', 'add'])
+  expect(groupRowStructure.mainContainers[0]).toContain('account-subnav__item--group')
+  expect(groupRowStructure.mainContainers[1]).toContain('account-subnav__group-toggle')
   await page.getByRole('button', { name: '新增一级分组' }).click()
   await groupPopover.getByLabel('分组名称').fill('Parent')
   await groupPopover.getByRole('button', { name: '创建' }).click()
@@ -709,11 +789,14 @@ test('resizes, hides and restores the account subnav, and creates three group le
   )
   expect(childIndent).toBeGreaterThan(parentIndent)
   expect(grandIndent).toBeGreaterThan(childIndent)
-  const edgeCenterAfterGroups = await edgeToggle.evaluate((element) => {
-    const rect = element.getBoundingClientRect()
-    return rect.top + rect.height / 2
-  })
-  expect(edgeCenterAfterGroups).toBeCloseTo(edgeCenterBeforeGroups, 0)
+  await parentRow.getByRole('button', { name: '收起“Parent”' }).click()
+  await expect(childRow).toHaveCount(0)
+  await expect(grandRow).toHaveCount(0)
+  await expect(parentRow).toBeVisible()
+  await parentRow.getByRole('button', { name: '展开“Parent”' }).click()
+  await expect(childRow).toBeVisible()
+  await expect(grandRow).toBeVisible()
+  await expect(page.locator('.account-subnav__edge-toggle')).toHaveCount(0)
 
   await application.evaluate(({ BrowserWindow }) => {
     BrowserWindow.getAllWindows()[0]?.setSize(960, 640)
@@ -729,10 +812,17 @@ test('resizes, hides and restores the account subnav, and creates three group le
   expect(compactLayout.display).toBe('grid')
   expect(compactLayout.columns.split(' ').length).toBeGreaterThan(1)
   expect(compactLayout.pageOverflow).toBe(false)
+  const toolbarAlignment = await page.locator('.library-toolbar').evaluate((toolbar) => {
+    const actions = toolbar.querySelector<HTMLElement>('.library-toolbar__actions')
+    const toolbarRect = toolbar.getBoundingClientRect()
+    const actionsRect = actions?.getBoundingClientRect()
+    return actionsRect ? Math.abs(toolbarRect.right - actionsRect.right) : Number.POSITIVE_INFINITY
+  })
+  expect(toolbarAlignment).toBeLessThan(6)
   await expect(page.locator('.vault-indicator')).toHaveCSS('text-align', 'center')
 })
 
-test('copies row credentials, closes the menu, and omits favorites from duplicates', async () => {
+test('copies row credentials and closes the menu after a selection', async () => {
   await createVault(page)
   await addAccount(page, {
     siteName: '复制菜单站点',
@@ -742,10 +832,6 @@ test('copies row credentials, closes the menu, and omits favorites from duplicat
     password: 'secret-password'
   })
 
-  await page.locator('.account-row').first().click()
-  const drawer = page.locator('.account-drawer')
-  await drawer.getByRole('checkbox', { name: /加入收藏/ }).check()
-  await drawer.getByRole('button', { name: '保存修改' }).click()
   const row = page.locator('.account-row').filter({ hasText: '复制菜单站点' })
   await row.locator('.account-copy-trigger').click()
   const copyMenu = page.locator('.account-copy-menu')
@@ -757,6 +843,7 @@ test('copies row credentials, closes the menu, and omits favorites from duplicat
   )
 
   await row.locator('.account-copy-trigger').click()
+  await expect(copyMenu).toBeVisible()
   await copyMenu.getByRole('menuitem', { name: '复制账号' }).click()
   await expect(copyMenu).toHaveCount(0)
   await expect(page.locator('.toast')).toContainText('已创建')
@@ -790,7 +877,7 @@ test('persists dark mode, language, themes and interface scale with separate res
   await expect(page.locator('.page-breadcrumb')).toBeVisible()
   await expect(settings.locator('.page-breadcrumb > span').first()).toHaveText('设置')
   await expect(settings.locator('.settings-footer')).toHaveCount(0)
-  await expect(settings.getByRole('tab')).toHaveCount(7)
+  await expect(settings.getByRole('tab')).toHaveCount(6)
   await expect(settings.locator('.settings-panel__header')).toHaveCount(0)
   const settingsWidth = await settings.evaluate((element) => {
     const panel = element.querySelector<HTMLElement>('.settings-panel')
@@ -881,6 +968,29 @@ test('persists dark mode, language, themes and interface scale with separate res
   await expect
     .poll(() => page.evaluate(() => window.autologin.settings.get()))
     .toMatchObject({ interfaceScale: 125 })
+  const fontSizeSelector = settings.getByRole('group', { name: '文字大小' })
+  await expect(fontSizeSelector.getByRole('button')).toHaveText([
+    '80%',
+    '100%',
+    '125%',
+    '150%'
+  ])
+  await fontSizeSelector.getByRole('button', { name: '125%', exact: true }).click()
+  await expect
+    .poll(() => page.evaluate(() => window.autologin.settings.get()))
+    .toMatchObject({ fontSizeScale: 125 })
+  await expect
+    .poll(() =>
+      page.evaluate(() =>
+        getComputedStyle(document.documentElement).getPropertyValue('--font-scale').trim()
+      )
+    )
+    .toBe('1.25')
+  expect(
+    await settings
+      .locator('.page-breadcrumb h2')
+      .evaluate((element) => Number.parseFloat(getComputedStyle(element).fontSize))
+  ).toBeGreaterThan(13)
   await page.locator('.sidebar-nav__item').filter({ hasText: '账号' }).click()
 
   await page.locator('.account-row').first().click()
@@ -904,6 +1014,25 @@ test('persists dark mode, language, themes and interface scale with separate res
   await expect
     .poll(() => page.evaluate(() => window.autologin.settings.get()))
     .toMatchObject({ interfaceScale: 100 })
+  await settings.getByRole('button', { name: '恢复默认字体大小' }).click()
+  await expect
+    .poll(() => page.evaluate(() => window.autologin.settings.get()))
+    .toMatchObject({ fontSizeScale: 100 })
+  await expect
+    .poll(() =>
+      page.evaluate(() =>
+        getComputedStyle(document.documentElement).getPropertyValue('--font-scale').trim()
+      )
+    )
+    .toBe('1')
+  await expect(
+    fontSizeSelector.getByRole('button', { name: '100%', exact: true })
+  ).toHaveAttribute('aria-pressed', 'true')
+  expect(
+    await settings
+      .locator('.page-breadcrumb h2')
+      .evaluate((element) => Number.parseFloat(getComputedStyle(element).fontSize))
+  ).toBeLessThan(13)
 
   await settings.getByRole('tab', { name: '数据与备份' }).click()
   await expect(settings.getByRole('heading', { name: '数据保存位置' })).toBeVisible()
@@ -917,12 +1046,6 @@ test('persists dark mode, language, themes and interface scale with separate res
   ).toBeVisible()
   const runtimeVersion = await application.evaluate(({ app }) => app.getVersion())
   await expect(settings.locator('.settings-location code')).toContainText(userDataDirectory)
-  await settings.getByRole('tab', { name: '软件日志' }).click()
-  await expect(settings.locator('.app-logs-card')).toBeVisible()
-  await expect(settings.locator('.app-log-row').first()).toBeVisible()
-  await expect(
-    settings.locator('.app-log-row').filter({ hasText: '应用启动' }).first()
-  ).toContainText('AutoLogin v')
   await settings.getByRole('tab', { name: '关于与更新' }).click()
   await expect(settings.getByRole('heading', { name: '关于 AutoLogin' })).toBeVisible()
   await expect(settings.getByRole('heading', { name: '检查更新' })).toBeVisible()
@@ -983,10 +1106,30 @@ test('persists dark mode, language, themes and interface scale with separate res
         testUrl: 'https://example.com/proxy-check'
       }
     })
-  await settings.getByRole('tab', { name: '软件日志' }).click()
+  await openLogPage(page, '软件日志')
+  const appLogsPage = page.locator('.app-logs-page')
+  await expect(appLogsPage.getByRole('heading', { name: '软件日志' })).toBeVisible()
+  await expect(appLogsPage.locator('.logs-tabs').getByRole('tab')).toHaveCount(2)
   await expect(
-    settings.locator('.app-log-row').filter({ hasText: '网络代理连通性测试' }).first()
+    appLogsPage.getByRole('tab', { name: '软件日志' })
+  ).toHaveAttribute('aria-selected', 'true')
+  await appLogsPage.getByLabel('状态').selectOption('info')
+  await appLogsPage.getByLabel('每页条数').selectOption('10')
+  await appLogsPage.getByLabel('状态').selectOption('all')
+  await expect(
+    appLogsPage.locator('.app-log-row').filter({ hasText: '网络代理连通性测试' }).first()
   ).toBeVisible()
+  const firstAppLogRow = appLogsPage.locator('.app-log-row').first()
+  await expect(firstAppLogRow).toBeVisible()
+  await expect(
+    appLogsPage.locator('.app-log-row').filter({ hasText: '应用启动' }).first()
+  ).toContainText('AutoLogin v')
+  await firstAppLogRow.getByRole('checkbox').check()
+  const deleteAppLogsButton = appLogsPage.getByRole('button', { name: '批量删除' })
+  await expect(deleteAppLogsButton).toBeEnabled()
+  await deleteAppLogsButton.click()
+  await page.locator('.confirm-dialog').getByRole('button', { name: '确认删除' }).click()
+  await expect(page.locator('.toast')).toContainText('已删除 1 条软件日志')
 })
 
 test('opens settings from the bottom gear while the sidebar is collapsed', async () => {
@@ -1009,7 +1152,7 @@ test('opens settings from the bottom gear while the sidebar is collapsed', async
   await expect(settingsButton).toHaveClass(/is-active/)
 })
 
-test('supports group actions, favorite accounts, batch editing and one-browser tabs', async () => {
+test('supports group actions, batch editing and one-browser tabs', async () => {
   await createVault(page)
   await addAccount(page, {
     siteName: '工作站点',
@@ -1028,6 +1171,24 @@ test('supports group actions, favorite accounts, batch editing and one-browser t
   await expect(accountDrawer.locator('.site-picker__menu')).toBeVisible()
   await accountDrawer.getByRole('option', { name: /工作站点/ }).click()
   await expect(accountDrawer.getByPlaceholder('例如：工作台')).toHaveValue('工作站点')
+  const groupPicker = accountDrawer.locator('.group-picker')
+  await groupPicker.getByRole('button', { name: '站点分组' }).click()
+  const groupPickerMenu = groupPicker.getByRole('listbox', { name: '站点分组列表' })
+  await expect(groupPickerMenu).toBeVisible()
+  await expect(groupPickerMenu.getByRole('option', { name: /工作/ })).toBeVisible()
+  const pickerMetrics = await groupPicker.evaluate((element) => {
+    const trigger = element.querySelector<HTMLElement>('.site-picker__trigger')
+    const menu = element.querySelector<HTMLElement>('.site-picker__menu')
+    return {
+      triggerWidth: trigger?.getBoundingClientRect().width ?? 0,
+      menuWidth: menu?.getBoundingClientRect().width ?? 0,
+      menuRadius: menu ? Number.parseFloat(getComputedStyle(menu).borderRadius) : 0
+    }
+  })
+  expect(pickerMetrics.menuWidth).toBeCloseTo(pickerMetrics.triggerWidth, 0)
+  expect(pickerMetrics.menuRadius).toBeGreaterThan(0)
+  await groupPickerMenu.getByRole('option', { name: /工作/ }).click()
+  await expect(groupPicker.getByRole('button', { name: '站点分组' })).toContainText('工作')
   await accountDrawer.getByRole('button', { name: '取消' }).click()
 
   await addAccount(page, {
@@ -1051,6 +1212,17 @@ test('supports group actions, favorite accounts, batch editing and one-browser t
   expect(allAccountsText?.x).toBeDefined()
   expect(groupText?.x).toBeDefined()
   expect(groupText!.x).toBeGreaterThan(allAccountsText!.x)
+  await groupRow.click()
+  const moveGroupButton = page.getByRole('button', { name: '移动分组', exact: true })
+  await expect(moveGroupButton).toBeEnabled()
+  const groupAccountCheckbox = page.getByRole('checkbox', {
+    name: '选择站点 工作站点',
+    exact: true
+  })
+  await groupAccountCheckbox.check()
+  await expect(moveGroupButton).toBeDisabled()
+  await groupAccountCheckbox.uncheck()
+  await expect(moveGroupButton).toBeEnabled()
   await expect(page.locator('.sidebar-group-row')).toHaveCount(0)
   await allAccountsNav.click()
   await expect(groupRow).toBeVisible()
@@ -1058,12 +1230,8 @@ test('supports group actions, favorite accounts, batch editing and one-browser t
     page.locator('.sidebar-actions').getByRole('button', { name: '添加账号' })
   ).toHaveCount(0)
 
-  const groupsAccordion = page.locator('.account-subnav__groups-accordion')
-  await page.getByRole('button', { name: '隐藏分组' }).click()
-  await expect(groupsAccordion).not.toHaveClass(/is-expanded/)
-  await expect(page.getByRole('button', { name: '显示分组' })).toBeVisible()
-  await page.getByRole('button', { name: '显示分组' }).click()
-  await expect(groupsAccordion).toHaveClass(/is-expanded/)
+  await expect(page.locator('.account-subnav__groups-toggle')).toHaveCount(0)
+  await expect(page.getByRole('button', { name: '隐藏分组' })).toHaveCount(0)
 
   await groupRow.click({ button: 'right' })
   const groupMenu = page.locator('.group-context-menu')
@@ -1082,10 +1250,8 @@ test('supports group actions, favorite accounts, batch editing and one-browser t
 
   await renamedGroupRow.click({ button: 'right' })
   await expect(groupMenu).toBeVisible()
-  await groupMenu.getByRole('menuitem', { name: '收藏分组' }).click()
-  await expect
-    .poll(() => page.evaluate(() => window.autologin.groups.listFavorites()))
-    .toEqual(['工作区'])
+  await expect(groupMenu.getByRole('menuitem', { name: /收藏分组/ })).toHaveCount(0)
+  await page.keyboard.press('Escape')
 
   await application.evaluate(({ BrowserWindow }) => {
     BrowserWindow.getAllWindows()[0]?.setSize(960, 640)
@@ -1141,22 +1307,6 @@ test('supports group actions, favorite accounts, batch editing and one-browser t
     BrowserWindow.getAllWindows()[0]?.setSize(1180, 760)
   })
   await page.waitForTimeout(250)
-
-  await page.locator('.sidebar-nav__item').filter({ hasText: '收藏' }).click()
-  await expect(page.getByRole('heading', { name: '收藏账号' })).toBeVisible()
-  await expect(page.locator('.favorite-group-picker')).toHaveCount(0)
-  await expect(page.locator('.favorite-group')).toHaveCount(0)
-  const favoriteRows = page.locator('.favorite-account-list .account-row')
-  await expect(favoriteRows).toHaveCount(2)
-  await expect(favoriteRows.first()).toContainText('工作区')
-  for (const row of await favoriteRows.all()) {
-    await expect(row.getByRole('button', { name: '编辑' })).toBeVisible()
-    await expect(row.getByRole('button', { name: '登录' })).toBeVisible()
-  }
-  await favoriteRows.filter({ hasText: '备用站点（已编辑）' }).getByRole('button', { name: '编辑' }).click()
-  await expect(page.locator('.account-drawer').getByRole('heading', { name: '备用站点（已编辑）' })).toBeVisible()
-  await page.locator('.drawer-backdrop').click({ position: { x: 10, y: 10 } })
-  await page.locator('.sidebar-nav__item').filter({ hasText: '账号' }).click()
 
   const mainRow = page.locator('.account-row').filter({ hasText: '工作站点' })
   const editedRow = page.locator('.account-row').filter({ hasText: '备用站点（已编辑）' })
@@ -1379,12 +1529,25 @@ async function addAccount(
   await drawer.getByPlaceholder('邮箱或账号').fill(account.username)
   await drawer.getByPlaceholder('输入登录密码').fill(account.password)
   if (account.group) {
-    await drawer.getByRole('combobox', { name: '站点分组' }).selectOption(account.group)
+    await drawer.getByRole('button', { name: '站点分组' }).click()
+    await drawer.getByRole('listbox', { name: '站点分组列表' }).getByRole('option', {
+      name: account.group
+    }).click()
   }
   await drawer.getByRole('button', { name: '添加账号' }).click()
   await expect(
     targetPage.locator('.account-row').filter({ hasText: account.siteName })
   ).toHaveCount(1)
+}
+
+async function openLogPage(targetPage: Page, label: '登录日志' | '软件日志'): Promise<void> {
+  const logsButton = targetPage.getByRole('button', { name: '日志', exact: true })
+  await logsButton.click()
+  await expect(logsButton).toHaveClass(/is-active/)
+  const tab = targetPage.locator('.logs-tabs').getByRole('tab', { name: label })
+  await expect(tab).toBeVisible()
+  await tab.click()
+  await expect(tab).toHaveAttribute('aria-selected', 'true')
 }
 
 async function currentBatchId(targetPage: Page): Promise<string | null> {

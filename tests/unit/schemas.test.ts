@@ -8,6 +8,7 @@ import {
   appSettingsSchema,
   groupCreateInputSchema,
   groupDeleteInputSchema,
+  groupMoveInputSchema,
   groupRenameInputSchema,
   masterPasswordSchema,
   siteInputSchema,
@@ -61,6 +62,7 @@ describe('shared input schemas', () => {
         accent: '#5C6BFF'
       },
       interfaceScale: 100,
+      fontSizeScale: 100,
       proxy: {
         mode: 'custom',
         enabled: false,
@@ -76,6 +78,9 @@ describe('shared input schemas', () => {
 
   it('accepts partial settings updates and rejects invalid scale values', () => {
     expect(appSettingsPatchSchema.safeParse({ interfaceScale: 115 }).success).toBe(true)
+    for (const fontSizeScale of [80, 100, 125, 150]) {
+      expect(appSettingsPatchSchema.safeParse({ fontSizeScale }).success).toBe(true)
+    }
     expect(appSettingsPatchSchema.safeParse({ trashRetentionDays: 15 }).success).toBe(true)
     expect(appSettingsPatchSchema.safeParse({ trashRetentionDays: 14 }).success).toBe(false)
     expect(
@@ -90,6 +95,8 @@ describe('shared input schemas', () => {
       }).success
     ).toBe(true)
     expect(appSettingsPatchSchema.safeParse({ interfaceScale: 111 }).success).toBe(false)
+    expect(appSettingsPatchSchema.safeParse({ fontSizeScale: 110 }).success).toBe(false)
+    expect(appSettingsPatchSchema.safeParse({ fontSizeScale: 101 }).success).toBe(false)
     expect(
       appSettingsPatchSchema.safeParse({
         proxy: { ...DEFAULT_PROXY_SETTINGS, testUrl: 'file:///tmp/proxy-test' }
@@ -141,6 +148,15 @@ describe('shared input schemas', () => {
       groupRenameInputSchema.safeParse({ fromName: 'Work', toName: '' }).success
     ).toBe(false)
     expect(groupDeleteInputSchema.safeParse({ groupName: 'Work' }).success).toBe(true)
+    expect(
+      groupMoveInputSchema.safeParse({
+        fromPath: 'Work / Clients',
+        parentPath: 'Archive'
+      }).success
+    ).toBe(true)
+    expect(
+      groupMoveInputSchema.safeParse({ fromPath: 'Work / Clients', parentPath: '' }).success
+    ).toBe(false)
     expect(
       accountBatchStrategyInputSchema.safeParse({
         accountIds: ['account-1', 'account-2'],

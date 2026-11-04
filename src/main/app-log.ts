@@ -79,6 +79,24 @@ export function clearAppLogs(dataDirectory: string): number {
   return count
 }
 
+export function deleteAppLogs(dataDirectory: string, ids: string[]): number {
+  const path = appLogPath(dataDirectory)
+  if (!existsSync(path)) return 0
+  const entries = readAppLogs(dataDirectory, MAX_LOG_ENTRIES)
+  const selected = new Set(ids)
+  const remaining = entries.filter((entry) => !selected.has(entry.id))
+  if (remaining.length === entries.length) return 0
+  const contents = remaining
+    .reverse()
+    .map((entry) => JSON.stringify(entry))
+    .join('\n')
+  writeFileSync(path, contents ? `${contents}\n` : '', {
+    encoding: 'utf8',
+    mode: 0o600
+  })
+  return entries.length - remaining.length
+}
+
 function trimLogFile(path: string): void {
   const lines = readFileSync(path, 'utf8')
     .split(/\r?\n/)

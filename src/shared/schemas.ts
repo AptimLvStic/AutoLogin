@@ -4,6 +4,7 @@ import {
   AUTO_LOCK_OPTIONS,
   COLOR_MODES,
   DEFAULT_PROXY_TEST_URL,
+  FONT_SIZE_SCALE_OPTIONS,
   GROUP_NAME_MAX_LENGTH,
   DEFAULT_TRASH_RETENTION_DAYS,
   INTERFACE_SCALE_MAX,
@@ -173,6 +174,13 @@ const interfaceScaleSchema = z
   .max(INTERFACE_SCALE_MAX)
   .multipleOf(5)
 
+const fontSizeScaleSchema = z.union([
+  z.literal(FONT_SIZE_SCALE_OPTIONS[0]),
+  z.literal(FONT_SIZE_SCALE_OPTIONS[1]),
+  z.literal(FONT_SIZE_SCALE_OPTIONS[2]),
+  z.literal(FONT_SIZE_SCALE_OPTIONS[3])
+])
+
 const groupOrderSchema = z
   .array(groupPathSchema)
   .max(500)
@@ -233,6 +241,7 @@ export const appSettingsSchema = z.object({
   themePreset: themePresetSchema.default('magpie'),
   customTheme: themeColorsSchema.default(defaultThemeColors),
   interfaceScale: interfaceScaleSchema.default(100),
+  fontSizeScale: fontSizeScaleSchema.default(100).catch(100),
   proxy: proxySettingsSchema.default(defaultProxySettings),
   groupOrder: groupOrderSchema.default([])
 })
@@ -248,6 +257,7 @@ export const appSettingsPatchSchema = z
     themePreset: themePresetSchema.optional(),
     customTheme: themeColorsSchema.optional(),
     interfaceScale: interfaceScaleSchema.optional(),
+    fontSizeScale: fontSizeScaleSchema.optional(),
     proxy: proxySettingsSchema.optional(),
     groupOrder: groupOrderSchema.optional()
   })
@@ -300,6 +310,13 @@ export const groupCreateInputSchema = z
   .object({
     parentPath: groupPathSchema.optional(),
     name: groupNameSchema
+  })
+  .strict()
+
+export const groupMoveInputSchema = z
+  .object({
+    fromPath: groupPathSchema,
+    parentPath: groupPathSchema.optional()
   })
   .strict()
 
@@ -401,6 +418,12 @@ export const loginLogDeleteSchema = z
   .refine((ids) => new Set(ids).size === ids.length, { message: '日志标识不能重复' })
 
 export const appLogQuerySchema = z.number().int().min(1).max(500).optional()
+
+export const appLogDeleteSchema = z
+  .array(idSchema)
+  .min(1)
+  .max(100)
+  .refine((ids) => new Set(ids).size === ids.length, { message: '日志标识不能重复' })
 
 export const proxyTestInputSchema = proxySettingsSchema
 

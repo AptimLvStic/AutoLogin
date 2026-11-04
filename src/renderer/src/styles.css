@@ -30,6 +30,7 @@
   --radius-lg: 20px;
   --font-ui: 'Manrope', 'Noto Sans SC', sans-serif;
   --font-cn: 'Noto Sans SC', 'Manrope', sans-serif;
+  --font-scale: 1;
   --focus-ring: rgba(14, 117, 103, 0.72);
 }
 
@@ -56,7 +57,7 @@ body {
     linear-gradient(135deg, var(--canvas) 0%, var(--canvas-deep) 52%, color-mix(in srgb, var(--canvas) 84%, var(--surface)) 100%);
   color: var(--ink);
   font-family: var(--font-ui);
-  font-size: 14px;
+  font-size: calc(14px * var(--font-scale, 1));
   line-height: 1.5;
   -webkit-font-smoothing: antialiased;
   text-rendering: optimizeLegibility;
@@ -113,7 +114,7 @@ p {
   gap: 8px;
   color: var(--accent);
   font-family: 'Manrope', sans-serif;
-  font-size: 11px;
+  font-size: calc(11px * var(--font-scale, 1));
   font-weight: 700;
   letter-spacing: 0.16em;
   line-height: 1.2;
@@ -200,7 +201,7 @@ p {
 .brand-copy strong {
   color: var(--ink);
   font-family: 'Manrope', sans-serif;
-  font-size: 18px;
+  font-size: calc(18px * var(--font-scale, 1));
   font-weight: 700;
   letter-spacing: -0.04em;
   line-height: 1.1;
@@ -209,7 +210,7 @@ p {
 .brand-copy small {
   color: var(--muted);
   font-family: 'Manrope', sans-serif;
-  font-size: 7px;
+  font-size: calc(7px * var(--font-scale, 1));
   font-weight: 700;
   letter-spacing: 0.17em;
 }
@@ -226,7 +227,7 @@ p {
   background: transparent;
   color: var(--ink);
   font-family: var(--font-ui);
-  font-size: 13px;
+  font-size: calc(13px * var(--font-scale, 1));
   font-weight: 650;
   letter-spacing: -0.01em;
   transition:
@@ -304,14 +305,14 @@ p {
   min-height: 50px;
   padding: 0 22px;
   border-radius: 12px;
-  font-size: 14px;
+  font-size: calc(14px * var(--font-scale, 1));
 }
 
 .button--small {
   min-height: 32px;
   padding: 0 12px;
   border-radius: 8px;
-  font-size: 12px;
+  font-size: calc(12px * var(--font-scale, 1));
 }
 
 .button--align-self {
@@ -362,7 +363,7 @@ p {
   padding: 4px;
   background: transparent;
   color: var(--muted);
-  font-size: 12px;
+  font-size: calc(12px * var(--font-scale, 1));
   font-weight: 600;
 }
 
@@ -386,13 +387,13 @@ p {
   align-items: center;
   justify-content: space-between;
   color: var(--ink-soft);
-  font-size: 12px;
+  font-size: calc(12px * var(--font-scale, 1));
   font-weight: 650;
 }
 
 .field__label small {
   color: var(--muted-light);
-  font-size: 11px;
+  font-size: calc(11px * var(--font-scale, 1));
   font-weight: 500;
 }
 
@@ -433,7 +434,7 @@ p {
   outline: 0;
   background: transparent;
   color: var(--ink);
-  font-size: 13px;
+  font-size: calc(13px * var(--font-scale, 1));
 }
 
 .input-shell input::placeholder {
@@ -465,7 +466,7 @@ p {
 .protocol-mark {
   color: var(--muted-light);
   font-family: 'Manrope', sans-serif;
-  font-size: 10px;
+  font-size: calc(10px * var(--font-scale, 1));
   font-weight: 700;
   letter-spacing: 0.08em;
 }
@@ -476,7 +477,7 @@ p {
   border-radius: 8px;
   background: rgba(246, 228, 224, 0.6);
   color: #8f3b32;
-  font-size: 12px;
+  font-size: calc(12px * var(--font-scale, 1));
 }
 
 .field-row {
@@ -506,7 +507,7 @@ p {
   border-radius: 7px;
   background: transparent;
   color: var(--muted);
-  font-size: 12px;
+  font-size: calc(12px * var(--font-scale, 1));
   font-weight: 600;
   transition:
     background 160ms ease,
@@ -549,13 +550,13 @@ p {
 }
 
 .switch-row strong {
-  font-size: 12px;
+  font-size: calc(12px * var(--font-scale, 1));
   font-weight: 650;
 }
 
 .switch-row small {
   color: var(--muted);
-  font-size: 11px;
+  font-size: calc(11px * var(--font-scale, 1));
 }
 
 .switch-row input {
@@ -641,12 +642,12 @@ p {
 
 .password-strength__copy strong {
   color: var(--ink-soft);
-  font-size: 11px;
+  font-size: calc(11px * var(--font-scale, 1));
 }
 
 .password-strength__copy span {
   color: var(--muted);
-  font-size: 10px;
+  font-size: calc(10px * var(--font-scale, 1));
 }
 
 .monogram {
@@ -660,7 +661,7 @@ p {
   background: #e6e4dc;
   color: #38443e;
   font-family: 'Manrope', 'Noto Sans SC', sans-serif;
-  font-size: 15px;
+  font-size: calc(15px * var(--font-scale, 1));
   font-weight: 700;
   letter-spacing: -0.04em;
 }
@@ -669,14 +670,14 @@ p {
   width: 30px;
   height: 30px;
   border-radius: 9px;
-  font-size: 12px;
+  font-size: calc(12px * var(--font-scale, 1));
 }
 
 .monogram--large {
   width: 52px;
   height: 52px;
   border-radius: 15px;
-  font-size: 19px;
+  font-size: calc(19px * var(--font-scale, 1));
 }
 
 .monogram--tone-0 {
@@ -747,7 +748,7 @@ p {
   margin-top: 6px;
   color: var(--ink);
   font-family: var(--font-cn);
-  font-size: 23px;
+  font-size: calc(23px * var(--font-scale, 1));
   font-weight: 650;
   letter-spacing: -0.035em;
 }
@@ -763,7 +764,7 @@ p {
 .modal-description {
   padding: 0 28px;
   color: var(--muted);
-  font-size: 13px;
+  font-size: calc(13px * var(--font-scale, 1));
   line-height: 1.75;
 }
 
@@ -782,20 +783,21 @@ p {
 .toast {
   position: fixed;
   z-index: 400;
-  top: 48px;
-  right: 24px;
+  top: 52px;
+  left: 50%;
   display: flex;
   align-items: center;
   gap: 10px;
   max-width: 420px;
   min-height: 46px;
   padding: 8px 8px 8px 12px;
-  border: 1px solid color-mix(in srgb, var(--line-strong) 50%, transparent);
+  border: 1px solid var(--card-border);
   border-radius: 12px;
-  background: rgba(28, 37, 33, 0.96);
-  color: #f8f6f0;
-  box-shadow: var(--shadow-md);
-  font-size: 12px;
+  background: var(--card);
+  color: var(--ink);
+  box-shadow: var(--card-shadow);
+  font-size: calc(12px * var(--font-scale, 1));
+  translate: -50% 0;
   animation: toast-in 220ms cubic-bezier(0.2, 0.8, 0.2, 1) both;
 }
 
@@ -806,27 +808,29 @@ p {
   width: 25px;
   height: 25px;
   border-radius: 7px;
-  background: rgba(255, 255, 255, 0.1);
-  color: #8fd1bc;
+  background: color-mix(in srgb, var(--success) 12%, transparent);
+  color: var(--success);
 }
 
 .toast--error .toast__icon {
-  color: #f0a79f;
+  background: color-mix(in srgb, var(--danger) 12%, transparent);
+  color: var(--danger);
 }
 
 .toast--info .toast__icon {
-  color: #e9d3a7;
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+  color: var(--accent);
 }
 
 .toast .icon-button {
   margin-left: auto;
-  color: rgba(255, 255, 255, 0.58);
+  color: var(--muted);
 }
 
 .toast .icon-button:hover {
-  border-color: rgba(255, 255, 255, 0.14);
-  background: rgba(255, 255, 255, 0.08);
-  color: #fff;
+  border-color: var(--card-border);
+  background: color-mix(in srgb, var(--ink) 5%, transparent);
+  color: var(--ink);
 }
 
 /* Authentication */
@@ -910,7 +914,7 @@ p {
   margin-top: 18px;
   color: var(--cream);
   font-family: var(--font-cn);
-  font-size: clamp(48px, 5.2vw, 72px);
+  font-size: clamp(calc(48px * var(--font-scale, 1)), calc(5.2vw * var(--font-scale, 1)), calc(72px * var(--font-scale, 1)));
   font-weight: 550;
   letter-spacing: -0.07em;
   line-height: 1.12;
@@ -921,7 +925,7 @@ p {
   margin-top: 24px;
   color: rgba(248, 241, 228, 0.64);
   font-family: var(--font-cn);
-  font-size: 14px;
+  font-size: calc(14px * var(--font-scale, 1));
   line-height: 1.9;
 }
 
@@ -940,7 +944,7 @@ p {
   align-items: center;
   gap: 7px;
   color: rgba(248, 241, 228, 0.58);
-  font-size: 11px;
+  font-size: calc(11px * var(--font-scale, 1));
   font-weight: 550;
 }
 
@@ -1060,7 +1064,7 @@ p {
   margin-top: 32px;
   color: var(--muted-light);
   font-family: 'Manrope', sans-serif;
-  font-size: 10px;
+  font-size: calc(10px * var(--font-scale, 1));
   letter-spacing: 0.08em;
   text-align: center;
   text-transform: uppercase;
@@ -1078,7 +1082,7 @@ p {
   margin-top: 10px;
   color: var(--ink);
   font-family: var(--font-cn);
-  font-size: 34px;
+  font-size: calc(34px * var(--font-scale, 1));
   font-weight: 600;
   letter-spacing: -0.055em;
   line-height: 1.24;
@@ -1087,7 +1091,7 @@ p {
 .auth-form-heading p {
   margin-top: 11px;
   color: var(--muted);
-  font-size: 12px;
+  font-size: calc(12px * var(--font-scale, 1));
   line-height: 1.7;
 }
 
@@ -1119,14 +1123,14 @@ p {
 }
 
 .auth-warning p {
-  font-size: 11px;
+  font-size: calc(11px * var(--font-scale, 1));
   line-height: 1.65;
 }
 
 .auth-warning strong {
   display: block;
   margin-bottom: 1px;
-  font-size: 11px;
+  font-size: calc(11px * var(--font-scale, 1));
   font-weight: 650;
 }
 
@@ -1149,7 +1153,7 @@ p {
   align-items: center;
   gap: 5px;
   color: var(--muted);
-  font-size: 11px;
+  font-size: calc(11px * var(--font-scale, 1));
 }
 
 .auth-assurance svg {
@@ -1253,7 +1257,7 @@ p {
   align-items: center;
   gap: 9px;
   color: var(--muted);
-  font-size: 11px;
+  font-size: calc(11px * var(--font-scale, 1));
 }
 
 .boot-screen__footnote {
@@ -1263,7 +1267,7 @@ p {
   align-items: center;
   gap: 6px;
   color: var(--muted-light);
-  font-size: 10px;
+  font-size: calc(10px * var(--font-scale, 1));
   letter-spacing: 0.04em;
 }
 
@@ -1330,7 +1334,7 @@ p {
   padding: 0 9px 7px;
   color: var(--muted-light);
   font-family: 'Manrope', sans-serif;
-  font-size: 10px;
+  font-size: calc(10px * var(--font-scale, 1));
   font-weight: 700;
   letter-spacing: 0.14em;
   text-transform: uppercase;
@@ -1345,7 +1349,7 @@ p {
 
 .sidebar-label-row > span:last-child {
   color: var(--muted-light);
-  font-size: 10px;
+  font-size: calc(10px * var(--font-scale, 1));
 }
 
 .sidebar-nav__item {
@@ -1358,7 +1362,7 @@ p {
   border-radius: 9px;
   background: transparent;
   color: var(--muted);
-  font-size: 12px;
+  font-size: calc(12px * var(--font-scale, 1));
   font-weight: 550;
   text-align: left;
   transition:
@@ -1386,7 +1390,7 @@ p {
 .sidebar-submenu__empty {
   padding: 8px 9px 10px;
   color: var(--muted-light);
-  font-size: 10px;
+  font-size: calc(10px * var(--font-scale, 1));
 }
 
 .sidebar-nav__item:hover {
@@ -1410,7 +1414,7 @@ p {
   background: rgba(111, 119, 113, 0.08);
   color: var(--muted);
   font-family: 'Manrope', sans-serif;
-  font-size: 10px;
+  font-size: calc(10px * var(--font-scale, 1));
   font-weight: 700;
 }
 
@@ -1448,7 +1452,7 @@ p {
   padding: 1px 6px 4px;
   color: var(--muted-light);
   font-family: 'Manrope', 'Noto Sans SC', sans-serif;
-  font-size: 9px;
+  font-size: calc(9px * var(--font-scale, 1));
   font-weight: 700;
   letter-spacing: 0.08em;
   text-transform: uppercase;
@@ -1487,7 +1491,7 @@ p {
 .sidebar-site strong {
   overflow: hidden;
   color: var(--ink-soft);
-  font-size: 10px;
+  font-size: calc(10px * var(--font-scale, 1));
   font-weight: 600;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -1497,7 +1501,7 @@ p {
   overflow: hidden;
   color: var(--muted-light);
   font-family: 'Manrope', sans-serif;
-  font-size: 9px;
+  font-size: calc(9px * var(--font-scale, 1));
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -1505,7 +1509,7 @@ p {
 .sidebar-site em {
   color: var(--muted-light);
   font-family: 'Manrope', sans-serif;
-  font-size: 10px;
+  font-size: calc(10px * var(--font-scale, 1));
   font-style: normal;
   font-weight: 700;
 }
@@ -1555,13 +1559,13 @@ p {
 
 .vault-indicator strong {
   color: var(--accent-strong);
-  font-size: 11px;
+  font-size: calc(11px * var(--font-scale, 1));
   font-weight: 650;
 }
 
 .vault-indicator small {
   color: var(--muted);
-  font-size: 10px;
+  font-size: calc(10px * var(--font-scale, 1));
 }
 
 .sidebar-actions {
@@ -1579,7 +1583,7 @@ p {
   border-radius: 8px;
   background: transparent;
   color: var(--muted);
-  font-size: 11px;
+  font-size: calc(11px * var(--font-scale, 1));
   font-weight: 600;
 }
 
@@ -1640,7 +1644,7 @@ p {
   margin-top: 8px;
   color: var(--ink);
   font-family: var(--font-cn);
-  font-size: 34px;
+  font-size: calc(34px * var(--font-scale, 1));
   font-weight: 600;
   letter-spacing: -0.055em;
   line-height: 1.2;
@@ -1649,7 +1653,7 @@ p {
 .library-header p {
   margin-top: 8px;
   color: var(--muted);
-  font-size: 11px;
+  font-size: calc(11px * var(--font-scale, 1));
 }
 
 .library-header__actions {
@@ -1671,7 +1675,7 @@ p {
   background: color-mix(in srgb, var(--surface-raised) 66%, transparent);
   color: var(--muted);
   font-family: 'Manrope', 'Noto Sans SC', sans-serif;
-  font-size: 10px;
+  font-size: calc(10px * var(--font-scale, 1));
   font-weight: 650;
   white-space: nowrap;
   cursor: pointer;
@@ -1742,7 +1746,7 @@ p {
   border: 0;
   outline: 0;
   background: transparent;
-  font-size: 11px;
+  font-size: calc(11px * var(--font-scale, 1));
 }
 
 .search-field input::placeholder {
@@ -1756,7 +1760,7 @@ p {
   background: color-mix(in srgb, var(--canvas) 80%, transparent);
   color: var(--muted-light);
   font-family: 'Manrope', sans-serif;
-  font-size: 10px;
+  font-size: calc(10px * var(--font-scale, 1));
   white-space: nowrap;
 }
 
@@ -1764,7 +1768,7 @@ p {
   margin-left: auto;
   color: var(--muted-light);
   font-family: 'Manrope', sans-serif;
-  font-size: 10px;
+  font-size: calc(10px * var(--font-scale, 1));
   font-weight: 700;
   letter-spacing: 0.1em;
 }
@@ -1787,7 +1791,7 @@ p {
   padding: 0 15px;
   color: var(--muted-light);
   font-family: 'Manrope', 'Noto Sans SC', sans-serif;
-  font-size: 10px;
+  font-size: calc(10px * var(--font-scale, 1));
   font-weight: 700;
   letter-spacing: 0.08em;
   text-transform: uppercase;
@@ -1852,7 +1856,7 @@ p {
   overflow: hidden;
   color: var(--ink);
   font-family: var(--font-cn);
-  font-size: 13px;
+  font-size: calc(13px * var(--font-scale, 1));
   font-weight: 600;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -1869,7 +1873,7 @@ p {
   overflow: hidden;
   margin-top: 3px;
   color: var(--muted);
-  font-size: 11px;
+  font-size: calc(11px * var(--font-scale, 1));
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -1886,7 +1890,7 @@ p {
   min-width: 0;
   gap: 7px;
   color: var(--muted);
-  font-size: 12px;
+  font-size: calc(12px * var(--font-scale, 1));
 }
 
 .account-username svg {
@@ -1903,7 +1907,7 @@ p {
 .account-last-used {
   color: var(--muted);
   font-family: 'Manrope', 'Noto Sans SC', sans-serif;
-  font-size: 10px;
+  font-size: calc(10px * var(--font-scale, 1));
   white-space: nowrap;
 }
 
@@ -1916,7 +1920,7 @@ p {
   border: 1px solid var(--line);
   border-radius: 99px;
   color: var(--muted);
-  font-size: 10px;
+  font-size: calc(10px * var(--font-scale, 1));
   font-weight: 600;
   white-space: nowrap;
 }
@@ -1955,7 +1959,7 @@ p {
   border-radius: 8px;
   background: var(--accent-pale);
   color: var(--accent-strong);
-  font-size: 11px;
+  font-size: calc(11px * var(--font-scale, 1));
   font-weight: 650;
   transition:
     background 150ms ease,
@@ -1972,7 +1976,7 @@ p {
   border-radius: 8px;
   background: color-mix(in srgb, var(--surface) 72%, transparent);
   color: var(--muted);
-  font-size: 10px;
+  font-size: calc(10px * var(--font-scale, 1));
   font-weight: 650;
   transition:
     background 150ms ease,
@@ -2043,7 +2047,7 @@ p {
   margin-top: 9px;
   color: var(--ink);
   font-family: var(--font-cn);
-  font-size: 25px;
+  font-size: calc(25px * var(--font-scale, 1));
   font-weight: 600;
   letter-spacing: -0.045em;
 }
@@ -2052,7 +2056,7 @@ p {
   max-width: 340px;
   margin-top: 8px;
   color: var(--muted);
-  font-size: 11px;
+  font-size: calc(11px * var(--font-scale, 1));
   line-height: 1.7;
 }
 
@@ -2067,7 +2071,7 @@ p {
 
 .empty-state--compact h2 {
   margin-top: 12px;
-  font-size: 20px;
+  font-size: calc(20px * var(--font-scale, 1));
 }
 
 /* Details drawer */
@@ -2129,7 +2133,7 @@ p {
   margin-top: 3px;
   color: var(--ink);
   font-family: var(--font-cn);
-  font-size: 22px;
+  font-size: calc(22px * var(--font-scale, 1));
   font-weight: 600;
   letter-spacing: -0.045em;
 }
@@ -2141,7 +2145,7 @@ p {
   margin-top: 4px;
   color: var(--muted);
   font-family: 'Manrope', sans-serif;
-  font-size: 10px;
+  font-size: calc(10px * var(--font-scale, 1));
 }
 
 .details-header__actions {
@@ -2190,13 +2194,13 @@ p {
 
 .drawer-login-button strong {
   font-family: var(--font-cn);
-  font-size: 12px;
+  font-size: calc(12px * var(--font-scale, 1));
   font-weight: 600;
 }
 
 .drawer-login-button small {
   color: rgba(255, 255, 255, 0.62);
-  font-size: 11px;
+  font-size: calc(11px * var(--font-scale, 1));
 }
 
 .drawer-login-button__arrow {
@@ -2237,14 +2241,14 @@ p {
 
 .drawer-record-button strong {
   color: var(--ink-soft);
-  font-size: 11px;
+  font-size: calc(11px * var(--font-scale, 1));
   font-weight: 650;
 }
 
 .drawer-record-button small {
   overflow: hidden;
   color: var(--muted);
-  font-size: 10px;
+  font-size: calc(10px * var(--font-scale, 1));
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -2269,13 +2273,13 @@ p {
 
 .section-heading h3 {
   color: var(--ink);
-  font-size: 11px;
+  font-size: calc(11px * var(--font-scale, 1));
   font-weight: 650;
 }
 
 .section-heading span {
   color: var(--muted-light);
-  font-size: 10px;
+  font-size: calc(10px * var(--font-scale, 1));
 }
 
 .credential-row {
@@ -2312,14 +2316,14 @@ p {
 
 .credential-row small {
   color: var(--muted-light);
-  font-size: 10px;
+  font-size: calc(10px * var(--font-scale, 1));
 }
 
 .credential-row strong {
   overflow: hidden;
   color: var(--ink-soft);
   font-family: 'Manrope', 'Noto Sans SC', sans-serif;
-  font-size: 12px;
+  font-size: calc(12px * var(--font-scale, 1));
   font-weight: 550;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -2379,13 +2383,13 @@ p {
 
 .status-note strong {
   color: var(--ink-soft);
-  font-size: 11px;
+  font-size: calc(11px * var(--font-scale, 1));
   font-weight: 650;
 }
 
 .status-note small {
   color: var(--muted);
-  font-size: 10px;
+  font-size: calc(10px * var(--font-scale, 1));
 }
 
 .details-meta {
@@ -2400,7 +2404,7 @@ p {
   align-items: center;
   gap: 6px;
   color: var(--muted);
-  font-size: 10px;
+  font-size: calc(10px * var(--font-scale, 1));
 }
 
 .details-meta svg {
@@ -2409,7 +2413,7 @@ p {
 
 .details-meta strong {
   color: var(--ink-soft);
-  font-size: 10px;
+  font-size: calc(10px * var(--font-scale, 1));
   font-weight: 550;
   text-align: right;
 }
@@ -2440,7 +2444,7 @@ p {
   margin-top: 4px;
   background: transparent;
   color: var(--danger);
-  font-size: 11px;
+  font-size: calc(11px * var(--font-scale, 1));
   font-weight: 600;
 }
 
@@ -2463,13 +2467,13 @@ p {
   margin-top: 3px;
   color: var(--ink);
   font-family: var(--font-cn);
-  font-size: 21px;
+  font-size: calc(21px * var(--font-scale, 1));
   font-weight: 650;
   letter-spacing: -0.035em;
 }
 
 .account-form-modal .eyebrow {
-  font-size: 9px;
+  font-size: calc(9px * var(--font-scale, 1));
 }
 
 .account-form {
@@ -2496,11 +2500,11 @@ p {
 }
 
 .account-form .field__label {
-  font-size: 11px;
+  font-size: calc(11px * var(--font-scale, 1));
 }
 
 .account-form .field__label small {
-  font-size: 9px;
+  font-size: calc(9px * var(--font-scale, 1));
 }
 
 .account-form .input-shell {
@@ -2511,7 +2515,7 @@ p {
 
 .account-form .input-shell input {
   height: 34px;
-  font-size: 12px;
+  font-size: calc(12px * var(--font-scale, 1));
 }
 
 .account-site-summary {
@@ -2536,7 +2540,7 @@ p {
 .account-site-summary strong {
   overflow: hidden;
   color: var(--ink-soft);
-  font-size: 12px;
+  font-size: calc(12px * var(--font-scale, 1));
   font-weight: 600;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -2546,7 +2550,7 @@ p {
   overflow: hidden;
   color: var(--muted);
   font-family: 'Manrope', sans-serif;
-  font-size: 10px;
+  font-size: calc(10px * var(--font-scale, 1));
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -2557,7 +2561,7 @@ p {
   border-radius: 999px;
   background: var(--accent-pale);
   color: var(--accent-strong);
-  font-size: 9px;
+  font-size: calc(9px * var(--font-scale, 1));
   font-style: normal;
   font-weight: 650;
 }
@@ -2612,7 +2616,7 @@ p {
 .site-picker__trigger strong {
   overflow: hidden;
   color: var(--ink);
-  font-size: 12px;
+  font-size: calc(12px * var(--font-scale, 1));
   font-weight: 600;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -2622,7 +2626,7 @@ p {
   overflow: hidden;
   color: var(--muted);
   font-family: 'Manrope', sans-serif;
-  font-size: 10px;
+  font-size: calc(10px * var(--font-scale, 1));
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -2685,7 +2689,7 @@ p {
 .site-picker__menu strong {
   overflow: hidden;
   color: var(--ink-soft);
-  font-size: 11px;
+  font-size: calc(11px * var(--font-scale, 1));
   font-weight: 600;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -2694,7 +2698,7 @@ p {
 .site-picker__menu small {
   overflow: hidden;
   color: var(--muted);
-  font-size: 9px;
+  font-size: calc(9px * var(--font-scale, 1));
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -2729,16 +2733,16 @@ p {
 }
 
 .account-form .switch-row strong {
-  font-size: 11px;
+  font-size: calc(11px * var(--font-scale, 1));
 }
 
 .account-form .switch-row small {
-  font-size: 9px;
+  font-size: calc(9px * var(--font-scale, 1));
 }
 
 .account-form .form-error {
   padding: 7px 9px;
-  font-size: 10px;
+  font-size: calc(10px * var(--font-scale, 1));
 }
 
 .account-form .modal-actions {
@@ -2765,7 +2769,7 @@ p {
 .batch-picker__intro h3 {
   color: var(--ink);
   font-family: var(--font-cn);
-  font-size: 15px;
+  font-size: calc(15px * var(--font-scale, 1));
   font-weight: 600;
 }
 
@@ -2773,7 +2777,7 @@ p {
   max-width: 480px;
   margin-top: 4px;
   color: var(--muted);
-  font-size: 11px;
+  font-size: calc(11px * var(--font-scale, 1));
   line-height: 1.65;
 }
 
@@ -2812,7 +2816,7 @@ p {
   min-height: 27px;
   padding: 0 6px 5px;
   color: var(--muted);
-  font-size: 10px;
+  font-size: calc(10px * var(--font-scale, 1));
   font-weight: 650;
 }
 
@@ -2831,7 +2835,7 @@ p {
   background: rgba(111, 119, 113, 0.08);
   color: var(--muted-light);
   font-family: 'Manrope', sans-serif;
-  font-size: 9px;
+  font-size: calc(9px * var(--font-scale, 1));
 }
 
 .batch-site-row {
@@ -2905,7 +2909,7 @@ p {
 .batch-site-row__identity strong {
   overflow: hidden;
   color: var(--ink-soft);
-  font-size: 11px;
+  font-size: calc(11px * var(--font-scale, 1));
   font-weight: 600;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -2919,7 +2923,7 @@ p {
   overflow: hidden;
   color: var(--muted);
   font-family: 'Manrope', sans-serif;
-  font-size: 9px;
+  font-size: calc(9px * var(--font-scale, 1));
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -2927,7 +2931,7 @@ p {
 .batch-site-row em {
   color: var(--muted-light);
   font-family: 'Manrope', 'Noto Sans SC', sans-serif;
-  font-size: 9px;
+  font-size: calc(9px * var(--font-scale, 1));
   font-style: normal;
   white-space: nowrap;
 }
@@ -2944,13 +2948,13 @@ p {
 
 .batch-picker__footer > span {
   color: var(--muted);
-  font-size: 10px;
+  font-size: calc(10px * var(--font-scale, 1));
 }
 
 .batch-picker__footer > span strong {
   color: var(--ink-soft);
   font-family: 'Manrope', sans-serif;
-  font-size: 11px;
+  font-size: calc(11px * var(--font-scale, 1));
 }
 
 .batch-picker__footer .modal-actions {
@@ -2996,14 +3000,14 @@ p {
 .settings-section h3 {
   color: var(--ink);
   font-family: var(--font-cn);
-  font-size: 13px;
+  font-size: calc(13px * var(--font-scale, 1));
   font-weight: 600;
 }
 
 .settings-section p {
   margin-top: 3px;
   color: var(--muted);
-  font-size: 11px;
+  font-size: calc(11px * var(--font-scale, 1));
 }
 
 .settings-section .segmented-control {
@@ -3027,7 +3031,7 @@ p {
   border-radius: 10px;
   background: color-mix(in srgb, var(--surface) 78%, transparent);
   color: var(--muted);
-  font-size: 10px;
+  font-size: calc(10px * var(--font-scale, 1));
   text-align: left;
   transition:
     border-color 180ms ease,
@@ -3101,7 +3105,7 @@ p {
   flex-direction: column;
   gap: 5px;
   color: var(--muted);
-  font-size: 9px;
+  font-size: calc(9px * var(--font-scale, 1));
 }
 
 .theme-color-field__control {
@@ -3123,7 +3127,7 @@ p {
 .theme-color-field code {
   overflow: hidden;
   color: var(--ink-soft);
-  font-size: 9px;
+  font-size: calc(9px * var(--font-scale, 1));
   text-overflow: ellipsis;
 }
 
@@ -3150,8 +3154,70 @@ p {
   min-width: 44px;
   color: var(--accent-strong);
   font-family: 'Manrope', sans-serif;
-  font-size: 12px;
+  font-size: calc(12px * var(--font-scale, 1));
   text-align: right;
+}
+
+.settings-card--font-size {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px 24px;
+}
+
+.settings-card--font-size .settings-card__heading {
+  min-width: 0;
+  flex: 1 1 320px;
+}
+
+.settings-card--font-size .settings-inline-actions {
+  width: 100%;
+  margin-top: 0;
+}
+
+.font-size-selector {
+  display: grid;
+  width: min(100%, 360px);
+  grid-auto-flow: column;
+  grid-auto-columns: minmax(0, 1fr);
+  gap: 2px;
+  padding: 3px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--ink) 4%, var(--canvas));
+}
+
+.font-size-selector button {
+  min-height: 34px;
+  padding: 0 12px;
+  border-radius: 9px;
+  background: transparent;
+  color: var(--muted);
+  font-size: calc(12px * var(--font-scale, 1));
+  font-weight: 620;
+  transition:
+    background 160ms ease,
+    color 160ms ease,
+    box-shadow 160ms ease;
+}
+
+.font-size-selector button:hover {
+  color: var(--ink);
+}
+
+.font-size-selector button.is-active {
+  background: var(--card);
+  color: var(--ink);
+  box-shadow:
+    0 1px 2px color-mix(in srgb, var(--ink) 8%, transparent),
+    0 3px 10px color-mix(in srgb, var(--ink) 6%, transparent);
+}
+
+@media (max-width: 780px) {
+  .font-size-selector {
+    width: 100%;
+  }
 }
 
 .settings-inline-actions--between {
@@ -3160,7 +3226,7 @@ p {
 
 .settings-hint {
   color: var(--muted-light);
-  font-size: 9px;
+  font-size: calc(9px * var(--font-scale, 1));
 }
 
 .settings-password-form {
@@ -3188,7 +3254,7 @@ p {
   overflow: hidden;
   color: var(--ink-soft);
   font-family: 'Manrope', monospace;
-  font-size: 10px;
+  font-size: calc(10px * var(--font-scale, 1));
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -3199,7 +3265,7 @@ p {
   border-radius: 999px;
   background: var(--accent-pale);
   color: var(--accent-strong);
-  font-size: 9px;
+  font-size: calc(9px * var(--font-scale, 1));
   font-weight: 650;
 }
 
@@ -3213,7 +3279,7 @@ p {
   border-radius: 9px;
   background: rgba(247, 234, 217, 0.62);
   color: var(--warning);
-  font-size: 10px;
+  font-size: calc(10px * var(--font-scale, 1));
 }
 
 .settings-notice > span {
@@ -3243,13 +3309,13 @@ p {
 
 .settings-about-grid span {
   color: var(--muted);
-  font-size: 10px;
+  font-size: calc(10px * var(--font-scale, 1));
 }
 
 .settings-about-grid strong {
   color: var(--ink-soft);
   font-family: 'Manrope', 'Noto Sans SC', sans-serif;
-  font-size: 10px;
+  font-size: calc(10px * var(--font-scale, 1));
   font-weight: 600;
 }
 
@@ -3299,13 +3365,13 @@ p {
 }
 
 .settings-update-status strong {
-  font-size: 10px;
+  font-size: calc(10px * var(--font-scale, 1));
   font-weight: 650;
 }
 
 .settings-update-status small {
   color: var(--muted);
-  font-size: 9px;
+  font-size: calc(9px * var(--font-scale, 1));
 }
 
 .settings-section--split {
@@ -3335,7 +3401,7 @@ p {
 .failure-log-toolbar p {
   max-width: 360px;
   color: var(--muted);
-  font-size: 10px;
+  font-size: calc(10px * var(--font-scale, 1));
   line-height: 1.65;
 }
 
@@ -3369,7 +3435,7 @@ p {
 
 .failure-log-row strong {
   color: var(--ink-soft);
-  font-size: 11px;
+  font-size: calc(11px * var(--font-scale, 1));
   font-weight: 650;
 }
 
@@ -3381,14 +3447,14 @@ p {
 .failure-log-row p {
   margin-top: 4px;
   color: var(--muted);
-  font-size: 10px;
+  font-size: calc(10px * var(--font-scale, 1));
   line-height: 1.55;
 }
 
 .failure-log-row time {
   color: var(--muted-light);
   font-family: 'Manrope', sans-serif;
-  font-size: 9px;
+  font-size: calc(9px * var(--font-scale, 1));
   white-space: nowrap;
 }
 
@@ -3399,7 +3465,7 @@ p {
   border-radius: 999px;
   background: var(--danger-soft);
   color: var(--danger);
-  font-size: 9px;
+  font-size: calc(9px * var(--font-scale, 1));
   font-weight: 650;
 }
 
@@ -3423,12 +3489,12 @@ p {
 
 .failure-log-empty strong {
   color: var(--ink-soft);
-  font-size: 12px;
+  font-size: calc(12px * var(--font-scale, 1));
 }
 
 .failure-log-empty span {
   max-width: 330px;
-  font-size: 10px;
+  font-size: calc(10px * var(--font-scale, 1));
   line-height: 1.6;
 }
 
@@ -3480,7 +3546,7 @@ p {
   overflow: hidden;
   color: var(--ink);
   font-family: var(--font-cn);
-  font-size: 11px;
+  font-size: calc(11px * var(--font-scale, 1));
   font-weight: 600;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -3495,7 +3561,7 @@ p {
 .workspace-account small {
   overflow: hidden;
   color: var(--muted);
-  font-size: 10px;
+  font-size: calc(10px * var(--font-scale, 1));
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -3514,7 +3580,7 @@ p {
   border: 1px solid var(--line);
   border-radius: 99px;
   color: var(--muted);
-  font-size: 11px;
+  font-size: calc(11px * var(--font-scale, 1));
   font-weight: 650;
   white-space: nowrap;
 }
@@ -3565,7 +3631,7 @@ p {
   align-items: center;
   gap: 7px;
   color: var(--ink-soft);
-  font-size: 11px;
+  font-size: calc(11px * var(--font-scale, 1));
   font-weight: 650;
   white-space: nowrap;
 }
@@ -3596,7 +3662,7 @@ p {
 .address-pill span {
   overflow: hidden;
   font-family: 'Manrope', sans-serif;
-  font-size: 11px;
+  font-size: calc(11px * var(--font-scale, 1));
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -3610,7 +3676,7 @@ p {
   border-radius: 7px;
   background: transparent;
   color: var(--muted);
-  font-size: 11px;
+  font-size: calc(11px * var(--font-scale, 1));
   font-weight: 600;
   white-space: nowrap;
 }
@@ -3649,14 +3715,14 @@ p {
 }
 
 .recording-bar strong {
-  font-size: 11px;
+  font-size: calc(11px * var(--font-scale, 1));
   font-weight: 650;
 }
 
 .recording-bar small {
   overflow: hidden;
   color: rgba(111, 76, 34, 0.74);
-  font-size: 10px;
+  font-size: calc(10px * var(--font-scale, 1));
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -3712,7 +3778,7 @@ p {
   min-width: 180px;
   flex: 1;
   overflow: hidden;
-  font-size: 11px;
+  font-size: calc(11px * var(--font-scale, 1));
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -3727,7 +3793,7 @@ p {
 .login-notice .button--ghost {
   min-height: 28px;
   background: rgba(255, 255, 255, 0.35);
-  font-size: 10px;
+  font-size: calc(10px * var(--font-scale, 1));
 }
 
 .login-surface {
@@ -3808,7 +3874,7 @@ p {
 .external-browser-card__heading > span {
   color: var(--accent);
   font-family: 'Manrope', sans-serif;
-  font-size: 10px;
+  font-size: calc(10px * var(--font-scale, 1));
   font-weight: 750;
   letter-spacing: 0.13em;
   text-transform: uppercase;
@@ -3818,7 +3884,7 @@ p {
   overflow: hidden;
   color: var(--ink);
   font-family: var(--font-cn);
-  font-size: clamp(22px, 2.5vw, 29px);
+  font-size: clamp(calc(22px * var(--font-scale, 1)), calc(2.5vw * var(--font-scale, 1)), calc(29px * var(--font-scale, 1)));
   font-weight: 650;
   letter-spacing: -0.04em;
   line-height: 1.24;
@@ -3830,7 +3896,7 @@ p {
   max-width: 690px;
   margin-top: 24px;
   color: var(--ink-soft);
-  font-size: 13px;
+  font-size: calc(13px * var(--font-scale, 1));
   line-height: 1.75;
 }
 
@@ -3868,7 +3934,7 @@ p {
 
 .external-browser-address small {
   color: var(--muted-light);
-  font-size: 9px;
+  font-size: calc(9px * var(--font-scale, 1));
   font-weight: 650;
   letter-spacing: 0.08em;
   text-transform: uppercase;
@@ -3878,7 +3944,7 @@ p {
   overflow: hidden;
   color: var(--ink-soft);
   font-family: 'Manrope', sans-serif;
-  font-size: 12px;
+  font-size: calc(12px * var(--font-scale, 1));
   font-weight: 600;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -3923,7 +3989,7 @@ p {
   background: var(--accent-pale);
   color: var(--accent);
   font-family: 'Manrope', sans-serif;
-  font-size: 9px;
+  font-size: calc(9px * var(--font-scale, 1));
   font-weight: 750;
   letter-spacing: 0.04em;
 }
@@ -3937,13 +4003,13 @@ p {
 
 .external-browser-steps strong {
   color: var(--ink-soft);
-  font-size: 11px;
+  font-size: calc(11px * var(--font-scale, 1));
   font-weight: 650;
 }
 
 .external-browser-steps small {
   color: var(--muted-light);
-  font-size: 10px;
+  font-size: calc(10px * var(--font-scale, 1));
   line-height: 1.55;
 }
 
@@ -3959,7 +4025,7 @@ p {
   padding-top: 17px;
   border-top: 1px solid var(--line);
   color: var(--muted-light);
-  font-size: 10px;
+  font-size: calc(10px * var(--font-scale, 1));
   line-height: 1.7;
 }
 
@@ -3993,7 +4059,7 @@ p {
 
 .sidebar-group-row span {
   overflow: hidden;
-  font-size: 11px;
+  font-size: calc(11px * var(--font-scale, 1));
   font-weight: 560;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -4010,7 +4076,7 @@ p {
   background: color-mix(in srgb, var(--muted) 9%, transparent);
   color: var(--muted-light);
   font-family: 'Manrope', sans-serif;
-  font-size: 9px;
+  font-size: calc(9px * var(--font-scale, 1));
   font-weight: 700;
 }
 
@@ -4045,12 +4111,12 @@ p {
 
 .batch-selection-bar > span {
   color: var(--accent-strong);
-  font-size: 11px;
+  font-size: calc(11px * var(--font-scale, 1));
 }
 
 .batch-selection-bar > span strong {
   font-family: 'Manrope', sans-serif;
-  font-size: 13px;
+  font-size: calc(13px * var(--font-scale, 1));
 }
 
 .batch-selection-bar > div {
@@ -4062,7 +4128,7 @@ p {
 .batch-selection-bar .button {
   min-height: 34px;
   padding: 0 12px;
-  font-size: 11px;
+  font-size: calc(11px * var(--font-scale, 1));
 }
 
 .selection-checkbox {
@@ -4137,7 +4203,7 @@ p {
 .account-username strong {
   overflow: hidden;
   color: var(--ink-soft);
-  font-size: 11px;
+  font-size: calc(11px * var(--font-scale, 1));
   font-weight: 550;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -4147,7 +4213,7 @@ p {
   overflow: hidden;
   color: var(--muted-light);
   font-family: 'Manrope', 'Noto Sans SC', sans-serif;
-  font-size: 9px;
+  font-size: calc(9px * var(--font-scale, 1));
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -4207,7 +4273,7 @@ p {
   overflow: hidden;
   color: var(--ink);
   font-family: var(--font-cn);
-  font-size: 13px;
+  font-size: calc(13px * var(--font-scale, 1));
   font-weight: 600;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -4215,7 +4281,7 @@ p {
 
 .favorite-group__identity span {
   color: var(--muted-light);
-  font-size: 9px;
+  font-size: calc(9px * var(--font-scale, 1));
 }
 
 .group-favorite-button {
@@ -4229,7 +4295,7 @@ p {
   border-radius: 8px;
   background: color-mix(in srgb, var(--surface) 76%, transparent);
   color: var(--muted);
-  font-size: 10px;
+  font-size: calc(10px * var(--font-scale, 1));
   font-weight: 650;
   transition:
     border-color 160ms ease,
@@ -4267,7 +4333,7 @@ p {
   margin-top: 8px;
   color: var(--ink);
   font-family: var(--font-cn);
-  font-size: 30px;
+  font-size: calc(30px * var(--font-scale, 1));
   font-weight: 600;
   letter-spacing: -0.05em;
   line-height: 1.2;
@@ -4277,7 +4343,7 @@ p {
   max-width: 680px;
   margin-top: 8px;
   color: var(--muted);
-  font-size: 11px;
+  font-size: calc(11px * var(--font-scale, 1));
   line-height: 1.7;
 }
 
@@ -4302,7 +4368,7 @@ p {
   outline: 0;
   background: color-mix(in srgb, var(--surface) 82%, transparent);
   color: var(--ink-soft);
-  font-size: 11px;
+  font-size: calc(11px * var(--font-scale, 1));
   transition:
     border-color 160ms ease,
     background 160ms ease,
@@ -4336,12 +4402,12 @@ p {
 
 .logs-empty strong {
   color: var(--ink-soft);
-  font-size: 12px;
+  font-size: calc(12px * var(--font-scale, 1));
 }
 
 .logs-empty span {
   max-width: 350px;
-  font-size: 10px;
+  font-size: calc(10px * var(--font-scale, 1));
   line-height: 1.6;
 }
 
@@ -4366,7 +4432,7 @@ p {
   padding: 0 11px;
   color: var(--muted-light);
   font-family: 'Manrope', 'Noto Sans SC', sans-serif;
-  font-size: 9px;
+  font-size: calc(9px * var(--font-scale, 1));
   font-weight: 700;
   letter-spacing: 0.08em;
   text-transform: uppercase;
@@ -4377,7 +4443,7 @@ p {
   padding: 8px 11px;
   border-top: 1px solid color-mix(in srgb, var(--line-strong) 66%, transparent);
   color: var(--muted);
-  font-size: 10px;
+  font-size: calc(10px * var(--font-scale, 1));
 }
 
 .log-table__row:last-child {
@@ -4387,7 +4453,7 @@ p {
 .log-table__row strong {
   overflow: hidden;
   color: var(--ink-soft);
-  font-size: 11px;
+  font-size: calc(11px * var(--font-scale, 1));
   font-weight: 600;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -4397,7 +4463,7 @@ p {
   display: -webkit-box;
   overflow: hidden;
   color: var(--muted);
-  font-size: 10px;
+  font-size: calc(10px * var(--font-scale, 1));
   line-height: 1.45;
   -webkit-box-orient: vertical;
   -webkit-line-clamp: 2;
@@ -4406,7 +4472,7 @@ p {
 .log-table__row time {
   color: var(--muted-light);
   font-family: 'Manrope', sans-serif;
-  font-size: 9px;
+  font-size: calc(9px * var(--font-scale, 1));
   white-space: nowrap;
 }
 
@@ -4419,7 +4485,7 @@ p {
   border-radius: 999px;
   background: var(--danger-soft);
   color: var(--danger);
-  font-size: 9px;
+  font-size: calc(9px * var(--font-scale, 1));
   font-weight: 650;
 }
 
@@ -4441,7 +4507,7 @@ p {
   gap: 14px;
   padding: 14px 3px 4px;
   color: var(--muted-light);
-  font-size: 10px;
+  font-size: calc(10px * var(--font-scale, 1));
 }
 
 .log-pagination > div {
@@ -4481,7 +4547,7 @@ p {
   align-items: center;
   gap: 6px;
   color: var(--muted);
-  font-size: 10px;
+  font-size: calc(10px * var(--font-scale, 1));
   font-weight: 600;
 }
 
@@ -4495,7 +4561,7 @@ p {
 
 .segmented-control--language button {
   padding: 0 11px;
-  font-size: 10px;
+  font-size: calc(10px * var(--font-scale, 1));
 }
 
 .settings-page .theme-preset-grid,
@@ -4563,7 +4629,7 @@ p {
 }
 
 .account-drawer__form .field__label {
-  font-size: 10px;
+  font-size: calc(10px * var(--font-scale, 1));
 }
 
 .account-drawer__form .input-shell {
@@ -4597,7 +4663,7 @@ p {
   border-radius: 9px;
   background: color-mix(in srgb, var(--surface-raised) 52%, transparent);
   color: var(--muted);
-  font-size: 10px;
+  font-size: calc(10px * var(--font-scale, 1));
 }
 
 .drawer-saved-password > span {
@@ -4611,7 +4677,7 @@ p {
   overflow: hidden;
   color: var(--ink-soft);
   font-family: 'Manrope', monospace;
-  font-size: 10px;
+  font-size: calc(10px * var(--font-scale, 1));
   font-weight: 600;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -4668,11 +4734,11 @@ p {
   .account-drawer__header .monogram {
     width: 34px;
     height: 34px;
-    font-size: 15px;
+    font-size: calc(15px * var(--font-scale, 1));
   }
 
   .account-drawer__header h2 {
-    font-size: 18px;
+    font-size: calc(18px * var(--font-scale, 1));
   }
 
   .account-drawer__form {
@@ -4741,15 +4807,15 @@ p {
   .account-drawer__header .monogram {
     width: 34px;
     height: 34px;
-    font-size: 15px;
+    font-size: calc(15px * var(--font-scale, 1));
   }
 
   .account-drawer__header h2 {
-    font-size: 18px;
+    font-size: calc(18px * var(--font-scale, 1));
   }
 
   .account-drawer__header .domain-label {
-    font-size: 9px;
+    font-size: calc(9px * var(--font-scale, 1));
   }
 
   .account-drawer__form {
@@ -4766,7 +4832,7 @@ p {
   }
 
   .account-drawer__form .field__label {
-    font-size: 9px;
+    font-size: calc(9px * var(--font-scale, 1));
   }
 
   .account-drawer__form .input-shell {
@@ -4775,7 +4841,7 @@ p {
 
   .account-drawer__form .input-shell input {
     height: 29px;
-    font-size: 11px;
+    font-size: calc(11px * var(--font-scale, 1));
   }
 
   .account-drawer__form .site-picker__trigger {
@@ -5030,7 +5096,7 @@ p {
   }
 
   .auth-story__content h1 {
-    font-size: 48px;
+    font-size: calc(48px * var(--font-scale, 1));
   }
 
   .auth-panel {
@@ -5042,7 +5108,7 @@ p {
   }
 
   .auth-form-heading h2 {
-    font-size: 29px;
+    font-size: calc(29px * var(--font-scale, 1));
   }
 
   .unlock-seal {
@@ -5212,14 +5278,14 @@ p {
 .favorite-accounts__header h3 {
   color: var(--ink);
   font-family: var(--font-cn);
-  font-size: 13px;
+  font-size: calc(13px * var(--font-scale, 1));
   font-weight: 600;
 }
 
 .favorite-group-picker__heading p,
 .favorite-accounts__header p {
   color: var(--muted-light);
-  font-size: 10px;
+  font-size: calc(10px * var(--font-scale, 1));
   line-height: 1.55;
 }
 
@@ -5227,7 +5293,7 @@ p {
 .favorite-accounts__header > span {
   flex: 0 0 auto;
   color: var(--muted);
-  font-size: 10px;
+  font-size: calc(10px * var(--font-scale, 1));
   white-space: nowrap;
 }
 
@@ -5289,7 +5355,7 @@ p {
   overflow: hidden;
   color: var(--ink);
   font-family: var(--font-cn);
-  font-size: 11px;
+  font-size: calc(11px * var(--font-scale, 1));
   font-weight: 600;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -5297,7 +5363,7 @@ p {
 
 .favorite-group-picker__identity small {
   color: var(--muted-light);
-  font-size: 9px;
+  font-size: calc(9px * var(--font-scale, 1));
 }
 
 .favorite-group-picker__action {
@@ -5306,7 +5372,7 @@ p {
   align-items: center;
   gap: 5px;
   color: var(--muted);
-  font-size: 9px;
+  font-size: calc(9px * var(--font-scale, 1));
   font-weight: 650;
   white-space: nowrap;
 }
@@ -5346,7 +5412,7 @@ p {
 .window-chrome__title {
   padding: 0 13px 0 15px;
   font-family: 'Manrope', 'Noto Sans SC', sans-serif;
-  font-size: 9px;
+  font-size: calc(9px * var(--font-scale, 1));
   font-weight: 700;
   letter-spacing: 0.08em;
   text-transform: uppercase;
@@ -5407,7 +5473,7 @@ p {
   outline: 0;
   background: transparent;
   color: var(--ink-soft);
-  font-size: 12px;
+  font-size: calc(12px * var(--font-scale, 1));
 }
 
 .input-shell--select .select-control option,
@@ -5442,14 +5508,14 @@ p {
 
 .drawer-recipes__header strong {
   color: var(--ink-soft);
-  font-size: 10px;
+  font-size: calc(10px * var(--font-scale, 1));
   font-weight: 650;
 }
 
 .drawer-recipes__header small,
 .drawer-recipes__empty {
   color: var(--muted-light);
-  font-size: 9px;
+  font-size: calc(9px * var(--font-scale, 1));
 }
 
 .drawer-recipes__empty {
@@ -5499,7 +5565,7 @@ p {
 
 .selector-config-row__control .input-shell input {
   font-family: 'Manrope', monospace;
-  font-size: 10px;
+  font-size: calc(10px * var(--font-scale, 1));
 }
 
 .selector-config-row__control .button {
@@ -5508,7 +5574,7 @@ p {
 }
 
 .selector-config-row__result {
-  font-size: 9px;
+  font-size: calc(9px * var(--font-scale, 1));
   line-height: 1.45;
 }
 
@@ -5560,7 +5626,7 @@ p {
 .drawer-recipe-row__identity strong {
   overflow: hidden;
   color: var(--ink-soft);
-  font-size: 10px;
+  font-size: calc(10px * var(--font-scale, 1));
   font-weight: 600;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -5568,7 +5634,7 @@ p {
 
 .drawer-recipe-row__identity small {
   color: var(--muted-light);
-  font-size: 8px;
+  font-size: calc(8px * var(--font-scale, 1));
 }
 
 .drawer-recipe-row__actions {
@@ -5578,7 +5644,7 @@ p {
 }
 
 .drawer-recipe-row__actions .text-button {
-  font-size: 9px;
+  font-size: calc(9px * var(--font-scale, 1));
 }
 
 .recipe-details-modal {
@@ -5592,7 +5658,7 @@ p {
   gap: 8px;
   margin: 2px 22px 12px;
   color: var(--muted);
-  font-size: 10px;
+  font-size: calc(10px * var(--font-scale, 1));
 }
 
 .recipe-details-meta span,
@@ -5601,7 +5667,7 @@ p {
   border: 1px solid var(--line);
   border-radius: 999px;
   background: var(--surface-raised);
-  font-size: 9px;
+  font-size: calc(9px * var(--font-scale, 1));
 }
 
 .recipe-details-meta strong {
@@ -5632,7 +5698,7 @@ p {
 .recipe-steps li > span {
   color: var(--accent);
   font-family: 'Manrope', sans-serif;
-  font-size: 10px;
+  font-size: calc(10px * var(--font-scale, 1));
   font-weight: 700;
 }
 
@@ -5645,14 +5711,14 @@ p {
 
 .recipe-steps strong {
   color: var(--ink-soft);
-  font-size: 11px;
+  font-size: calc(11px * var(--font-scale, 1));
 }
 
 .recipe-steps small {
   overflow: hidden;
   color: var(--muted);
   font-family: 'Manrope', 'Noto Sans SC', sans-serif;
-  font-size: 9px;
+  font-size: calc(9px * var(--font-scale, 1));
   line-height: 1.5;
   overflow-wrap: anywhere;
 }
@@ -5668,7 +5734,7 @@ p {
 
 .log-bulk-bar > span {
   color: var(--muted);
-  font-size: 10px;
+  font-size: calc(10px * var(--font-scale, 1));
 }
 
 .log-bulk-bar > div {
@@ -5680,7 +5746,7 @@ p {
 .log-bulk-bar .button {
   min-height: 32px;
   padding: 0 10px;
-  font-size: 10px;
+  font-size: calc(10px * var(--font-scale, 1));
 }
 
 .log-bulk-bar .button:disabled {
@@ -5766,12 +5832,12 @@ p {
 
 .log-detail-summary strong {
   color: var(--ink);
-  font-size: 14px;
+  font-size: calc(14px * var(--font-scale, 1));
 }
 
 .log-detail-summary > span:last-child {
   color: var(--muted);
-  font-size: 11px;
+  font-size: calc(11px * var(--font-scale, 1));
 }
 
 .log-detail-grid {
@@ -5793,20 +5859,20 @@ p {
 
 .log-detail-grid dt {
   color: var(--muted-light);
-  font-size: 9px;
+  font-size: calc(9px * var(--font-scale, 1));
 }
 
 .log-detail-grid dd {
   overflow: hidden;
   margin: 3px 0 0;
   color: var(--ink-soft);
-  font-size: 11px;
+  font-size: calc(11px * var(--font-scale, 1));
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
 .log-detail-grid code {
-  font-size: 9px;
+  font-size: calc(9px * var(--font-scale, 1));
 }
 
 .log-detail-reason {
@@ -5819,13 +5885,13 @@ p {
 
 .log-detail-reason strong {
   color: var(--ink-soft);
-  font-size: 10px;
+  font-size: calc(10px * var(--font-scale, 1));
 }
 
 .log-detail-reason p {
   margin-top: 6px;
   color: var(--ink-soft);
-  font-size: 11px;
+  font-size: calc(11px * var(--font-scale, 1));
   line-height: 1.65;
   overflow-wrap: anywhere;
 }
@@ -5891,14 +5957,14 @@ p {
 
 .settings-subnav__item strong {
   color: var(--ink-soft);
-  font-size: 11px;
+  font-size: calc(11px * var(--font-scale, 1));
   font-weight: 600;
 }
 
 .settings-subnav__item small {
   overflow: hidden;
   color: var(--muted-light);
-  font-size: 8px;
+  font-size: calc(8px * var(--font-scale, 1));
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -5962,7 +6028,7 @@ p {
 .settings-panel__header h3 {
   color: var(--ink);
   font-family: var(--font-cn);
-  font-size: 20px;
+  font-size: calc(20px * var(--font-scale, 1));
   font-weight: 620;
   letter-spacing: -0.035em;
 }
@@ -5971,7 +6037,7 @@ p {
   max-width: 660px;
   margin-top: 3px;
   color: var(--muted);
-  font-size: 10px;
+  font-size: calc(10px * var(--font-scale, 1));
   line-height: 1.6;
 }
 
@@ -6004,7 +6070,7 @@ p {
 .settings-card--split h4,
 .settings-card--danger h4 {
   color: var(--ink);
-  font-size: 12px;
+  font-size: calc(12px * var(--font-scale, 1));
   font-weight: 650;
 }
 
@@ -6014,7 +6080,7 @@ p {
   max-width: 720px;
   margin-top: 3px;
   color: var(--muted);
-  font-size: 10px;
+  font-size: calc(10px * var(--font-scale, 1));
   line-height: 1.6;
 }
 
@@ -6122,7 +6188,7 @@ p {
   outline: 0;
   background: color-mix(in srgb, var(--surface) 82%, transparent);
   color: var(--ink-soft);
-  font-size: 11px;
+  font-size: calc(11px * var(--font-scale, 1));
 }
 
 .proxy-fields :disabled {
@@ -6172,7 +6238,7 @@ p {
   border-radius: 9px;
   background: color-mix(in srgb, var(--danger-soft) 55%, var(--surface));
   color: var(--danger);
-  font-size: 10px;
+  font-size: calc(10px * var(--font-scale, 1));
   line-height: 1.5;
 }
 
@@ -6242,7 +6308,7 @@ p {
   }
 
   .settings-subnav__item strong {
-    font-size: 9px;
+    font-size: calc(9px * var(--font-scale, 1));
   }
 
   .settings-content {
@@ -6268,7 +6334,7 @@ p {
   align-items: center;
   gap: 7px;
   color: var(--muted);
-  font-size: 11px;
+  font-size: calc(11px * var(--font-scale, 1));
   line-height: 1;
 }
 
@@ -6289,7 +6355,7 @@ p {
   margin: 0;
   color: var(--ink);
   font-family: var(--font-ui);
-  font-size: 12px;
+  font-size: calc(12px * var(--font-scale, 1));
   font-weight: 680;
   letter-spacing: -0.01em;
   line-height: 1.2;
@@ -6335,7 +6401,7 @@ p {
 .sidebar-settings-popover__label {
   padding: 5px 9px 7px;
   color: var(--muted-light);
-  font-size: 9px;
+  font-size: calc(9px * var(--font-scale, 1));
   font-weight: 700;
   letter-spacing: 0.1em;
   text-transform: uppercase;
@@ -6347,7 +6413,7 @@ p {
   border-radius: 7px;
   background: transparent;
   color: var(--muted);
-  font-size: 11px;
+  font-size: calc(11px * var(--font-scale, 1));
   font-weight: 540;
   text-align: left;
 }
@@ -6514,7 +6580,7 @@ body {
 
 .window-titlebar span {
   font-family: 'Manrope', 'Noto Sans SC', sans-serif;
-  font-size: 10px;
+  font-size: calc(10px * var(--font-scale, 1));
   font-weight: 700;
   letter-spacing: 0.12em;
   text-transform: uppercase;
@@ -6588,7 +6654,7 @@ html[data-theme-preset='magpie'][data-color-mode='dark'] .app-shell {
   border-radius: 8px;
   background: transparent;
   color: var(--muted);
-  font-size: 11px;
+  font-size: calc(11px * var(--font-scale, 1));
   font-weight: 600;
   text-align: left;
   white-space: nowrap;
@@ -6638,7 +6704,7 @@ html[data-theme-preset='magpie'][data-color-mode='dark'] .app-shell {
 .sidebar-label {
   padding: 0 9px 6px;
   color: var(--muted-light);
-  font-size: 9px;
+  font-size: calc(9px * var(--font-scale, 1));
   letter-spacing: 0.13em;
 }
 
@@ -6648,7 +6714,7 @@ html[data-theme-preset='magpie'][data-color-mode='dark'] .app-shell {
   padding: 0 9px;
   border-radius: 8px;
   color: var(--muted);
-  font-size: 12px;
+  font-size: calc(12px * var(--font-scale, 1));
   font-weight: 560;
   transition:
     background 180ms ease,
@@ -6694,7 +6760,7 @@ html[data-theme-preset='magpie'][data-color-mode='dark'] .app-shell {
   border-radius: 6px;
   background: color-mix(in srgb, var(--ink) 5%, transparent);
   color: var(--muted-light);
-  font-size: 9px;
+  font-size: calc(9px * var(--font-scale, 1));
   font-weight: 650;
 }
 
@@ -6739,7 +6805,7 @@ html[data-theme-preset='magpie'][data-color-mode='light'] .sidebar-child-item.is
   border-radius: 7px;
   background: transparent;
   color: var(--muted);
-  font-size: 11px;
+  font-size: calc(11px * var(--font-scale, 1));
   font-weight: 540;
   text-align: left;
   transition:
@@ -6898,14 +6964,14 @@ html[data-theme-preset='magpie'][data-color-mode='light'] .sidebar-child-item.is
 .library-header h1 {
   color: var(--ink);
   font-family: var(--font-ui);
-  font-size: 30px;
+  font-size: calc(30px * var(--font-scale, 1));
   font-weight: 680;
   letter-spacing: -0.045em;
 }
 
 .library-header p {
   color: var(--muted);
-  font-size: 11px;
+  font-size: calc(11px * var(--font-scale, 1));
 }
 
 .eyebrow {
@@ -6968,7 +7034,7 @@ html[data-theme-preset='magpie'][data-color-mode='light'] .sidebar-child-item.is
 .account-subnav__label {
   padding: 0 9px 7px;
   color: var(--muted-light);
-  font-size: 9px;
+  font-size: calc(9px * var(--font-scale, 1));
   font-weight: 700;
   letter-spacing: 0.13em;
   text-transform: uppercase;
@@ -6985,7 +7051,7 @@ html[data-theme-preset='magpie'][data-color-mode='light'] .sidebar-child-item.is
   border-radius: 7px;
   background: transparent;
   color: var(--muted);
-  font-size: 11px;
+  font-size: calc(11px * var(--font-scale, 1));
   text-align: left;
   transition:
     background 170ms ease,
@@ -7031,18 +7097,18 @@ html[data-theme-preset='magpie'][data-color-mode='light'] .sidebar-child-item.is
 
 .work-bulk-bar > span {
   color: var(--muted);
-  font-size: 10px;
+  font-size: calc(10px * var(--font-scale, 1));
 }
 
 .work-bulk-bar > span strong {
   color: var(--ink);
-  font-size: 12px;
+  font-size: calc(12px * var(--font-scale, 1));
 }
 
 .work-bulk-bar .button {
   min-height: 32px;
   padding: 0 10px;
-  font-size: 10px;
+  font-size: calc(10px * var(--font-scale, 1));
 }
 
 .account-list,
@@ -7092,7 +7158,7 @@ html[data-theme-preset='magpie'][data-color-mode='light'] .sidebar-child-item.is
   margin-top: 7px;
   color: var(--ink);
   font-family: var(--font-ui);
-  font-size: 30px;
+  font-size: calc(30px * var(--font-scale, 1));
   font-weight: 680;
   letter-spacing: -0.045em;
 }
@@ -7100,7 +7166,7 @@ html[data-theme-preset='magpie'][data-color-mode='light'] .sidebar-child-item.is
 .settings-page__header p {
   margin-top: 7px;
   color: var(--muted);
-  font-size: 11px;
+  font-size: calc(11px * var(--font-scale, 1));
 }
 
 .settings-page--controlled .settings-panel {
@@ -7148,7 +7214,7 @@ html[data-color-mode='dark'] .details-drawer {
 .settings-card--split h4,
 .settings-card--danger h4 {
   color: var(--ink);
-  font-size: 12px;
+  font-size: calc(12px * var(--font-scale, 1));
   font-weight: 680;
 }
 
@@ -7157,7 +7223,7 @@ html[data-color-mode='dark'] .details-drawer {
 .settings-card--danger p,
 .settings-hint {
   color: var(--muted);
-  font-size: 10px;
+  font-size: calc(10px * var(--font-scale, 1));
 }
 
 .settings-page--controlled .settings-card__heading > svg {
@@ -7180,7 +7246,7 @@ html[data-color-mode='dark'] .details-drawer {
   align-items: center;
   gap: 7px;
   color: var(--ink);
-  font-size: 11px;
+  font-size: calc(11px * var(--font-scale, 1));
   font-weight: 620;
   line-height: 1;
 }
@@ -7229,13 +7295,13 @@ html[data-color-mode='dark'] .details-drawer {
 
 .proxy-mode-option strong {
   color: var(--ink);
-  font-size: 11px;
+  font-size: calc(11px * var(--font-scale, 1));
   font-weight: 650;
 }
 
 .proxy-mode-option small {
   color: var(--muted);
-  font-size: 9px;
+  font-size: calc(9px * var(--font-scale, 1));
   line-height: 1.5;
 }
 
@@ -7285,7 +7351,7 @@ html[data-color-mode='dark'] .details-drawer {
 
 .data-mapping strong {
   color: var(--ink);
-  font-size: 10px;
+  font-size: calc(10px * var(--font-scale, 1));
   font-weight: 650;
 }
 
@@ -7293,13 +7359,13 @@ html[data-color-mode='dark'] .details-drawer {
   overflow-wrap: anywhere;
   color: var(--accent-strong);
   font-family: 'Manrope', monospace;
-  font-size: 9px;
+  font-size: calc(9px * var(--font-scale, 1));
   line-height: 1.55;
 }
 
 .data-mapping small {
   color: var(--muted);
-  font-size: 9px;
+  font-size: calc(9px * var(--font-scale, 1));
   line-height: 1.55;
 }
 
@@ -7323,19 +7389,19 @@ html[data-color-mode='dark'] .details-drawer {
 }
 
 .data-import-result strong {
-  font-size: 10px;
+  font-size: calc(10px * var(--font-scale, 1));
 }
 
 .data-import-result small {
   color: var(--muted);
-  font-size: 9px;
+  font-size: calc(9px * var(--font-scale, 1));
 }
 
 .data-import-result ul {
   margin: 6px 0 0;
   padding-left: 16px;
   color: var(--muted);
-  font-size: 9px;
+  font-size: calc(9px * var(--font-scale, 1));
   line-height: 1.55;
 }
 
@@ -7364,7 +7430,7 @@ html[data-color-mode='dark'] .details-drawer {
 .backup-row__index {
   color: var(--muted-light);
   font-family: 'Manrope', monospace;
-  font-size: 10px;
+  font-size: calc(10px * var(--font-scale, 1));
   font-weight: 650;
 }
 
@@ -7377,7 +7443,7 @@ html[data-color-mode='dark'] .details-drawer {
 
 .backup-row__identity strong {
   color: var(--ink);
-  font-size: 11px;
+  font-size: calc(11px * var(--font-scale, 1));
   font-weight: 620;
 }
 
@@ -7385,7 +7451,7 @@ html[data-color-mode='dark'] .details-drawer {
   overflow: hidden;
   color: var(--muted);
   font-family: 'Manrope', 'Noto Sans SC', sans-serif;
-  font-size: 8px;
+  font-size: calc(8px * var(--font-scale, 1));
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -7397,7 +7463,7 @@ html[data-color-mode='dark'] .details-drawer {
   justify-content: center;
   gap: 8px;
   color: var(--muted);
-  font-size: 10px;
+  font-size: calc(10px * var(--font-scale, 1));
   text-align: center;
 }
 
@@ -7438,7 +7504,7 @@ html[data-color-mode='dark'] .details-drawer {
   max-width: 225px;
   overflow: hidden;
   color: var(--ink);
-  font-size: 10px;
+  font-size: calc(10px * var(--font-scale, 1));
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -7600,7 +7666,7 @@ html[data-color-mode='dark'] .sidebar-nav::-webkit-scrollbar-thumb {
 .update-dialog__release strong {
   overflow: hidden;
   color: var(--ink);
-  font-size: 13px;
+  font-size: calc(13px * var(--font-scale, 1));
   font-weight: 650;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -7608,7 +7674,7 @@ html[data-color-mode='dark'] .sidebar-nav::-webkit-scrollbar-thumb {
 
 .update-dialog__release small {
   color: var(--muted);
-  font-size: 10px;
+  font-size: calc(10px * var(--font-scale, 1));
   line-height: 1.5;
 }
 
@@ -7644,7 +7710,7 @@ html[data-color-mode='dark'] .sidebar-nav::-webkit-scrollbar-thumb {
   margin-bottom: 8px;
   color: var(--muted-light);
   font-family: 'Manrope', sans-serif;
-  font-size: 9px;
+  font-size: calc(9px * var(--font-scale, 1));
   font-weight: 750;
   letter-spacing: 0.13em;
 }
@@ -7664,7 +7730,7 @@ html[data-color-mode='dark'] .sidebar-nav::-webkit-scrollbar-thumb {
   display: flex;
   flex-direction: column;
   gap: 10px;
-  font-size: 11px;
+  font-size: calc(11px * var(--font-scale, 1));
   line-height: 1.72;
 }
 
@@ -7677,11 +7743,11 @@ html[data-color-mode='dark'] .sidebar-nav::-webkit-scrollbar-thumb {
 }
 
 .update-dialog__markdown h3 {
-  font-size: 13px;
+  font-size: calc(13px * var(--font-scale, 1));
 }
 
 .update-dialog__markdown h4 {
-  font-size: 12px;
+  font-size: calc(12px * var(--font-scale, 1));
 }
 
 .update-dialog__markdown ul,
@@ -7698,7 +7764,7 @@ html[data-color-mode='dark'] .sidebar-nav::-webkit-scrollbar-thumb {
   border-radius: 4px;
   background: color-mix(in srgb, var(--ink) 6%, transparent);
   color: var(--ink);
-  font-size: 10px;
+  font-size: calc(10px * var(--font-scale, 1));
 }
 
 .update-dialog__markdown pre {
@@ -7734,13 +7800,13 @@ html[data-color-mode='dark'] .sidebar-nav::-webkit-scrollbar-thumb {
   justify-content: space-between;
   gap: 12px;
   color: var(--muted);
-  font-size: 10px;
+  font-size: calc(10px * var(--font-scale, 1));
 }
 
 .update-dialog__progress-meta strong {
   color: var(--ink);
   font-family: 'Manrope', sans-serif;
-  font-size: 11px;
+  font-size: calc(11px * var(--font-scale, 1));
 }
 
 .update-dialog__progress-track {
@@ -7760,7 +7826,7 @@ html[data-color-mode='dark'] .sidebar-nav::-webkit-scrollbar-thumb {
 
 .update-dialog__progress small {
   color: var(--muted-light);
-  font-size: 9px;
+  font-size: calc(9px * var(--font-scale, 1));
 }
 
 .update-dialog__error {
@@ -7770,7 +7836,7 @@ html[data-color-mode='dark'] .sidebar-nav::-webkit-scrollbar-thumb {
   border-radius: 9px;
   background: rgba(190, 72, 72, 0.06);
   color: var(--danger);
-  font-size: 10px;
+  font-size: calc(10px * var(--font-scale, 1));
   line-height: 1.6;
 }
 
@@ -8019,7 +8085,7 @@ html[data-color-mode='dark'] .sidebar-nav::-webkit-scrollbar-thumb {
   overflow: hidden;
   padding: 5px 8px 7px;
   color: var(--muted-light);
-  font-size: 9px;
+  font-size: calc(9px * var(--font-scale, 1));
   font-weight: 700;
   letter-spacing: 0.06em;
   text-overflow: ellipsis;
@@ -8036,7 +8102,7 @@ html[data-color-mode='dark'] .sidebar-nav::-webkit-scrollbar-thumb {
   border-radius: 7px;
   background: transparent;
   color: var(--muted);
-  font-size: 11px;
+  font-size: calc(11px * var(--font-scale, 1));
   text-align: left;
 }
 
@@ -8152,7 +8218,7 @@ html[data-color-mode='dark'] .sidebar-nav::-webkit-scrollbar-thumb {
   box-shadow: 0 8px 24px rgba(31, 35, 40, 0.14);
   color: var(--ink);
   content: attr(data-tooltip);
-  font-size: 10px;
+  font-size: calc(10px * var(--font-scale, 1));
   font-weight: 600;
   line-height: 1;
   opacity: 0;
@@ -8199,7 +8265,7 @@ html[data-color-mode='dark'] .sidebar-nav::-webkit-scrollbar-thumb {
   border-radius: 7px;
   background: transparent;
   color: var(--muted-light);
-  font-size: 10px;
+  font-size: calc(10px * var(--font-scale, 1));
   font-weight: 650;
   text-align: left;
 }
@@ -8388,7 +8454,7 @@ html[data-color-mode='dark'] .sidebar-nav::-webkit-scrollbar-thumb {
 .account-username > strong {
   overflow: hidden;
   color: var(--ink-soft);
-  font-size: 11px;
+  font-size: calc(11px * var(--font-scale, 1));
   font-weight: 560;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -8400,7 +8466,7 @@ html[data-color-mode='dark'] .sidebar-nav::-webkit-scrollbar-thumb {
   align-items: center;
   gap: 6px;
   color: var(--muted);
-  font-size: 10px;
+  font-size: calc(10px * var(--font-scale, 1));
 }
 
 .account-group-cell svg {
@@ -8418,7 +8484,7 @@ html[data-color-mode='dark'] .sidebar-nav::-webkit-scrollbar-thumb {
   overflow: hidden;
   color: var(--muted);
   font-family: 'Manrope', 'Noto Sans SC', sans-serif;
-  font-size: 10px;
+  font-size: calc(10px * var(--font-scale, 1));
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -8445,7 +8511,7 @@ html[data-color-mode='dark'] .sidebar-nav::-webkit-scrollbar-thumb {
   border-radius: 7px;
   background: transparent;
   color: var(--muted);
-  font-size: 10px;
+  font-size: calc(10px * var(--font-scale, 1));
   font-weight: 620;
   white-space: nowrap;
 }
@@ -8495,13 +8561,13 @@ html[data-color-mode='dark'] .sidebar-nav::-webkit-scrollbar-thumb {
 
 .app-logs-toolbar strong {
   color: var(--ink);
-  font-size: 12px;
+  font-size: calc(12px * var(--font-scale, 1));
   font-weight: 660;
 }
 
 .app-logs-toolbar small {
   color: var(--muted);
-  font-size: 10px;
+  font-size: calc(10px * var(--font-scale, 1));
 }
 
 .app-logs-empty {
@@ -8511,7 +8577,7 @@ html[data-color-mode='dark'] .sidebar-nav::-webkit-scrollbar-thumb {
   justify-content: center;
   gap: 8px;
   color: var(--muted);
-  font-size: 11px;
+  font-size: calc(11px * var(--font-scale, 1));
 }
 
 .app-log-list {
@@ -8541,7 +8607,7 @@ html[data-color-mode='dark'] .sidebar-nav::-webkit-scrollbar-thumb {
   border-radius: 999px;
   background: color-mix(in srgb, var(--ink) 5%, transparent);
   color: var(--muted);
-  font-size: 9px;
+  font-size: calc(9px * var(--font-scale, 1));
   font-weight: 650;
 }
 
@@ -8577,7 +8643,7 @@ html[data-color-mode='dark'] .sidebar-nav::-webkit-scrollbar-thumb {
 .app-log-row__content strong {
   overflow: hidden;
   color: var(--ink-soft);
-  font-size: 11px;
+  font-size: calc(11px * var(--font-scale, 1));
   font-weight: 600;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -8586,13 +8652,13 @@ html[data-color-mode='dark'] .sidebar-nav::-webkit-scrollbar-thumb {
 .app-log-row__content span {
   flex: 0 0 auto;
   color: var(--muted-light);
-  font-size: 9px;
+  font-size: calc(9px * var(--font-scale, 1));
 }
 
 .app-log-row__content p {
   margin: 0;
   color: var(--muted);
-  font-size: 10px;
+  font-size: calc(10px * var(--font-scale, 1));
   line-height: 1.55;
   overflow-wrap: anywhere;
 }
@@ -8600,28 +8666,28 @@ html[data-color-mode='dark'] .sidebar-nav::-webkit-scrollbar-thumb {
 .app-log-row time {
   color: var(--muted-light);
   font-family: 'Manrope', 'Noto Sans SC', sans-serif;
-  font-size: 9px;
+  font-size: calc(9px * var(--font-scale, 1));
   white-space: nowrap;
 }
 
 .log-table__header {
-  font-size: 10.5px;
+  font-size: calc(10.5px * var(--font-scale, 1));
 }
 
 .log-table__row {
-  font-size: 12px;
+  font-size: calc(12px * var(--font-scale, 1));
 }
 
 .log-table__row strong {
-  font-size: 12.5px;
+  font-size: calc(12.5px * var(--font-scale, 1));
 }
 
 .log-table__row p {
-  font-size: 12px;
+  font-size: calc(12px * var(--font-scale, 1));
 }
 
 .log-table__row time {
-  font-size: 11px;
+  font-size: calc(11px * var(--font-scale, 1));
 }
 
 .log-detail-modal .modal-header {
@@ -8643,32 +8709,32 @@ html[data-color-mode='dark'] .sidebar-nav::-webkit-scrollbar-thumb {
 }
 
 .log-detail-summary strong {
-  font-size: 16px;
+  font-size: calc(16px * var(--font-scale, 1));
 }
 
 .log-detail-grid dt {
-  font-size: 10.5px;
+  font-size: calc(10.5px * var(--font-scale, 1));
 }
 
 .log-detail-grid dd {
-  font-size: 12px;
+  font-size: calc(12px * var(--font-scale, 1));
 }
 
 .log-detail-grid code {
-  font-size: 10.5px;
+  font-size: calc(10.5px * var(--font-scale, 1));
 }
 
 .log-detail-reason strong {
-  font-size: 11px;
+  font-size: calc(11px * var(--font-scale, 1));
 }
 
 .log-detail-reason p {
-  font-size: 12px;
+  font-size: calc(12px * var(--font-scale, 1));
   line-height: 1.7;
 }
 
 .log-detail-redaction {
-  font-size: 12px;
+  font-size: calc(12px * var(--font-scale, 1));
   line-height: 1.65;
 }
 
@@ -8709,7 +8775,7 @@ html[data-color-mode='dark'] .sidebar-nav::-webkit-scrollbar-thumb {
 }
 
 .selector-config-row__control .input-shell input {
-  font-size: 11px;
+  font-size: calc(11px * var(--font-scale, 1));
 }
 
 @media (max-height: 700px) {
@@ -8881,34 +8947,6 @@ html[data-color-mode='dark'] .sidebar-nav::-webkit-scrollbar-thumb {
   background: color-mix(in srgb, var(--accent) 58%, transparent);
 }
 
-.account-subnav__edge-toggle {
-  position: fixed;
-  z-index: 40;
-  top: calc(50vh + 20px);
-  right: auto;
-  display: inline-grid;
-  width: 24px;
-  height: 24px;
-  place-items: center;
-  border: 1px solid var(--card-border);
-  border-radius: 7px;
-  background: var(--card);
-  box-shadow: 0 3px 10px rgba(31, 35, 40, 0.09);
-  color: var(--muted);
-  cursor: ew-resize;
-  touch-action: none;
-  transform: translateY(-50%);
-  transition:
-    background 160ms ease,
-    color 160ms ease,
-    left 220ms cubic-bezier(0.22, 1, 0.36, 1);
-}
-
-.account-subnav__edge-toggle:hover {
-  background: color-mix(in srgb, var(--accent) 8%, var(--card));
-  color: var(--accent-strong);
-}
-
 body.is-resizing-account-subnav {
   cursor: ew-resize;
   user-select: none;
@@ -8997,14 +9035,14 @@ body.is-resizing-account-subnav .library-view-layout--accounts {
 
 .group-create-popover header strong {
   color: var(--ink);
-  font-size: 12px;
+  font-size: calc(12px * var(--font-scale, 1));
   font-weight: 680;
 }
 
 .group-create-popover header small {
   overflow: hidden;
   color: var(--muted);
-  font-size: 9px;
+  font-size: calc(9px * var(--font-scale, 1));
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -9016,7 +9054,7 @@ body.is-resizing-account-subnav .library-view-layout--accounts {
   background: color-mix(in srgb, var(--accent) 8%, transparent);
   color: var(--accent-strong);
   font-family: 'Manrope', 'Noto Sans SC', sans-serif;
-  font-size: 9px;
+  font-size: calc(9px * var(--font-scale, 1));
   font-weight: 700;
 }
 
@@ -9057,7 +9095,7 @@ body.is-resizing-account-subnav .library-view-layout--accounts {
   border-radius: 7px;
   background: transparent;
   color: var(--muted);
-  font-size: 11px;
+  font-size: calc(11px * var(--font-scale, 1));
   text-align: left;
 }
 
@@ -9119,7 +9157,7 @@ body.is-resizing-account-subnav .library-view-layout--accounts {
   border-radius: 8px;
   background: var(--card);
   color: var(--muted);
-  font-size: 10px;
+  font-size: calc(10px * var(--font-scale, 1));
   font-weight: 600;
 }
 
@@ -9160,7 +9198,7 @@ body.is-resizing-account-subnav .library-view-layout--accounts {
   min-height: 36px;
   color: var(--muted-light);
   font-family: 'Manrope', 'Noto Sans SC', sans-serif;
-  font-size: 10px;
+  font-size: calc(10px * var(--font-scale, 1));
   font-weight: 700;
   letter-spacing: 0.08em;
   text-transform: uppercase;
@@ -9183,7 +9221,7 @@ body.is-resizing-account-subnav .library-view-layout--accounts {
 .trash-row .account-identity strong {
   overflow: hidden;
   color: var(--ink);
-  font-size: 12px;
+  font-size: calc(12px * var(--font-scale, 1));
   font-weight: 620;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -9280,7 +9318,7 @@ body.is-resizing-account-subnav .library-view-layout--accounts {
     min-height: 30px;
     gap: 3px;
     padding: 0 6px;
-    font-size: 10px;
+    font-size: calc(10px * var(--font-scale, 1));
   }
 
   .account-copy-trigger {
@@ -9324,8 +9362,561 @@ body.is-resizing-account-subnav .library-view-layout--accounts {
 
 @media (prefers-reduced-motion: reduce) {
   .library-view-layout--accounts,
-  .account-subnav__edge-toggle,
   .account-subnav__add-group {
     transition-duration: 0.01ms;
+  }
+}
+
+/* v0.8.2 account table alignment, icon actions and compact-window layout */
+.button.button--icon-only {
+  width: 34px;
+  min-width: 34px;
+  padding: 0;
+  aspect-ratio: 1;
+}
+
+.account-subnav-shell {
+  min-height: 100%;
+  align-self: stretch;
+  border-right: 1px solid var(--content-divider);
+}
+
+.account-subnav-shell .account-subnav {
+  min-height: 100%;
+  border-right: 0;
+}
+
+.library-view-layout--accounts.is-account-subnav-hidden .account-subnav-shell {
+  border-right-color: transparent;
+  overflow: hidden;
+}
+
+.account-subnav__group-row {
+  position: relative;
+  border-radius: 8px;
+  transition:
+    background 150ms ease,
+    box-shadow 150ms ease;
+}
+
+.account-subnav__group-row.is-dragging {
+  opacity: 0.46;
+}
+
+.account-subnav__group-row.is-drop-before::after,
+.account-subnav__group-row.is-drop-after::after {
+  position: absolute;
+  right: 2px;
+  left: 2px;
+  height: 2px;
+  border-radius: 999px;
+  background: var(--accent);
+  content: '';
+  pointer-events: none;
+}
+
+.account-subnav__group-row.is-drop-before::after {
+  top: -2px;
+}
+
+.account-subnav__group-row.is-drop-after::after {
+  bottom: -2px;
+}
+
+.account-subnav__group-row.is-drop-inside {
+  background: color-mix(in srgb, var(--accent) 9%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 30%, transparent);
+}
+
+.sidebar-child-item {
+  display: grid;
+  grid-template-columns: 18px minmax(0, 1fr);
+  align-items: center;
+  gap: 8px;
+  padding-left: 32px;
+  text-align: left;
+}
+
+.sidebar-child-item svg {
+  color: currentColor;
+}
+
+.library-toolbar {
+  display: grid;
+  grid-template-columns: minmax(40px, 360px) minmax(0, 1fr);
+  align-items: center;
+  gap: 12px;
+}
+
+.search-field--expandable,
+.search-field--expandable.is-expanded {
+  max-width: 360px;
+}
+
+.search-field--expandable.is-expanded {
+  width: 100%;
+}
+
+.library-toolbar__actions {
+  width: auto;
+  flex-wrap: nowrap;
+  justify-content: flex-end;
+  overflow-x: auto;
+  margin-left: 0;
+  padding: 2px;
+  scrollbar-width: none;
+}
+
+.library-toolbar__actions::-webkit-scrollbar {
+  display: none;
+}
+
+.account-list__header,
+.account-row {
+  grid-template-columns:
+    22px minmax(130px, 1.3fr) minmax(88px, 0.9fr) minmax(60px, 0.58fr)
+    88px 76px 108px;
+  gap: 8px;
+}
+
+.accounts-table__header .account-col--site,
+.accounts-table__header .account-col--username,
+.accounts-table__header .account-col--group,
+.accounts-table__header .account-col--updated,
+.accounts-table__header .account-col--status {
+  text-align: center;
+}
+
+.account-row > .account-identity,
+.account-row > .account-username,
+.account-row > .account-group-cell,
+.account-row > .account-updated,
+.account-row > .account-status-cell {
+  justify-content: center;
+  text-align: center;
+}
+
+.account-row > .account-identity > div {
+  max-width: 100%;
+}
+
+.account-row > .account-identity .account-name-line {
+  justify-content: center;
+}
+
+.account-row > .account-username > strong {
+  min-width: 0;
+}
+
+.account-status-cell {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+}
+
+.account-actions {
+  justify-content: flex-end;
+}
+
+.row-action-button--icon {
+  width: 32px;
+  min-width: 32px;
+  flex: 0 0 32px;
+  justify-content: center;
+  padding: 0;
+}
+
+.account-copy-trigger {
+  width: 30px;
+  min-width: 30px;
+  height: 32px;
+}
+
+@container account-main (max-width: 760px) {
+  .library-toolbar {
+    grid-template-columns: minmax(0, 1fr);
+    align-items: stretch;
+  }
+
+  .search-field--expandable {
+    width: 40px;
+    max-width: none;
+  }
+
+  .search-field--expandable.is-expanded {
+    width: 100%;
+    max-width: none;
+  }
+
+  .library-toolbar__actions {
+    width: 100%;
+    justify-content: flex-start;
+  }
+}
+
+@container account-main (max-width: 700px) {
+  .account-list__header,
+  .account-row {
+    grid-template-columns:
+      20px minmax(94px, 1.2fr) minmax(62px, 0.75fr) minmax(46px, 0.5fr)
+      62px 100px;
+    gap: 5px;
+    padding-right: 8px;
+    padding-left: 8px;
+  }
+
+  .account-col--status,
+  .account-status-cell {
+    display: none;
+  }
+
+  .row-action-button--icon {
+    width: 30px;
+    min-width: 30px;
+    flex-basis: 30px;
+  }
+
+  .account-copy-trigger {
+    width: 28px;
+    min-width: 28px;
+    height: 30px;
+  }
+}
+
+@container account-main (max-width: 560px) {
+  .account-list__header,
+  .account-row {
+    grid-template-columns:
+      20px minmax(82px, 1.2fr) minmax(54px, 0.72fr) minmax(40px, 0.48fr)
+      56px 96px;
+    gap: 4px;
+  }
+
+  .monogram {
+    width: 30px;
+    height: 30px;
+  }
+
+  .account-identity {
+    gap: 7px;
+  }
+
+  .account-name-line strong {
+    font-size: calc(11px * var(--font-scale, 1));
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .toast,
+  .account-subnav__group-row {
+    animation-duration: 0.01ms;
+    transition-duration: 0.01ms;
+  }
+}
+
+/* v0.8.3 grouped navigation, log tabs and selector polish */
+.account-subnav-controls {
+  display: flex;
+  min-height: 34px;
+  align-items: center;
+  justify-content: flex-start;
+  margin-top: 12px;
+}
+
+.account-subnav-controls .account-subnav-toggle {
+  width: 32px;
+  min-width: 32px;
+  height: 32px;
+  padding: 0;
+  border-color: transparent;
+  background: transparent;
+  color: var(--muted);
+}
+
+.account-subnav-controls .account-subnav-toggle:hover {
+  border-color: var(--card-border);
+  background: color-mix(in srgb, var(--ink) 4%, transparent);
+  color: var(--ink);
+}
+
+.account-subnav__group-list {
+  margin-top: 4px;
+}
+
+.account-subnav__group-row {
+  grid-template-columns: 10px minmax(0, 1fr) 24px;
+  gap: 4px;
+}
+
+.account-subnav__group-row--ungrouped {
+  padding-left: 0;
+}
+
+.account-subnav__group-main {
+  position: relative;
+  display: grid;
+  min-width: 0;
+  grid-template-columns: minmax(0, 1fr) 20px;
+  align-items: center;
+  gap: 1px;
+  border-radius: 7px;
+  transition:
+    background 170ms ease,
+    color 170ms ease;
+}
+
+.account-subnav__group-main:hover,
+.account-subnav__group-main:focus-within {
+  background: color-mix(in srgb, var(--ink) 4%, transparent);
+}
+
+.account-subnav__group-main.is-active {
+  background: color-mix(in srgb, var(--accent) 8%, transparent);
+}
+
+.account-subnav__group-main.is-active::before {
+  position: absolute;
+  top: 8px;
+  bottom: 8px;
+  left: 0;
+  width: 3px;
+  border-radius: 0 3px 3px 0;
+  background: var(--accent);
+  content: '';
+}
+
+.account-subnav__group-main .account-subnav__item,
+.account-subnav__group-main .account-subnav__item:hover {
+  background: transparent;
+}
+
+.account-subnav__group-main:hover .account-subnav__item,
+.account-subnav__group-main:focus-within .account-subnav__item,
+.account-subnav__group-main.is-active .account-subnav__item {
+  color: var(--ink);
+}
+
+.account-subnav__group-main.is-active .account-subnav__item svg {
+  color: var(--accent);
+}
+
+.account-subnav__group-toggle {
+  display: inline-grid;
+  width: 20px;
+  height: 28px;
+  place-items: center;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--muted-light);
+}
+
+.account-subnav__group-toggle:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--ink) 5%, transparent);
+  color: var(--ink);
+}
+
+.account-subnav__group-toggle:disabled,
+.account-subnav__group-toggle--spacer {
+  cursor: default;
+  opacity: 0.28;
+}
+
+.account-subnav__group-toggle--spacer {
+  display: block;
+  width: 20px;
+  height: 28px;
+}
+
+.page-breadcrumb__segment {
+  display: inline-flex;
+  min-width: 0;
+  align-items: center;
+  gap: 7px;
+}
+
+.page-breadcrumb__crumb--static {
+  overflow: hidden;
+  color: var(--muted);
+  font-size: calc(11px * var(--font-scale, 1));
+  line-height: 1.2;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.account-subnav__item--group {
+  grid-template-columns: 14px minmax(0, 1fr) auto;
+  gap: 6px;
+  min-height: 34px;
+  padding: 0 7px;
+}
+
+.accounts-table__header .account-col--site {
+  text-align: left;
+}
+
+.account-row > .account-identity {
+  justify-content: flex-start;
+  text-align: left;
+}
+
+.account-row > .account-identity .account-name-line {
+  justify-content: flex-start;
+}
+
+.site-picker__trigger {
+  grid-template-columns: 16px minmax(0, 1fr) 16px;
+  gap: 12px;
+}
+
+.site-picker__trigger strong {
+  font-size: calc(13px * var(--font-scale, 1));
+}
+
+.site-picker__trigger small {
+  font-size: calc(11px * var(--font-scale, 1));
+}
+
+.site-picker__menu button {
+  grid-template-columns: 28px minmax(0, 1fr) 16px;
+  min-height: 50px;
+  gap: 13px;
+}
+
+.site-picker__menu .monogram {
+  width: 28px;
+  height: 28px;
+  border-radius: 8px;
+  font-size: calc(11px * var(--font-scale, 1));
+}
+
+.site-picker__menu strong {
+  font-size: calc(13px * var(--font-scale, 1));
+}
+
+.site-picker__menu small {
+  font-size: calc(11px * var(--font-scale, 1));
+}
+
+.account-drawer__body .manual-selector-panel {
+  margin-bottom: 24px;
+}
+
+.logs-tabs {
+  width: fit-content;
+  max-width: 100%;
+  margin-top: 10px;
+}
+
+.logs-tabs button {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+}
+
+.log-filters--app {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.app-log-table__grid {
+  display: grid;
+  grid-template-columns: 26px 72px 96px minmax(0, 1fr) 138px;
+  align-items: center;
+  gap: 10px;
+}
+
+.app-log-table__header {
+  min-height: 36px;
+  padding: 0 12px;
+  color: var(--muted-light);
+  font-family: 'Manrope', 'Noto Sans SC', sans-serif;
+  font-size: calc(10px * var(--font-scale, 1));
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.app-log-table .app-log-row {
+  min-height: 60px;
+  padding: 9px 12px;
+  border-top: 1px solid var(--content-divider);
+}
+
+.app-log-table .app-log-row.is-selected {
+  background: var(--accent-pale);
+}
+
+.app-log-category {
+  overflow: hidden;
+  color: var(--muted);
+  font-size: calc(10px * var(--font-scale, 1));
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.app-log-row__content {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.app-log-row__content strong {
+  overflow: visible;
+  color: var(--ink-soft);
+  font-size: calc(11px * var(--font-scale, 1));
+  line-height: 1.45;
+  text-overflow: clip;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
+.app-log-row__content p {
+  font-size: calc(10px * var(--font-scale, 1));
+  line-height: 1.55;
+}
+
+.app-log-table .app-log-row time {
+  color: var(--muted-light);
+  font-size: calc(9px * var(--font-scale, 1));
+  text-align: right;
+}
+
+.group-picker,
+.group-picker .site-picker__trigger,
+.group-picker .site-picker__menu {
+  width: 100%;
+}
+
+.group-picker .site-picker__trigger {
+  min-height: 44px;
+}
+
+.group-picker__menu button {
+  grid-template-columns: 20px minmax(0, 1fr) 16px;
+  min-height: 42px;
+}
+
+.group-picker__menu button > svg:first-child {
+  color: var(--muted-light);
+}
+
+.group-picker__menu button.is-selected > svg:first-child {
+  color: var(--accent);
+}
+
+@container account-main (max-width: 760px) {
+  .library-toolbar__actions {
+    justify-content: flex-end;
+  }
+}
+
+@media (max-width: 760px) {
+  .app-log-table__grid {
+    grid-template-columns: 24px 66px minmax(0, 1fr) 112px;
+  }
+
+  .app-log-table__header > :nth-child(3),
+  .app-log-table .app-log-row > :nth-child(3) {
+    display: none;
   }
 }

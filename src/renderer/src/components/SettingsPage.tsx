@@ -1,7 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import {
   ArchiveRestore,
-  BookOpen,
   Check,
   ChevronRight,
   Database,
@@ -26,17 +25,18 @@ import {
   Sun,
   Trash2,
   TriangleAlert,
+  Type,
   Upload
 } from 'lucide-react'
 import {
   AUTO_LOCK_OPTIONS,
   DEFAULT_PROXY_TEST_URL,
+  FONT_SIZE_SCALE_OPTIONS,
   INTERFACE_SCALE_MAX,
   INTERFACE_SCALE_MIN,
   INTERFACE_SCALE_STEP,
   PROXY_PROTOCOLS,
   type AboutInfo,
-  type AppLogEntry,
   type AppLanguage,
   type AppSettings,
   type AppSettingsPatch,
@@ -68,7 +68,6 @@ export type SettingsModule =
   | 'network'
   | 'security'
   | 'data'
-  | 'appLogs'
   | 'about'
 
 export function SettingsPage({
@@ -105,6 +104,7 @@ export function SettingsPage({
   const [checkingUpdates, setCheckingUpdates] = useState(false)
   const [customTheme, setCustomTheme] = useState<ThemeColors>(settings.customTheme)
   const [interfaceScale, setInterfaceScale] = useState(settings.interfaceScale)
+  const [fontSizeScale, setFontSizeScale] = useState(settings.fontSizeScale)
   const [proxy, setProxy] = useState<ProxySettings>(settings.proxy)
   const [proxySaving, setProxySaving] = useState(false)
   const [proxyTesting, setProxyTesting] = useState(false)
@@ -119,10 +119,6 @@ export function SettingsPage({
   const [kdbxPassword, setKdbxPassword] = useState('')
   const [kdbxError, setKdbxError] = useState('')
   const [kdbxBusy, setKdbxBusy] = useState(false)
-  const [appLogs, setAppLogs] = useState<AppLogEntry[]>([])
-  const [appLogsLoading, setAppLogsLoading] = useState(false)
-  const [appLogsClearOpen, setAppLogsClearOpen] = useState(false)
-  const [appLogsClearing, setAppLogsClearing] = useState(false)
   const scaleSaveTimer = useRef<number | null>(null)
 
   useEffect(() => {
@@ -132,8 +128,9 @@ export function SettingsPage({
   useEffect(() => {
     setCustomTheme(settings.customTheme)
     setInterfaceScale(settings.interfaceScale)
+    setFontSizeScale(settings.fontSizeScale)
     setProxy(settings.proxy)
-  }, [settings.customTheme, settings.interfaceScale, settings.proxy])
+  }, [settings.customTheme, settings.fontSizeScale, settings.interfaceScale, settings.proxy])
 
   useEffect(() => {
     return () => {
@@ -169,52 +166,7 @@ export function SettingsPage({
     if (module === 'data') {
       void loadBackups()
     }
-    if (module === 'appLogs') {
-      void loadAppLogs()
-    }
   }, [module])
-
-  async function loadAppLogs(): Promise<void> {
-    setAppLogsLoading(true)
-    try {
-      setAppLogs(await window.autologin.app.listAppLogs(200))
-    } catch (error) {
-      notify(
-        'error',
-        error instanceof Error
-          ? error.message
-          : tr('读取软件日志失败', 'Could not read app logs.', '讀取軟體日誌失敗')
-      )
-    } finally {
-      setAppLogsLoading(false)
-    }
-  }
-
-  async function clearApplicationLogs(): Promise<void> {
-    setAppLogsClearing(true)
-    try {
-      const result = await window.autologin.app.clearAppLogs()
-      setAppLogsClearOpen(false)
-      setAppLogs([])
-      notify(
-        'success',
-        tr(
-          `已清除 ${result.deleted} 条软件日志`,
-          `Cleared ${result.deleted} app log entries.`,
-          `已清除 ${result.deleted} 筆軟體日誌`
-        )
-      )
-    } catch (error) {
-      notify(
-        'error',
-        error instanceof Error
-          ? error.message
-          : tr('清除软件日志失败', 'Could not clear app logs.', '清除軟體日誌失敗')
-      )
-    } finally {
-      setAppLogsClearing(false)
-    }
-  }
 
   async function changeAutoLock(value: AutoLockMinutes): Promise<void> {
     setAutoLock(value)
@@ -270,6 +222,30 @@ export function SettingsPage({
     }, 260)
   }
 
+  async function changeFontSize(value: number): Promise<void> {
+    setFontSizeScale(value)
+    try {
+      await onSettingsChange({ fontSizeScale: value })
+      notify(
+        'success',
+        tr(
+          '字体大小已设为 {value}%',
+          'Font size set to {value}%.',
+          '字體大小已設為 {value}%',
+          { value }
+        )
+      )
+    } catch (error) {
+      setFontSizeScale(settings.fontSizeScale)
+      notify(
+        'error',
+        error instanceof Error
+          ? error.message
+          : tr('字体大小保存失败', 'Could not save font size.', '字體大小儲存失敗')
+      )
+    }
+  }
+
   function updateCustomColor(key: keyof ThemeColors, value: string): void {
     setCustomTheme((current) => ({ ...current, [key]: value.toUpperCase() }))
   }
@@ -301,6 +277,10 @@ export function SettingsPage({
     )
   }
 
+  async function resetFontSize(): Promise<void> {
+    await changeFontSize(100)
+  }
+
   async function resetAllSettings(): Promise<void> {
     if (scaleSaveTimer.current) {
       window.clearTimeout(scaleSaveTimer.current)
@@ -309,6 +289,7 @@ export function SettingsPage({
     setAutoLock(DEFAULT_APP_SETTINGS.autoLockMinutes)
     setCustomTheme(DEFAULT_APP_SETTINGS.customTheme)
     setInterfaceScale(DEFAULT_APP_SETTINGS.interfaceScale)
+    setFontSizeScale(DEFAULT_APP_SETTINGS.fontSizeScale)
     setProxy(DEFAULT_APP_SETTINGS.proxy)
     setProxyResult(null)
     await saveAppearance(
@@ -319,6 +300,7 @@ export function SettingsPage({
         themePreset: DEFAULT_APP_SETTINGS.themePreset,
         customTheme: DEFAULT_APP_SETTINGS.customTheme,
         interfaceScale: DEFAULT_APP_SETTINGS.interfaceScale,
+        fontSizeScale: DEFAULT_APP_SETTINGS.fontSizeScale,
         proxy: DEFAULT_APP_SETTINGS.proxy,
         groupOrder: []
       },
@@ -693,7 +675,6 @@ export function SettingsPage({
     ['network', tr('网络代理', 'Network proxy', '網路代理')],
     ['security', tr('安全与隐私', 'Security & privacy', '安全性與隱私')],
     ['data', tr('数据与备份', 'Data & backups', '資料與備份')],
-    ['appLogs', tr('软件日志', 'App logs', '軟體日誌')],
     ['about', tr('关于与更新', 'About & updates', '關於與更新')]
   ]
   return (
@@ -797,14 +778,56 @@ export function SettingsPage({
               </div>
             </div>
 
+            <div className="settings-card settings-card--font-size">
+              <SettingsCardHeading
+                icon={<Type size={17} />}
+                title={tr('文字大小', 'Text size', '文字大小')}
+                description={tr(
+                  '选择界面文字的显示比例，不改变窗口和控件的整体尺寸。',
+                  'Choose the interface text size without resizing the layout.',
+                  '選擇介面文字的顯示比例，不改變視窗和控件的整體尺寸。'
+                )}
+              />
+              <div
+                className="font-size-selector"
+                role="group"
+                aria-label={tr('文字大小', 'Text size', '文字大小')}
+              >
+                {FONT_SIZE_SCALE_OPTIONS.map((value) => (
+                  <button
+                    key={value}
+                    type="button"
+                    className={fontSizeScale === value ? 'is-active' : ''}
+                    aria-pressed={fontSizeScale === value}
+                    onClick={() => void changeFontSize(value)}
+                  >
+                    {value}%
+                  </button>
+                ))}
+              </div>
+              <div className="settings-inline-actions settings-inline-actions--between">
+                <span className="settings-hint">
+                  {tr(
+                    '可在 90% 至 120% 之间调整',
+                    'Adjustable from 90% to 120%.',
+                    '可在 90% 至 120% 之間調整'
+                  )}
+                </span>
+                <button className="text-button" onClick={() => void resetFontSize()}>
+                  <RotateCcw size={14} />
+                  {tr('恢复默认字体大小', 'Reset font size', '恢復預設字體大小')}
+                </button>
+              </div>
+            </div>
+
             <div className="settings-card settings-card--split">
               <div>
                 <h4>{tr('重置默认配置', 'Reset defaults', '重設預設設定')}</h4>
                 <p>
                   {tr(
-                    '恢复 defalut 亮色主题、简体中文、100% 比例、10 分钟锁定和直连网络。',
-                    'Restore the light defalut theme, Simplified Chinese, 100% scale, 10-minute lock and direct networking.',
-                    '恢復 defalut 亮色主題、簡體中文、100% 比例、10 分鐘鎖定和直連網路。'
+                    '恢复 defalut 亮色主题、简体中文、100% 比例、100% 字体、10 分钟锁定和直连网络。',
+                    'Restore the light defalut theme, Simplified Chinese, 100% scale, 100% font size, 10-minute lock and direct networking.',
+                    '恢復 defalut 亮色主題、簡體中文、100% 比例、100% 字體、10 分鐘鎖定和直連網路。'
                   )}
                 </p>
               </div>
@@ -1558,104 +1581,6 @@ export function SettingsPage({
           </SettingsPanel>
         )}
 
-        {module === 'appLogs' && (
-          <SettingsPanel
-            icon={<BookOpen size={18} />}
-            title={tr('软件日志', 'App logs', '軟體日誌')}
-            description={tr(
-              '查看应用启动、保险库、网络代理和更新相关的本地运行日志。',
-              'Review local runtime logs for startup, vault, proxy and update events.',
-              '查看應用程式啟動、保險庫、網路代理和更新相關的本機執行日誌。'
-            )}
-          >
-            <div className="settings-card app-logs-card">
-              <div className="app-logs-toolbar">
-                <div>
-                  <strong>{tr('本地运行记录', 'Local runtime logs', '本機執行記錄')}</strong>
-                  <small>
-                    {appLogs.length} {tr('条记录', 'entries', '筆記錄')}
-                  </small>
-                </div>
-                <div>
-                  <button
-                    type="button"
-                    className="button button--ghost button--small"
-                    onClick={() => void loadAppLogs()}
-                    disabled={appLogsLoading}
-                  >
-                    {appLogsLoading ? (
-                      <LoaderCircle size={14} className="spin" />
-                    ) : (
-                      <RefreshCw size={14} />
-                    )}
-                    {tr('刷新', 'Refresh', '重新整理')}
-                  </button>
-                  <button
-                    type="button"
-                    className="button button--danger-ghost button--small"
-                    onClick={() => setAppLogsClearOpen(true)}
-                    disabled={appLogs.length === 0 || appLogsLoading}
-                  >
-                    <Trash2 size={14} />
-                    {tr('清除日志', 'Clear logs', '清除日誌')}
-                  </button>
-                </div>
-              </div>
-
-              {appLogsLoading ? (
-                <div className="app-logs-empty">
-                  <LoaderCircle size={18} className="spin" />
-                  {tr('正在读取软件日志', 'Reading app logs', '正在讀取軟體日誌')}
-                </div>
-              ) : appLogs.length === 0 ? (
-                <div className="app-logs-empty">
-                  <BookOpen size={19} />
-                  {tr('暂无软件日志', 'No app logs yet', '暫無軟體日誌')}
-                </div>
-              ) : (
-                <div className="app-log-list">
-                  {appLogs.map((entry) => (
-                    <article className="app-log-row" key={entry.id}>
-                      <span className={`app-log-level is-${entry.level}`}>
-                        {appLogLevelLabel(entry.level, tr)}
-                      </span>
-                      <div className="app-log-row__content">
-                        <div>
-                          <strong>{entry.message}</strong>
-                          <span>{appLogCategoryLabel(entry.category, tr)}</span>
-                        </div>
-                        {entry.details && <p>{entry.details}</p>}
-                      </div>
-                      <time dateTime={entry.timestamp}>
-                        {formatDate(entry.timestamp, {
-                          dateStyle: 'short',
-                          timeStyle: 'medium'
-                        })}
-                      </time>
-                    </article>
-                  ))}
-                </div>
-              )}
-            </div>
-
-            {appLogsClearOpen && (
-              <ConfirmDialog
-                title={tr('清除全部软件日志？', 'Clear all app logs?', '清除全部軟體日誌？')}
-                description={tr(
-                  `将永久删除当前 ${appLogs.length} 条软件日志，不会影响账号、登录日志或网站会话。`,
-                  `Permanently delete ${appLogs.length} app log entries. Accounts, login history and website sessions are unaffected.`,
-                  `將永久刪除目前 ${appLogs.length} 筆軟體日誌，不會影響帳號、登入日誌或網站工作階段。`
-                )}
-                confirmLabel={tr('确认清除', 'Clear logs', '確認清除')}
-                danger
-                busy={appLogsClearing}
-                onConfirm={() => void clearApplicationLogs()}
-                onClose={() => setAppLogsClearOpen(false)}
-              />
-            )}
-          </SettingsPanel>
-        )}
-
         {module === 'about' && (
           <SettingsPanel
             icon={<Info size={18} />}
@@ -1916,37 +1841,9 @@ function settingsModuleTitle(
     network: tr('网络代理', 'Network proxy', '網路代理'),
     security: tr('安全与隐私', 'Security & privacy', '安全性與隱私'),
     data: tr('数据与备份', 'Data & backups', '資料與備份'),
-    appLogs: tr('软件日志', 'App logs', '軟體日誌'),
     about: tr('关于与更新', 'About & updates', '關於與更新')
   }
   return titles[module]
-}
-
-function appLogLevelLabel(
-  level: AppLogEntry['level'],
-  tr: (zhCN: string, en: string, zhTW: string) => string
-): string {
-  if (level === 'success') return tr('成功', 'Success', '成功')
-  if (level === 'warning') return tr('提醒', 'Warning', '提醒')
-  if (level === 'error') return tr('错误', 'Error', '錯誤')
-  return tr('信息', 'Info', '資訊')
-}
-
-function appLogCategoryLabel(
-  category: string,
-  tr: (zhCN: string, en: string, zhTW: string) => string
-): string {
-  const labels: Record<string, [string, string, string]> = {
-    startup: ['应用启动', 'Startup', '應用程式啟動'],
-    vault: ['保险库', 'Vault', '保險庫'],
-    proxy: ['网络代理', 'Network proxy', '網路代理'],
-    update: ['应用更新', 'App update', '應用程式更新'],
-    data: ['数据操作', 'Data', '資料操作'],
-    login: ['登录任务', 'Login task', '登入工作'],
-    settings: ['设置', 'Settings', '設定']
-  }
-  const label = labels[category]
-  return label ? tr(label[0], label[1], label[2]) : category
 }
 
 function platformLabel(platform: string): string {

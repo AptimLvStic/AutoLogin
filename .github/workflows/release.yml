@@ -31,10 +31,21 @@ jobs:
       - name: Run unit tests
         run: npm test -- --run
 
-      - name: Build installer
+      - name: Build application
+        run: npm run build
+
+      - name: Package installer
+        shell: pwsh
         run: |
-          npm run build
-          npx electron-builder --win nsis --x64 --publish never
+          $log = Join-Path $env:RUNNER_TEMP "electron-builder.log"
+          npx electron-builder --win nsis --x64 --publish never 2>&1 | Tee-Object -FilePath $log
+          $exitCode = $LASTEXITCODE
+          if ($exitCode -ne 0) {
+            Get-Content $log -Tail 80 | ForEach-Object {
+              Write-Output "::error title=electron-builder::$_"
+            }
+            exit $exitCode
+          }
         env:
           CSC_IDENTITY_AUTO_DISCOVERY: "false"
 

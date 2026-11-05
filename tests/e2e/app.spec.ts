@@ -487,6 +487,8 @@ test('searches accounts and renders left-aligned table columns with icon-only ac
   })
 
   const alphaRow = page.locator('.account-row').filter({ hasText: '搜索站点 A' })
+  await expect(alphaRow).toHaveCSS('cursor', 'default')
+  await expect(page.locator('.account-tab').first()).toHaveCSS('cursor', 'default')
   await expect(page.locator('.account-list__header')).toContainText('最后更新')
   await expect(page.locator('.account-list__header')).toContainText('分组')
   await expect(page.locator('.account-list__header')).toContainText('站点 URL')
@@ -827,7 +829,9 @@ test('bulk deletes selected accounts after confirmation', async () => {
   await expect(page.getByRole('button', { name: '批量操作' })).toBeDisabled()
   await expect(page.getByRole('button', { name: '批量登录' })).toBeDisabled()
   await expect(page.getByRole('button', { name: '删除账号' })).toBeDisabled()
-  await expect(page.locator('.sidebar-nav__item').filter({ hasText: '回收站' })).toContainText('2')
+  await expect(
+    page.locator('.sidebar-nav__item').filter({ hasText: '回收站' }).locator('small')
+  ).toHaveCount(0)
 
   await page.locator('.sidebar-nav__item').filter({ hasText: '回收站' }).click()
   const trashPage = page.locator('.trash-page')
@@ -1862,6 +1866,11 @@ test('closes a tab without deleting its encrypted AutoLogin snapshot', async () 
     return tabs.find((tab) => !knownIds.includes(tab.id))
   }, initialTabs.map((tab) => tab.id))
   expect(createdTab).toBeDefined()
+  const visibleAccountTabs = page.locator('.account-tab')
+  await expect(visibleAccountTabs).toHaveCount(initialTabs.length + 1)
+  const firstTab = visibleAccountTabs.first()
+  await firstTab.dispatchEvent('click')
+  await expect(firstTab).toHaveClass(/is-active/)
   const snapshotPath = join(
     userDataDirectory,
     'tabs',
@@ -1893,7 +1902,7 @@ test('defers an available update prompt until the vault is unlocked', async () =
   await application.evaluate(({ BrowserWindow }) => {
     BrowserWindow.getAllWindows()[0]?.webContents.send('app:update-state', {
       phase: 'available',
-      currentVersion: '0.9.2',
+      currentVersion: '0.9.3',
       latestVersion: '99.0.1',
       releaseName: 'AutoLogin v99.0.1',
       releaseNotes: '## 更新内容\n\n- 解锁后显示更新提示',
@@ -1957,6 +1966,9 @@ test('persists appearance, language and interface scale with separate resets', a
   await expect(
     page.locator('.password-generator-page .password-generator__preview code')
   ).not.toHaveText('')
+  await expect(
+    page.locator('.password-generator-page > .password-generator')
+  ).toHaveCSS('box-shadow', 'none')
 
   const settingsNav = page
     .locator('.sidebar-actions')
@@ -2330,6 +2342,10 @@ test('searches site and group pickers and applies a generated password', async (
   const generator = page.getByRole('dialog', { name: '随机密码生成器' })
   await expect(generator).toBeVisible()
   await expect(generator.locator('.password-generator__preview code')).not.toHaveText('')
+  await expect(generator.locator('.password-generator__header')).toHaveCSS(
+    'cursor',
+    'default'
+  )
   await page.waitForTimeout(250)
   const generatorLayout = await generator.evaluate((element) => {
     const rect = element.getBoundingClientRect()

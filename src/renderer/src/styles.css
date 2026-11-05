@@ -11656,6 +11656,7 @@ body.is-resizing-account-column {
   border-radius: 9px;
   background: transparent;
   color: var(--muted);
+  cursor: pointer;
   font-size: calc(11px * var(--font-scale, 1));
   transition:
     background 170ms ease,
@@ -13129,7 +13130,7 @@ body.is-resizing-account-column {
   }
 }
 
-/* v0.9.2 account tabs, shared recycle bin and table alignment refinements. */
+/* v0.9.3 interaction, cursor and password generator refinements. */
 .account-tabs {
   margin-top: 8px;
   margin-bottom: 4px;
@@ -13139,6 +13140,11 @@ body.is-resizing-account-column {
 .account-tab {
   gap: 2px;
   padding: 0 4px 0 10px;
+  cursor: default;
+}
+
+.account-row {
+  cursor: default;
 }
 
 .account-tab__select {
@@ -13652,18 +13658,13 @@ body.is-resizing-account-column {
 }
 
 .password-generator-popover .password-generator__header {
-  cursor: grab;
+  cursor: default;
+  touch-action: none;
   user-select: none;
 }
 
-.password-generator-popover.is-dragging .password-generator__header {
-  cursor: grabbing;
-}
-
-.password-generator-popover.is-dragging {
-  box-shadow:
-    0 28px 72px rgba(20, 24, 32, 0.25),
-    0 4px 14px rgba(20, 24, 32, 0.1);
+.password-generator-page > .password-generator {
+  box-shadow: none;
 }
 
 .password-generator-popover button,

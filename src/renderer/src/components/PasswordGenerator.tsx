@@ -308,13 +308,18 @@ export function PasswordGeneratorPopover({
   const { tr } = useI18n()
   const [open, setOpen] = useState(false)
   const [position, setPosition] = useState<PopoverPosition | null>(null)
-  const [dragging, setDragging] = useState(false)
   const triggerRef = useRef<HTMLButtonElement>(null)
   const popoverRef = useRef<HTMLDivElement>(null)
+  const dragFrameRef = useRef<number | null>(null)
+  const pendingPositionRef = useRef<PopoverPosition | null>(null)
   const dragStateRef = useRef<{
     pointerId: number
-    offsetX: number
-    offsetY: number
+    startX: number
+    startY: number
+    originLeft: number
+    originTop: number
+    width: number
+    height: number
   } | null>(null)
   const hasDraggedRef = useRef(false)
 
@@ -373,6 +378,12 @@ export function PasswordGeneratorPopover({
     window.addEventListener('resize', keepInsideWindow)
     return () => {
       window.cancelAnimationFrame(frame)
+      if (dragFrameRef.current !== null) {
+        window.cancelAnimationFrame(dragFrameRef.current)
+        dragFrameRef.current = null
+      }
+      pendingPositionRef.current = null
+      dragStateRef.current = null
       document.removeEventListener('pointerdown', closeOnPointer)
       document.removeEventListener('keydown', closeOnEscape)
       window.removeEventListener('resize', keepInsideWindow)
@@ -380,9 +391,26 @@ export function PasswordGeneratorPopover({
   }, [open])
 
   function finishDrag(pointerId: number): void {
-    if (dragStateRef.current?.pointerId !== pointerId) return
+    const drag = dragStateRef.current
+    const popover = popoverRef.current
+    if (!drag || drag.pointerId !== pointerId) return
+
+    if (dragFrameRef.current !== null) {
+      window.cancelAnimationFrame(dragFrameRef.current)
+      dragFrameRef.current = null
+    }
+
+    const nextPosition = pendingPositionRef.current
+    if (popover && nextPosition) {
+      popover.style.left = `${nextPosition.left}px`
+      popover.style.top = `${nextPosition.top}px`
+      popover.style.transform = ''
+      popover.style.willChange = ''
+      setPosition(nextPosition)
+    }
+
+    pendingPositionRef.current = null
     dragStateRef.current = null
-    setDragging(false)
   }
 
   function handleDragStart(event: React.PointerEvent<HTMLDivElement>): void {
@@ -400,30 +428,45 @@ export function PasswordGeneratorPopover({
     }
     const popover = popoverRef.current
     if (!popover) return
-    const rect = popover.getBoundingClientRect()
+    const left = position?.left ?? popover.getBoundingClientRect().left
+    const top = position?.top ?? popover.getBoundingClientRect().top
     dragStateRef.current = {
       pointerId: event.pointerId,
-      offsetX: event.clientX - rect.left,
-      offsetY: event.clientY - rect.top
+      startX: event.clientX,
+      startY: event.clientY,
+      originLeft: left,
+      originTop: top,
+      width: popover.offsetWidth,
+      height: popover.offsetHeight
     }
+    pendingPositionRef.current = { left, top }
     hasDraggedRef.current = true
-    setDragging(true)
+    popover.style.willChange = 'transform'
     popover.setPointerCapture(event.pointerId)
     event.preventDefault()
   }
 
   function handleDragMove(event: React.PointerEvent<HTMLDivElement>): void {
     const drag = dragStateRef.current
-    const popover = popoverRef.current
-    if (!drag || !popover || drag.pointerId !== event.pointerId) return
-    setPosition(
-      clampPopoverPosition(
-        event.clientX - drag.offsetX,
-        event.clientY - drag.offsetY,
-        popover.offsetWidth,
-        popover.offsetHeight
-      )
+    if (!drag || drag.pointerId !== event.pointerId) return
+    pendingPositionRef.current = clampPopoverPosition(
+      drag.originLeft + event.clientX - drag.startX,
+      drag.originTop + event.clientY - drag.startY,
+      drag.width,
+      drag.height
     )
+    if (dragFrameRef.current !== null) return
+
+    dragFrameRef.current = window.requestAnimationFrame(() => {
+      dragFrameRef.current = null
+      const currentDrag = dragStateRef.current
+      const popover = popoverRef.current
+      const nextPosition = pendingPositionRef.current
+      if (!currentDrag || !popover || !nextPosition) return
+      popover.style.transform = `translate3d(${
+        nextPosition.left - currentDrag.originLeft
+      }px, ${nextPosition.top - currentDrag.originTop}px, 0)`
+    })
   }
 
   return (
@@ -444,7 +487,7 @@ export function PasswordGeneratorPopover({
         createPortal(
           <div
             ref={popoverRef}
-            className={`password-generator-popover${dragging ? ' is-dragging' : ''}`}
+            className="password-generator-popover"
             role="dialog"
             aria-modal="false"
             aria-label={tr('随机密码生成器', 'Random password generator', '隨機密碼產生器')}
@@ -457,6 +500,7 @@ export function PasswordGeneratorPopover({
             onPointerMove={handleDragMove}
             onPointerUp={(event) => finishDrag(event.pointerId)}
             onPointerCancel={(event) => finishDrag(event.pointerId)}
+            onLostPointerCapture={(event) => finishDrag(event.pointerId)}
           >
             <PasswordGenerator
               compact

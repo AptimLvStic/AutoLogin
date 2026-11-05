@@ -357,11 +357,6 @@ export function LibraryScreen({
     () => new Set(bookmarkTabs.map((tab) => tab.id)),
     [bookmarkTabs]
   )
-  const bookmarkAccountCount = useMemo(
-    () =>
-      allAccounts.filter((account) => bookmarkTabIds.has(account.tabId)).length,
-    [allAccounts, bookmarkTabIds]
-  )
   const bookmarkAccounts = useMemo(
     () => allAccounts.filter((account) => bookmarkTabIds.has(account.tabId)),
     [allAccounts, bookmarkTabIds]
@@ -369,11 +364,6 @@ export function LibraryScreen({
   const bookmarkSites = useMemo(
     () => allSites.filter((site) => bookmarkTabIds.has(site.tabId)),
     [allSites, bookmarkTabIds]
-  )
-  const accountCollectionCount = useMemo(
-    () =>
-      allAccounts.filter((account) => !bookmarkTabIds.has(account.tabId)).length,
-    [allAccounts, bookmarkTabIds]
   )
   const accounts = useMemo(
     () => allAccounts.filter((account) => account.tabId === activeTabId),
@@ -3002,7 +2992,6 @@ export function LibraryScreen({
             >
               <KeyRound size={17} />
               <span>{tr('账号', 'Accounts', '帳號')}</span>
-              <small>{accountCollectionCount}</small>
             </button>
             <button
               className={`sidebar-nav__item${view === 'bookmarks' ? ' is-active' : ''}`}
@@ -3012,7 +3001,6 @@ export function LibraryScreen({
             >
               <Bookmark size={17} />
               <span>{tr('书签', 'Bookmarks', '書籤')}</span>
-              <small>{bookmarkAccountCount}</small>
             </button>
             <button
               className={`sidebar-nav__item${
@@ -3046,7 +3034,6 @@ export function LibraryScreen({
             >
               <ArchiveRestore size={17} />
               <span>{tr('回收站', 'Recycle Bin', '回收站')}</span>
-              <small>{deletedAccounts.length}</small>
             </button>
           </section>
         </nav>
@@ -3847,6 +3834,13 @@ export function LibraryScreen({
                       key={tab.id}
                       style={{ '--tab-color': tab.color } as React.CSSProperties}
                       onContextMenu={(event) => openTabMenu(event, tab)}
+                      onClick={() => {
+                        if (view === 'bookmarks') {
+                          setBookmarkTabId(tab.id)
+                        } else {
+                          setAccountTabId(tab.id)
+                        }
+                      }}
                       title={tr(
                         '单击切换，右键重命名或设置颜色',
                         'Click to switch, right-click to rename or recolor',
@@ -3858,11 +3852,6 @@ export function LibraryScreen({
                         role="tab"
                         aria-selected={tab.id === activeTabId}
                         className="account-tab__select"
-                        onClick={() =>
-                          view === 'bookmarks'
-                            ? setBookmarkTabId(tab.id)
-                            : setAccountTabId(tab.id)
-                        }
                       >
                         <span className="account-tab__marker" aria-hidden="true" />
                         <span className="account-tab__name">{tab.name}</span>
@@ -3881,7 +3870,10 @@ export function LibraryScreen({
                         )}
                         title={tr('关闭标签页', 'Close tab', '關閉標籤頁')}
                         disabled={tabBusy}
-                        onClick={() => void closeTab(tab)}
+                        onClick={(event) => {
+                          event.stopPropagation()
+                          void closeTab(tab)
+                        }}
                       >
                         <X size={12} />
                       </button>

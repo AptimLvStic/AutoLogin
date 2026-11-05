@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import {
   Check,
@@ -21,7 +21,28 @@ import {
 import { useI18n } from '../i18n'
 
 const OPTIONS_STORAGE_KEY = 'autologin.passwordGenerator.options'
-const COMPACT_POPOVER_WIDTH = 332
+const TITLEBAR_HEIGHT = 40
+const VIEWPORT_MARGIN = 8
+
+interface PopoverPosition {
+  left: number
+  top: number
+}
+
+function clampPopoverPosition(
+  left: number,
+  top: number,
+  width: number,
+  height: number
+): PopoverPosition {
+  const minTop = TITLEBAR_HEIGHT + VIEWPORT_MARGIN
+  const maxLeft = Math.max(VIEWPORT_MARGIN, window.innerWidth - width - VIEWPORT_MARGIN)
+  const maxTop = Math.max(minTop, window.innerHeight - height - VIEWPORT_MARGIN)
+  return {
+    left: Math.max(VIEWPORT_MARGIN, Math.min(left, maxLeft)),
+    top: Math.max(minTop, Math.min(top, maxTop))
+  }
+}
 
 function readOptions(): PasswordGeneratorOptions {
   try {
@@ -286,26 +307,50 @@ export function PasswordGeneratorPopover({
 }): React.JSX.Element {
   const { tr } = useI18n()
   const [open, setOpen] = useState(false)
-  const [position, setPosition] = useState({ left: 0, top: 0 })
+  const [position, setPosition] = useState<PopoverPosition | null>(null)
+  const [dragging, setDragging] = useState(false)
   const triggerRef = useRef<HTMLButtonElement>(null)
   const popoverRef = useRef<HTMLDivElement>(null)
+  const dragStateRef = useRef<{
+    pointerId: number
+    offsetX: number
+    offsetY: number
+  } | null>(null)
+  const hasDraggedRef = useRef(false)
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (!open) return
-    const reposition = (): void => {
-      const anchor = triggerRef.current
-      if (!anchor) return
-      const rect = anchor.getBoundingClientRect()
-      const width = Math.min(COMPACT_POPOVER_WIDTH, window.innerWidth - 24)
-      const estimatedHeight = 372
-      setPosition({
-        left: Math.max(12, Math.min(rect.right - width, window.innerWidth - width - 12)),
-        top:
-          rect.bottom + estimatedHeight + 10 <= window.innerHeight
-            ? rect.bottom + 8
-            : Math.max(12, rect.top - estimatedHeight - 8)
-      })
+
+    const centerPopover = (): void => {
+      const popover = popoverRef.current
+      if (!popover) return
+      const width = popover.offsetWidth
+      const height = popover.offsetHeight
+      const contentTop = TITLEBAR_HEIGHT
+      const contentHeight = Math.max(0, window.innerHeight - contentTop)
+      const left = (window.innerWidth - width) / 2
+      const top = contentTop + Math.max(0, (contentHeight - height) / 2)
+      setPosition(clampPopoverPosition(left, top, width, height))
     }
+
+    const keepInsideWindow = (): void => {
+      const popover = popoverRef.current
+      if (!popover) return
+      if (!hasDraggedRef.current) {
+        centerPopover()
+        return
+      }
+      const rect = popover.getBoundingClientRect()
+      setPosition((current) =>
+        clampPopoverPosition(
+          current?.left ?? rect.left,
+          current?.top ?? rect.top,
+          rect.width,
+          rect.height
+        )
+      )
+    }
+
     const closeOnPointer = (event: PointerEvent): void => {
       if (
         event.target instanceof Node &&
@@ -319,18 +364,67 @@ export function PasswordGeneratorPopover({
     const closeOnEscape = (event: KeyboardEvent): void => {
       if (event.key === 'Escape') setOpen(false)
     }
-    reposition()
+
+    hasDraggedRef.current = false
+    centerPopover()
+    const frame = window.requestAnimationFrame(centerPopover)
     document.addEventListener('pointerdown', closeOnPointer)
     document.addEventListener('keydown', closeOnEscape)
-    window.addEventListener('resize', reposition)
-    window.addEventListener('scroll', reposition, true)
+    window.addEventListener('resize', keepInsideWindow)
     return () => {
+      window.cancelAnimationFrame(frame)
       document.removeEventListener('pointerdown', closeOnPointer)
       document.removeEventListener('keydown', closeOnEscape)
-      window.removeEventListener('resize', reposition)
-      window.removeEventListener('scroll', reposition, true)
+      window.removeEventListener('resize', keepInsideWindow)
     }
   }, [open])
+
+  function finishDrag(pointerId: number): void {
+    if (dragStateRef.current?.pointerId !== pointerId) return
+    dragStateRef.current = null
+    setDragging(false)
+  }
+
+  function handleDragStart(event: React.PointerEvent<HTMLDivElement>): void {
+    if (event.button !== 0) return
+    const target = event.target
+    if (!(target instanceof Element) || !target.closest('.password-generator__header')) {
+      return
+    }
+    if (
+      target.closest(
+        'button, input, select, textarea, a, label, [role="button"], [role="checkbox"]'
+      )
+    ) {
+      return
+    }
+    const popover = popoverRef.current
+    if (!popover) return
+    const rect = popover.getBoundingClientRect()
+    dragStateRef.current = {
+      pointerId: event.pointerId,
+      offsetX: event.clientX - rect.left,
+      offsetY: event.clientY - rect.top
+    }
+    hasDraggedRef.current = true
+    setDragging(true)
+    popover.setPointerCapture(event.pointerId)
+    event.preventDefault()
+  }
+
+  function handleDragMove(event: React.PointerEvent<HTMLDivElement>): void {
+    const drag = dragStateRef.current
+    const popover = popoverRef.current
+    if (!drag || !popover || drag.pointerId !== event.pointerId) return
+    setPosition(
+      clampPopoverPosition(
+        event.clientX - drag.offsetX,
+        event.clientY - drag.offsetY,
+        popover.offsetWidth,
+        popover.offsetHeight
+      )
+    )
+  }
 
   return (
     <>
@@ -350,11 +444,19 @@ export function PasswordGeneratorPopover({
         createPortal(
           <div
             ref={popoverRef}
-            className="password-generator-popover"
+            className={`password-generator-popover${dragging ? ' is-dragging' : ''}`}
             role="dialog"
             aria-modal="false"
             aria-label={tr('随机密码生成器', 'Random password generator', '隨機密碼產生器')}
-            style={position}
+            style={{
+              left: position?.left ?? 0,
+              top: position?.top ?? 0,
+              visibility: position ? 'visible' : 'hidden'
+            }}
+            onPointerDown={handleDragStart}
+            onPointerMove={handleDragMove}
+            onPointerUp={(event) => finishDrag(event.pointerId)}
+            onPointerCancel={(event) => finishDrag(event.pointerId)}
           >
             <PasswordGenerator
               compact

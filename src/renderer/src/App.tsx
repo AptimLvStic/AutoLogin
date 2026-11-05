@@ -35,7 +35,7 @@ export default function App(): React.JSX.Element {
   const [accounts, setAccounts] = useState<AccountWithSite[]>([])
   const [sites, setSites] = useState<Site[]>([])
   const [settings, setSettings] = useState<AppSettings>(DEFAULT_SETTINGS)
-  const [appVersion, setAppVersion] = useState('0.9.1')
+  const [appVersion, setAppVersion] = useState('0.9.2')
   const [loginTarget, setLoginTarget] = useState<LoginTarget | null>(null)
   const [batchState, setBatchState] = useState<LoginBatchState | null>(null)
   const [updateState, setUpdateState] = useState<AppUpdateState | null>(null)
@@ -410,6 +410,7 @@ export default function App(): React.JSX.Element {
   }
 
   const updateDialogVisible =
+    authState === 'ready' &&
     Boolean(updateState) &&
     dismissedUpdateVersion !== (updateState?.latestVersion ?? updateState?.phase ?? '') &&
     (updateState?.phase === 'available' ||

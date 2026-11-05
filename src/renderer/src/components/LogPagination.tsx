@@ -1,5 +1,6 @@
 import { ChevronLeft, ChevronRight } from 'lucide-react'
 import { useI18n } from '../i18n'
+import { PageSizePicker } from './PageSizePicker'
 
 export const LOG_PAGE_SIZES = [10, 20, 50, 100, 200] as const
 export type LogPageSize = (typeof LOG_PAGE_SIZES)[number]
@@ -32,22 +33,12 @@ export function LogPagination({
         )}
       </span>
       <div className="account-pagination__controls">
-        <label className="account-pagination__size">
-          <span>{tr('每页条数', 'Rows per page', '每頁筆數')}</span>
-          <select
-            aria-label={tr('每页条数', 'Rows per page', '每頁筆數')}
-            value={pageSize}
-            onChange={(event) =>
-              onPageSizeChange(Number(event.target.value) as LogPageSize)
-            }
-          >
-            {LOG_PAGE_SIZES.map((size) => (
-              <option key={size} value={size}>
-                {tr(`${size} 条`, `${size} rows`, `${size} 筆`)}
-              </option>
-            ))}
-          </select>
-        </label>
+        <PageSizePicker
+          ariaLabel={tr('每页条数', 'Rows per page', '每頁筆數')}
+          value={pageSize}
+          options={LOG_PAGE_SIZES}
+          onChange={(nextPageSize) => onPageSizeChange(nextPageSize as LogPageSize)}
+        />
         <div className="account-pagination__nav">
           <button
             className="icon-button icon-button--small"

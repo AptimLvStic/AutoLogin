@@ -666,6 +666,7 @@ export function SettingsPage({
           </nav>
         </div>
 
+        <div className="settings-page__body">
         {module === 'general' && (
           <SettingsPanel
             icon={<SlidersHorizontal size={18} />}
@@ -1544,6 +1545,7 @@ export function SettingsPage({
             </div>
           </SettingsPanel>
         )}
+        </div>
 
       </section>
 

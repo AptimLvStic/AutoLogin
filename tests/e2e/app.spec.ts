@@ -362,7 +362,7 @@ test('pauses on a captcha and resumes after manual verification', async () => {
   await logsPage.getByLabel('站点名称').selectOption({ label: '验证码登录' })
   await logsPage.getByLabel('分组').selectOption({ label: '安全' })
   await logsPage.getByLabel('状态').selectOption('manual')
-  await logsPage.getByLabel('每页条数').selectOption('10')
+  await selectPageSize(logsPage, '每页条数', 10)
   await expect(logsPage.locator('.log-table__row')).toHaveCount(1)
   await page.locator('.sidebar-nav__item').filter({ hasText: '账号' }).click()
 
@@ -618,7 +618,7 @@ test('shows the account page scrollbar only when rows exceed the viewport', asyn
     }
   })
   await page.getByRole('button', { name: '刷新', exact: true }).click()
-  await page.getByLabel('账号每页条数').selectOption('50')
+  await selectPageSize(page, '账号每页条数', 50)
   await expect(page.locator('.account-row')).toHaveCount(25)
   await expect
     .poll(() =>
@@ -1403,18 +1403,26 @@ test('paginates a dense account tab, keeps tabs fixed and resizes the subnav', a
     .toBe(true)
 
   const pagination = page.locator('.account-pagination')
+  await expect(page.locator('.library-content-scroll--accounts > .account-tabs')).toHaveCSS(
+    'margin-top',
+    '20px'
+  )
+  await expect(pagination).toHaveCSS('padding-top', '10px')
+  await expect(pagination).toHaveCSS('padding-right', '2px')
+  await expect(pagination).toHaveCSS('padding-bottom', '10px')
+  await expect(pagination).toHaveCSS('padding-left', '2px')
   await expect(pagination).toContainText('共 120 个账号，第 1/6 页')
   await expect(
     page.locator('.account-table-scroll + .account-pagination')
   ).toBeVisible()
-  await page.getByLabel('账号每页条数').selectOption('10')
+  await selectPageSize(page, '账号每页条数', 10)
   await expect(page.locator('.account-row')).toHaveCount(10)
   await expect(pagination).toContainText('共 120 个账号，第 1/12 页')
   await page.getByRole('button', { name: '下一页' }).click()
   await expect(pagination).toContainText('共 120 个账号，第 2/12 页')
   await expect(page.locator('.account-row')).toHaveCount(10)
 
-  await page.getByLabel('账号每页条数').selectOption('50')
+  await selectPageSize(page, '账号每页条数', 50)
   await expect(page.locator('.account-row')).toHaveCount(50)
   await expect(pagination).toContainText('共 120 个账号，第 1/3 页')
 
@@ -1880,6 +1888,28 @@ test('closes a tab without deleting its encrypted AutoLogin snapshot', async () 
   expect(existsSync(snapshotPath)).toBe(true)
 })
 
+test('defers an available update prompt until the vault is unlocked', async () => {
+  await expect(page.getByRole('heading', { name: '创建你的本地保险库' })).toBeVisible()
+  await application.evaluate(({ BrowserWindow }) => {
+    BrowserWindow.getAllWindows()[0]?.webContents.send('app:update-state', {
+      phase: 'available',
+      currentVersion: '0.9.2',
+      latestVersion: '99.0.1',
+      releaseName: 'AutoLogin v99.0.1',
+      releaseNotes: '## 更新内容\n\n- 解锁后显示更新提示',
+      interactive: true,
+      message: '发现新版本 v99.0.1'
+    })
+  })
+  await expect(page.locator('.update-dialog')).toHaveCount(0)
+  await createVault(page)
+  const updateDialog = page.locator('.update-dialog')
+  await expect(updateDialog).toBeVisible()
+  await expect(updateDialog).toContainText('v99.0.1')
+  await updateDialog.getByRole('button', { name: '稍后提醒' }).click()
+  await expect(updateDialog).toHaveCount(0)
+})
+
 test('persists appearance, language and interface scale with separate resets', async () => {
   await createVault(page)
   await addAccount(page, {
@@ -1953,6 +1983,23 @@ test('persists appearance, language and interface scale with separate resets', a
     }
   })
   expect(settingsWidth.panel).toBeGreaterThan(settingsWidth.page * 0.9)
+  await expect(page.locator('.library-content-scroll--settings')).toHaveCSS(
+    'overflow-y',
+    'hidden'
+  )
+  const settingsBody = settings.locator('.settings-page__body')
+  await expect(settingsBody).toHaveCSS('overflow-y', 'auto')
+  await page.waitForTimeout(300)
+  const settingsStickyTop = await settings
+    .locator('.settings-page__sticky')
+    .evaluate((element) => element.getBoundingClientRect().top)
+  await settingsBody.evaluate((element) => {
+    element.scrollTop = element.scrollHeight
+  })
+  const settingsStickyTopAfterScroll = await settings
+    .locator('.settings-page__sticky')
+    .evaluate((element) => element.getBoundingClientRect().top)
+  expect(Math.abs(settingsStickyTopAfterScroll - settingsStickyTop)).toBeLessThan(1)
   const spinAnimation = await page.evaluate(() => {
     const sample = document.createElement('span')
     sample.className = 'spin'
@@ -2129,6 +2176,19 @@ test('persists appearance, language and interface scale with separate resets', a
   await expect(settingsUpdate).toBeVisible()
   await expect(settingsUpdate.getByRole('progressbar')).toHaveAttribute('aria-valuenow', '48')
   await expect(settingsUpdate.getByRole('button', { name: '取消下载' })).toBeVisible()
+  const sidebarUpdateProgress = page.locator('.sidebar-update-progress')
+  await expect(sidebarUpdateProgress).toBeVisible()
+  await expect(
+    sidebarUpdateProgress.getByRole('progressbar', { name: '更新下载进度' })
+  ).toHaveAttribute('aria-valuenow', '48')
+  await page.locator('.sidebar-nav__item').filter({ hasText: '账号' }).click()
+  await expect(page.locator('.account-tabs')).toBeVisible()
+  await sidebarUpdateProgress.click()
+  await expect(settings).toBeVisible()
+  await expect(settings.getByRole('tab', { name: '关于与更新' })).toHaveAttribute(
+    'aria-selected',
+    'true'
+  )
   await application.evaluate(({ BrowserWindow }) => {
     BrowserWindow.getAllWindows()[0]?.webContents.send('app:update-state', {
       phase: 'up-to-date',
@@ -2204,7 +2264,7 @@ test('persists appearance, language and interface scale with separate resets', a
     appLogsPage.getByRole('tab', { name: '软件日志' })
   ).toHaveAttribute('aria-selected', 'true')
   await appLogsPage.getByLabel('状态').selectOption('info')
-  await appLogsPage.getByLabel('每页条数').selectOption('10')
+  await selectPageSize(appLogsPage, '每页条数', 10)
   await appLogsPage.getByLabel('状态').selectOption('all')
   await expect(
     appLogsPage.locator('.app-log-row').filter({ hasText: '网络代理连通性测试' }).first()
@@ -2270,6 +2330,30 @@ test('searches site and group pickers and applies a generated password', async (
   const generator = page.getByRole('dialog', { name: '随机密码生成器' })
   await expect(generator).toBeVisible()
   await expect(generator.locator('.password-generator__preview code')).not.toHaveText('')
+  await page.waitForTimeout(250)
+  const generatorLayout = await generator.evaluate((element) => {
+    const rect = element.getBoundingClientRect()
+    return {
+      width: rect.width,
+      centerOffset: Math.abs(rect.left + rect.width / 2 - window.innerWidth / 2),
+      top: rect.top
+    }
+  })
+  expect(generatorLayout.width).toBeGreaterThanOrEqual(440)
+  expect(generatorLayout.centerOffset).toBeLessThanOrEqual(3)
+  expect(generatorLayout.top).toBeGreaterThanOrEqual(48)
+  const dragHandle = await generator.locator('.password-generator__header').boundingBox()
+  expect(dragHandle).not.toBeNull()
+  await page.mouse.move(dragHandle!.x + 16, dragHandle!.y + 16)
+  await page.mouse.down()
+  await page.mouse.move(2, 2, { steps: 6 })
+  await page.mouse.up()
+  const draggedLayout = await generator.evaluate((element) => {
+    const rect = element.getBoundingClientRect()
+    return { left: rect.left, top: rect.top }
+  })
+  expect(draggedLayout.left).toBeGreaterThanOrEqual(8)
+  expect(draggedLayout.top).toBeGreaterThanOrEqual(48)
   await generator.getByRole('button', { name: '使用此密码' }).click()
   await expect(generator).toHaveCount(0)
   await expect(editor.getByPlaceholder('输入登录密码')).toHaveValue(/.{8,}/)
@@ -2713,6 +2797,30 @@ test('can clear all local data while the vault is locked', async () => {
   await expect(page.getByRole('heading', { name: '创建你的本地保险库' })).toBeVisible()
   await expect(page.getByPlaceholder('至少 10 个字符')).toBeVisible()
 })
+
+async function selectPageSize(
+  target: Page | Locator,
+  label: string,
+  size: number
+): Promise<void> {
+  const trigger = target.getByRole('button', { name: label, exact: true })
+  await trigger.click()
+  const menu = page.getByRole('menu', { name: label, exact: true })
+  await expect(menu).toBeVisible()
+  await expect(menu).toHaveCSS('position', 'fixed')
+  const [triggerBox, menuBox] = await Promise.all([
+    trigger.boundingBox(),
+    menu.boundingBox()
+  ])
+  expect(triggerBox).not.toBeNull()
+  expect(menuBox).not.toBeNull()
+  expect(menuBox!.y + menuBox!.height).toBeLessThanOrEqual(triggerBox!.y + 1)
+  expect(menuBox!.y).toBeGreaterThanOrEqual(40)
+  await menu
+    .getByRole('menuitemradio', { name: `${size} 条`, exact: true })
+    .click()
+  await expect(menu).toHaveCount(0)
+}
 
 async function createVault(targetPage: Page): Promise<void> {
   await expect(targetPage.getByRole('heading', { name: '创建你的本地保险库' })).toBeVisible()

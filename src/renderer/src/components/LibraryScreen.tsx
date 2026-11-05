@@ -69,6 +69,7 @@ import {
 import { LoadingSpinner } from './LoadingSpinner'
 import { LoginLogsPage } from './LoginLogsPage'
 import { ConfirmDialog, Modal } from './Modal'
+import { PageSizePicker } from './PageSizePicker'
 import { PasswordGenerator } from './PasswordGenerator'
 import { SettingsPage, type SettingsModule } from './SettingsPage'
 import { SiteMark } from './SiteMark'
@@ -3051,6 +3052,70 @@ export function LibraryScreen({
         </nav>
 
         <div className="sidebar-bottom">
+          {updateState &&
+            (updateState.phase === 'downloading' || updateState.phase === 'downloaded') && (
+              <button
+                type="button"
+                className={`sidebar-update-progress is-${updateState.phase}`}
+                onClick={() => chooseSettingsModule('about')}
+                aria-label={
+                  updateState.phase === 'downloaded'
+                    ? tr(
+                        '更新已下载，打开关于与更新',
+                        'Update downloaded. Open About & updates.',
+                        '更新已下載，開啟關於與更新'
+                      )
+                    : tr(
+                        `更新下载进度 ${Math.round(updateState.percent ?? 0)}%，打开关于与更新`,
+                        `Update download ${Math.round(updateState.percent ?? 0)}%. Open About & updates.`,
+                        `更新下載進度 ${Math.round(updateState.percent ?? 0)}%，開啟關於與更新`
+                      )
+                }
+              >
+                <span className="sidebar-update-progress__label">
+                  {updateState.phase === 'downloaded' ? (
+                    <Check size={14} aria-hidden="true" />
+                  ) : (
+                    <LoaderCircle size={14} className="spin" aria-hidden="true" />
+                  )}
+                  <span>
+                    {updateState.phase === 'downloaded'
+                      ? tr('更新已就绪', 'Update ready', '更新已就緒')
+                      : tr('正在下载更新', 'Downloading update', '正在下載更新')}
+                  </span>
+                  <strong>
+                    {Math.round(
+                      updateState.phase === 'downloaded' ? 100 : updateState.percent ?? 0
+                    )}
+                    %
+                  </strong>
+                </span>
+                <span
+                  className="sidebar-update-progress__track"
+                  role="progressbar"
+                  aria-label={tr('更新下载进度', 'Update download progress', '更新下載進度')}
+                  aria-valuemin={0}
+                  aria-valuemax={100}
+                  aria-valuenow={Math.round(
+                    updateState.phase === 'downloaded' ? 100 : updateState.percent ?? 0
+                  )}
+                >
+                  <span
+                    style={{
+                      width: `${Math.max(
+                        0,
+                        Math.min(
+                          100,
+                          updateState.phase === 'downloaded'
+                            ? 100
+                            : updateState.percent ?? 0
+                        )
+                      )}%`
+                    }}
+                  />
+                </span>
+              </button>
+            )}
           <div className="sidebar-actions">
             <button
               type="button"
@@ -3753,7 +3818,9 @@ export function LibraryScreen({
         <div
           className={`library-content-scroll${
             isAccountCollectionView ? ' library-content-scroll--accounts' : ''
-          }${isLogView ? ' library-content-scroll--logs' : ''}`}
+          }${isLogView ? ' library-content-scroll--logs' : ''}${
+            view === 'settings' ? ' library-content-scroll--settings' : ''
+          }`}
           onContextMenu={isAccountCollectionView ? openPageAccountMenu : undefined}
         >
           {isAccountCollectionView && (
@@ -4676,24 +4743,18 @@ export function LibraryScreen({
                     )}
                   </span>
                   <div className="account-pagination__controls">
-                    <label className="account-pagination__size">
-                      <span>{tr('每页条数', 'Rows per page', '每頁筆數')}</span>
-                      <select
-                        aria-label={tr('账号每页条数', 'Accounts per page', '帳號每頁筆數')}
-                        value={accountPageSize}
-                        onChange={(event) =>
-                          setAccountPageSize(
-                            Number(event.target.value) as AccountPageSize
-                          )
-                        }
-                      >
-                        {ACCOUNT_PAGE_SIZES.map((size) => (
-                          <option key={size} value={size}>
-                            {tr(`${size} 条`, `${size} rows`, `${size} 筆`)}
-                          </option>
-                        ))}
-                      </select>
-                    </label>
+                    <PageSizePicker
+                      ariaLabel={tr(
+                        '账号每页条数',
+                        'Accounts per page',
+                        '帳號每頁筆數'
+                      )}
+                      value={accountPageSize}
+                      options={ACCOUNT_PAGE_SIZES}
+                      onChange={(nextPageSize) =>
+                        setAccountPageSize(nextPageSize as AccountPageSize)
+                      }
+                    />
                     <div className="account-pagination__nav">
                       <button
                         type="button"

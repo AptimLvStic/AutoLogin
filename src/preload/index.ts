@@ -34,20 +34,28 @@ const api: AutologinApi = {
       invoke('vault:change-password', { currentPassword, nextPassword })
   },
   sites: {
-    list: () => invoke('sites:list'),
+    list: (tabId) => invoke('sites:list', tabId),
     save: (input: SiteInput) => invoke('sites:save', input),
     delete: (siteId) => invoke('sites:delete', siteId),
     fetchIcon: (url) => invoke('sites:fetch-icon', { url })
   },
+  tabs: {
+    list: () => invoke('tabs:list'),
+    create: (input) => invoke('tabs:create', input),
+    update: (tabId, input) => invoke('tabs:update', tabId, input),
+    delete: (tabId) => invoke('tabs:delete', tabId)
+  },
   groups: {
-    list: () => invoke('groups:list'),
+    list: (tabId) => invoke('groups:list', tabId),
     create: (input) => invoke('groups:create', input),
     move: (input) => invoke('groups:move', input),
     listFavorites: () => invoke('groups:list-favorites'),
     setFavorite: (groupName, favorite) =>
       invoke('groups:set-favorite', { groupName, favorite }),
-    rename: (fromName, toName) => invoke('groups:rename', { fromName, toName }),
-    delete: (groupName) => invoke('groups:delete', { groupName })
+    rename: (fromName, toName, tabId) =>
+      invoke('groups:rename', { fromName, toName, tabId }),
+    delete: (groupName, tabId) =>
+      invoke('groups:delete', { groupName, tabId })
   },
   accounts: {
     list: () => invoke('accounts:list'),
@@ -55,11 +63,18 @@ const api: AutologinApi = {
     update: (accountId, patch: AccountUpdateInput) =>
       invoke('accounts:update', accountId, patch),
     setStrategyBatch: (input) => invoke('accounts:set-strategy-batch', input),
+    setIconBatch: (input) => invoke('accounts:set-icon-batch', input),
+    fetchIconsBatch: (accountIds) => invoke('accounts:fetch-icons-batch', accountIds),
     duplicate: (accountIds) => invoke('accounts:duplicate', accountIds),
     delete: (accountId) => invoke('accounts:delete', accountId),
     deleteMany: (accountIds) => invoke('accounts:delete-many', accountIds),
-    listDeleted: () => invoke('accounts:list-deleted'),
+    listDeleted: (tabId) => invoke('accounts:list-deleted', tabId),
     restore: (accountId) => invoke('accounts:restore', accountId),
+    restoreMany: (accountIds) => invoke('accounts:restore-many', accountIds),
+    purge: (accountId) => invoke('accounts:purge', accountId),
+    purgeMany: (accountIds) => invoke('accounts:purge-many', accountIds),
+    moveToGroup: (input) => invoke('accounts:move-to-group', input),
+    reorder: (input) => invoke('accounts:reorder', input),
     reveal: (accountId) => invoke('accounts:reveal', accountId),
     copyUsername: (accountId) => invoke('accounts:copy-username', accountId),
     copy: (accountId) => invoke('accounts:copy', accountId),
@@ -72,6 +87,7 @@ const api: AutologinApi = {
   login: {
     start: (input: LoginStartInput) => invoke('login:start', input),
     startBatch: (accountIds) => invoke('login:start-batch', accountIds),
+    cancelBatch: () => invoke('login:cancel-batch'),
     getBatchState: () => invoke('login:get-batch-state'),
     close: () => invoke('login:close'),
     retry: () => invoke('login:retry'),
@@ -107,6 +123,8 @@ const api: AutologinApi = {
     listAppLogs: (limit) => invoke('app:list-app-logs', limit),
     deleteAppLogs: (ids) => invoke('app:delete-app-logs', ids),
     clearAppLogs: () => invoke('app:clear-app-logs'),
+    listAccessLogs: (query) => invoke('app:list-access-logs', query),
+    deleteAccessLogs: (ids) => invoke('app:delete-access-logs', ids),
     restart: () => invoke('app:restart'),
     reportActivity: () => ipcRenderer.send('app:activity'),
     clearAllData: () => invoke('app:clear-all-data'),
@@ -116,13 +134,19 @@ const api: AutologinApi = {
     testProxy: (settings) => invoke('network:test-proxy', settings)
   },
   data: {
-    exportVault: () => invoke('data:export-vault'),
+    exportTab: (input) => invoke('data:export-vault', input),
     exportCsvTemplate: () => invoke('data:export-csv-template'),
     importCsv: () => invoke('data:import-csv'),
     chooseKdbx: () => invoke('data:choose-kdbx'),
     importKdbx: (input) => invoke('data:import-kdbx', input),
+    chooseAutologin: () => invoke('data:choose-autologin'),
+    importAutologin: (input) => invoke('data:import-autologin', input),
+    importBookmarks: () => invoke('data:import-bookmarks'),
     listBackups: () => invoke('data:list-backups'),
     restoreBackup: (backupId) => invoke('data:restore-backup', backupId)
+  },
+  bookmarks: {
+    visit: (accountId) => invoke('bookmarks:visit', accountId)
   },
   windowControls: {
     updateTheme: (theme) => invoke('window:update-theme', theme)

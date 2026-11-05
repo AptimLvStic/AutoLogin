@@ -11,6 +11,7 @@ import {
 import {
   configureKdbxArgon2,
   mergeImportedLogins,
+  parseBookmarksImport,
   parseCsvImport,
   parseKdbxImport
 } from '../../src/main/data-transfer'
@@ -34,6 +35,17 @@ function createDirectory(): string {
 function emptyVault(): VaultData {
   return {
     schemaVersion: 1,
+    tabs: [
+      {
+        id: 'local',
+        name: '本地账号',
+        color: '#5C6BFF',
+        source: 'local',
+        hidden: false,
+        createdAt: '1970-01-01T00:00:00.000Z',
+        updatedAt: '1970-01-01T00:00:00.000Z'
+      }
+    ],
     sites: [],
     accounts: [],
     groupDefinitions: [],
@@ -116,6 +128,37 @@ describe('data transfer', () => {
       siteName: '中文站点',
       siteGroup: '工作',
       username: 'user@example.com'
+    })
+  })
+
+  it('imports browser bookmark folders and ignores unsafe URLs', async () => {
+    const directory = createDirectory()
+    const path = join(directory, 'bookmarks.html')
+    writeFileSync(
+      path,
+      `<!DOCTYPE NETSCAPE-Bookmark-file-1>
+<DL><p>
+  <DT><H3>工作</H3>
+  <DL><p>
+    <DT><H3>客户</H3>
+    <DL><p>
+      <DT><A HREF="https://example.com/login?from=bookmark">示例 &amp; 站点</A>
+    </DL><p>
+    <DT><A HREF="javascript:alert(1)">危险链接</A>
+  </DL><p>
+</DL><p>`,
+      'utf8'
+    )
+
+    const parsed = await parseBookmarksImport(path)
+    expect(parsed.skipped).toBe(1)
+    expect(parsed.candidates).toHaveLength(1)
+    expect(parsed.candidates[0]).toMatchObject({
+      siteName: '示例 & 站点',
+      startUrl: 'https://example.com/login?from=bookmark',
+      siteGroup: '工作 / 客户',
+      username: '',
+      password: ''
     })
   })
 

@@ -35,10 +35,13 @@ export default function App(): React.JSX.Element {
   const [accounts, setAccounts] = useState<AccountWithSite[]>([])
   const [sites, setSites] = useState<Site[]>([])
   const [settings, setSettings] = useState<AppSettings>(DEFAULT_SETTINGS)
-  const [appVersion, setAppVersion] = useState('0.8.7')
+  const [appVersion, setAppVersion] = useState('0.9.1')
   const [loginTarget, setLoginTarget] = useState<LoginTarget | null>(null)
   const [batchState, setBatchState] = useState<LoginBatchState | null>(null)
   const [updateState, setUpdateState] = useState<AppUpdateState | null>(null)
+  const [systemPrefersDark, setSystemPrefersDark] = useState(() =>
+    window.matchMedia('(prefers-color-scheme: dark)').matches
+  )
   const [dismissedUpdateVersion, setDismissedUpdateVersion] = useState<string | null>(null)
   const [toast, setToast] = useState<ToastState | null>(null)
   const [resetOpen, setResetOpen] = useState(false)
@@ -130,14 +133,30 @@ export default function App(): React.JSX.Element {
   }, [])
 
   useEffect(() => {
+    const media = window.matchMedia('(prefers-color-scheme: dark)')
+    const updateSystemTheme = (event: MediaQueryListEvent): void => {
+      setSystemPrefersDark(event.matches)
+    }
+    setSystemPrefersDark(media.matches)
+    media.addEventListener('change', updateSystemTheme)
+    return () => media.removeEventListener('change', updateSystemTheme)
+  }, [])
+
+  useEffect(() => {
+    const effectiveColorMode =
+      settings.colorMode === 'system'
+        ? systemPrefersDark
+          ? 'dark'
+          : 'light'
+        : settings.colorMode
     const colors = resolveThemeColors(
       settings.themePreset,
-      settings.colorMode,
+      effectiveColorMode,
       settings.customTheme
     )
     const root = document.documentElement.style
     root.setProperty('--font-scale', String(settings.fontSizeScale / 100))
-    const isDark = settings.colorMode === 'dark'
+    const isDark = effectiveColorMode === 'dark'
     const isMagpie = settings.themePreset === 'magpie'
     const sidebarBackground = isDark
       ? isMagpie
@@ -175,7 +194,7 @@ export default function App(): React.JSX.Element {
         : '0 1px 2px rgba(31, 35, 40, 0.04), 0 8px 24px rgba(31, 35, 40, 0.035)'
     )
     root.setProperty('--content-divider', isDark ? 'rgba(255, 255, 255, 0.08)' : '#E9EBEF')
-    root.setProperty('--accent-strong', `color-mix(in srgb, ${colors.accent} 82%, ${settings.colorMode === 'dark' ? 'white' : 'black'})`)
+    root.setProperty('--accent-strong', `color-mix(in srgb, ${colors.accent} 82%, ${effectiveColorMode === 'dark' ? 'white' : 'black'})`)
     root.setProperty('--accent-soft', `color-mix(in srgb, ${colors.accent} 16%, ${colors.surface})`)
     root.setProperty('--accent-pale', `color-mix(in srgb, ${colors.accent} 8%, ${colors.surface})`)
     root.setProperty('--accent-contrast', isDark && isMagpie ? '#15161A' : '#FFFFFF')
@@ -189,9 +208,9 @@ export default function App(): React.JSX.Element {
     )
     root.setProperty('--cream', isMagpie ? '#F5F5FC' : '#F8F1E4')
     root.setProperty('--focus-ring', `color-mix(in srgb, ${colors.accent} 72%, transparent)`)
-    document.documentElement.dataset.colorMode = settings.colorMode
+    document.documentElement.dataset.colorMode = effectiveColorMode
     document.documentElement.dataset.themePreset = settings.themePreset
-    document.documentElement.style.colorScheme = settings.colorMode
+    document.documentElement.style.colorScheme = effectiveColorMode
     document.documentElement.lang = settings.language
     void window.autologin.windowControls
       .updateTheme({
@@ -205,7 +224,8 @@ export default function App(): React.JSX.Element {
     settings.customTheme,
     settings.fontSizeScale,
     settings.language,
-    settings.themePreset
+    settings.themePreset,
+    systemPrefersDark
   ])
 
   useEffect(() => {
@@ -323,6 +343,20 @@ export default function App(): React.JSX.Element {
     }
   }
 
+  async function cancelBatch(): Promise<void> {
+    try {
+      setBatchState(await window.autologin.login.cancelBatch())
+      notify('info', translate(settings.language, '已中断批量登录', 'Batch sign-in canceled', '已中斷批次登入'))
+    } catch (error) {
+      notify(
+        'error',
+        error instanceof Error
+          ? error.message
+          : translate(settings.language, '中断批量登录失败', 'Could not cancel batch sign-in', '中斷批次登入失敗')
+      )
+    }
+  }
+
   async function downloadUpdate(): Promise<void> {
     try {
       setUpdateState(await window.autologin.app.downloadUpdate())
@@ -430,6 +464,7 @@ export default function App(): React.JSX.Element {
           onRefresh={loadData}
           onLock={lockVault}
           onStartBatch={startBatch}
+          onCancelBatch={cancelBatch}
           onRecord={openRecording}
           onDownloadUpdate={downloadUpdate}
           onCancelUpdate={cancelUpdate}

@@ -1,8 +1,10 @@
 import { describe, expect, it } from 'vitest'
 import {
+  accountBatchIconInputSchema,
   accountBatchStrategyInputSchema,
   accountDeleteManyInputSchema,
   accountDuplicateInputSchema,
+  accountIdsSchema,
   accountCreateInputSchema,
   appSettingsPatchSchema,
   appSettingsSchema,
@@ -34,7 +36,7 @@ describe('shared input schemas', () => {
     ).toBe(false)
   })
 
-  it('requires a meaningful master password and account password', () => {
+  it('requires a meaningful master password and delegates credential checks to the target tab', () => {
     expect(masterPasswordSchema.safeParse('short').success).toBe(false)
     expect(masterPasswordSchema.safeParse('long enough password').success).toBe(true)
     expect(
@@ -44,7 +46,15 @@ describe('shared input schemas', () => {
         username: 'user',
         password: ''
       }).success
-    ).toBe(false)
+    ).toBe(true)
+    expect(
+      accountCreateInputSchema.safeParse({
+        siteId: 'site-1',
+        label: 'Main',
+        username: '',
+        password: ''
+      }).success
+    ).toBe(true)
   })
 
   it('fills new appearance defaults when unlocking a v0.2.1 settings object', () => {
@@ -63,21 +73,25 @@ describe('shared input schemas', () => {
       },
       interfaceScale: 100,
       fontSizeScale: 100,
+      accountCopyShortcutEnabled: false,
+      accountCopyShortcut: 'Ctrl+C',
       proxy: {
         mode: 'custom',
-        enabled: false,
+        enabled: true,
         protocol: 'http',
         host: '',
         port: 8080,
         bypassList: 'localhost, 127.0.0.1, ::1',
         testUrl: 'https://www.google.com/'
       },
-      groupOrder: []
+      groupOrder: [],
+      groupOrders: {}
     })
   })
 
   it('accepts partial settings updates and rejects invalid scale values', () => {
     expect(appSettingsPatchSchema.safeParse({ interfaceScale: 115 }).success).toBe(true)
+    expect(appSettingsPatchSchema.safeParse({ colorMode: 'system' }).success).toBe(true)
     for (const fontSizeScale of [80, 100, 125, 150]) {
       expect(appSettingsPatchSchema.safeParse({ fontSizeScale }).success).toBe(true)
     }
@@ -173,10 +187,27 @@ describe('shared input schemas', () => {
         loginStrategy: 'auto'
       }).success
     ).toBe(false)
+    expect(
+      accountBatchIconInputSchema.safeParse({
+        accountIds: ['account-1', 'account-2'],
+        icon: 'data:image/png;base64,iVBORw0KGgo='
+      }).success
+    ).toBe(true)
+    expect(
+      accountBatchIconInputSchema.safeParse({
+        accountIds: ['account-1'],
+        icon: 'file:///tmp/logo.png'
+      }).success
+    ).toBe(false)
     expect(accountDuplicateInputSchema.safeParse(['account-1', 'account-2']).success).toBe(true)
     expect(accountDuplicateInputSchema.safeParse([]).success).toBe(false)
     expect(accountDeleteManyInputSchema.safeParse(['account-1', 'account-2']).success).toBe(true)
     expect(accountDeleteManyInputSchema.safeParse([]).success).toBe(false)
+    expect(
+      accountIdsSchema.safeParse(
+        Array.from({ length: 200 }, (_, index) => `account-${index + 1}`)
+      ).success
+    ).toBe(true)
   })
 
   it('accepts a persisted custom account group order', () => {

@@ -4,7 +4,7 @@ export type AutoLockMinutes = (typeof AUTO_LOCK_OPTIONS)[number]
 export const THEME_PRESETS = ['magpie', 'warm', 'sage', 'ocean', 'rose'] as const
 export type ThemePreset = (typeof THEME_PRESETS)[number] | 'custom'
 
-export const COLOR_MODES = ['light', 'dark'] as const
+export const COLOR_MODES = ['light', 'dark', 'system'] as const
 export type ColorMode = (typeof COLOR_MODES)[number]
 
 export const APP_LANGUAGES = ['zh-CN', 'en', 'zh-TW'] as const
@@ -29,6 +29,46 @@ export const GROUP_MAX_DEPTH = 3
 export const TRASH_RETENTION_OPTIONS = [3, 7, 15, 30] as const
 export type TrashRetentionDays = (typeof TRASH_RETENTION_OPTIONS)[number]
 export const DEFAULT_TRASH_RETENTION_DAYS: TrashRetentionDays = 7
+
+export const ACCOUNT_TAB_SOURCES = [
+  'local',
+  'csv',
+  'kdbx',
+  'bookmarks',
+  'autologin'
+] as const
+export type AccountTabSource = (typeof ACCOUNT_TAB_SOURCES)[number]
+export const DEFAULT_ACCOUNT_TAB_ID = 'local'
+export const ACCOUNT_TAB_COLORS = [
+  '#5C6BFF',
+  '#0E7567',
+  '#D97706',
+  '#D95757',
+  '#7C5CE6',
+  '#2F80ED',
+  '#7A828D'
+] as const
+
+export interface AccountTab {
+  id: string
+  name: string
+  color: string
+  source: AccountTabSource
+  hidden: boolean
+  createdAt: string
+  updatedAt: string
+}
+
+export interface AccountTabCreateInput {
+  name?: string
+  color?: string
+  source?: 'local' | 'bookmarks'
+}
+
+export interface AccountTabUpdateInput {
+  name?: string
+  color?: string
+}
 
 export interface ProxySettings {
   mode: ProxyMode
@@ -99,8 +139,11 @@ export interface AppSettings {
   customTheme: ThemeColors
   interfaceScale: number
   fontSizeScale: number
+  accountCopyShortcutEnabled: boolean
+  accountCopyShortcut: string
   proxy: ProxySettings
   groupOrder: string[]
+  groupOrders: Record<string, string[]>
 }
 
 export type AppSettingsPatch = Partial<AppSettings>
@@ -152,6 +195,33 @@ export interface AppLogClearResult {
 }
 
 export interface AppLogDeleteResult {
+  deleted: number
+}
+
+export type AccessLogStatus = 'success' | 'error'
+
+export interface AccessLogEntry {
+  id: string
+  timestamp: string
+  accountId: string
+  siteId: string
+  accountLabel: string
+  siteName: string
+  groupName: string
+  url: string
+  status: AccessLogStatus
+  reason: string
+}
+
+export interface AccessLogQuery {
+  date?: string
+  siteId?: string
+  siteName?: string
+  groupName?: string
+  status?: AccessLogStatus
+}
+
+export interface AccessLogDeleteResult {
   deleted: number
 }
 
@@ -214,6 +284,7 @@ export interface AccountRecipe {
 
 export interface Site {
   id: string
+  tabId: string
   name: string
   startUrl: string
   allowedOrigins: string[]
@@ -227,6 +298,7 @@ export interface Site {
 
 export interface Account {
   id: string
+  tabId: string
   siteId: string
   label: string
   username: string
@@ -236,6 +308,7 @@ export interface Account {
   recipes?: AccountRecipe[]
   activeRecipeId?: string
   lastUsedAt?: string
+  sortOrder?: number
   createdAt: string
   updatedAt: string
 }
@@ -249,6 +322,7 @@ export interface AccountWithSite extends Account {
 }
 
 export interface GroupDefinition {
+  tabId: string
   path: string
   name: string
   createdAt: string
@@ -256,11 +330,13 @@ export interface GroupDefinition {
 }
 
 export interface GroupCreateInput {
+  tabId?: string
   parentPath?: string
   name: string
 }
 
 export interface GroupMoveInput {
+  tabId?: string
   fromPath: string
   parentPath?: string
 }
@@ -273,16 +349,21 @@ export interface GroupMoveResult {
 export interface DeletedAccountRecord {
   account: StoredAccount
   site: Site
+  tabId: string
   deletedAt: string
 }
 
 export interface DeletedAccountWithSite extends Account {
   site: Site
+  tabId: string
+  tabName: string
+  source: AccountTabSource
   deletedAt: string
 }
 
 export interface VaultData {
   schemaVersion: 1
+  tabs: AccountTab[]
   sites: Site[]
   accounts: StoredAccount[]
   groupDefinitions: GroupDefinition[]
@@ -310,6 +391,7 @@ export interface LoginViewState {
 
 export interface SiteInput {
   id?: string
+  tabId?: string
   name: string
   startUrl: string
   allowedOrigins?: string[]
@@ -344,7 +426,30 @@ export interface AccountBatchStrategyInput {
   manualSelectors?: ManualLoginSelectors
 }
 
+export interface AccountBatchIconInput {
+  accountIds: string[]
+  icon: string
+}
+
+export interface AccountBatchIconFetchResult {
+  updatedAccounts: number
+  updatedSites: number
+  failedSites: string[]
+}
+
+export interface AccountMoveInput {
+  accountIds: string[]
+  groupPath?: string
+  tabId?: string
+}
+
+export interface AccountReorderInput {
+  accountIds: string[]
+  tabId?: string
+}
+
 export interface GroupRenameInput {
+  tabId?: string
   fromName: string
   toName: string
 }
@@ -362,6 +467,7 @@ export type LoginBatchItemStatus =
   | 'manual'
   | 'success'
   | 'failed'
+  | 'canceled'
 
 export interface LoginBatchItem {
   accountId: string
@@ -383,6 +489,7 @@ export interface LoginBatchState {
   success: number
   failed: number
   manual: number
+  canceled: number
   items: LoginBatchItem[]
   startedAt: string
   finishedAt?: string
@@ -429,8 +536,26 @@ export interface KdbxImportInput {
   password: string
 }
 
+export interface AutologinSelection {
+  token: string
+  fileName: string
+  size: number
+}
+
+export interface AutologinImportInput {
+  token: string
+  password: string
+}
+
+export interface DataExportInput {
+  tabId: string
+  password?: string
+}
+
 export interface DataImportResult {
-  source: 'csv' | 'kdbx'
+  source: 'csv' | 'kdbx' | 'bookmarks' | 'autologin'
+  tabId: string
+  tabName: string
   sitesCreated: number
   accountsCreated: number
   skipped: number
@@ -494,30 +619,43 @@ export interface AutologinApi {
     changePassword: (currentPassword: string, nextPassword: string) => Promise<void>
   }
   sites: {
-    list: () => Promise<Site[]>
+    list: (tabId?: string) => Promise<Site[]>
     save: (input: SiteInput) => Promise<Site>
     delete: (siteId: string) => Promise<void>
     fetchIcon: (url: string) => Promise<string>
   }
+  tabs: {
+    list: () => Promise<AccountTab[]>
+    create: (input?: AccountTabCreateInput) => Promise<AccountTab>
+    update: (tabId: string, input: AccountTabUpdateInput) => Promise<AccountTab>
+    delete: (tabId: string) => Promise<void>
+  }
   groups: {
-    list: () => Promise<GroupDefinition[]>
+    list: (tabId?: string) => Promise<GroupDefinition[]>
     create: (input: GroupCreateInput) => Promise<GroupDefinition>
     move: (input: GroupMoveInput) => Promise<GroupMoveResult>
     listFavorites: () => Promise<string[]>
     setFavorite: (groupName: string, favorite: boolean) => Promise<string[]>
-    rename: (fromName: string, toName: string) => Promise<void>
-    delete: (groupName: string) => Promise<number>
+    rename: (fromName: string, toName: string, tabId?: string) => Promise<void>
+    delete: (groupName: string, tabId?: string) => Promise<number>
   }
   accounts: {
     list: () => Promise<AccountWithSite[]>
     create: (input: AccountCreateInput) => Promise<AccountWithSite>
     update: (accountId: string, patch: AccountUpdateInput) => Promise<AccountWithSite>
     setStrategyBatch: (input: AccountBatchStrategyInput) => Promise<AccountWithSite[]>
+    setIconBatch: (input: AccountBatchIconInput) => Promise<AccountWithSite[]>
+    fetchIconsBatch: (accountIds: string[]) => Promise<AccountBatchIconFetchResult>
     duplicate: (accountIds: string[]) => Promise<AccountWithSite[]>
     delete: (accountId: string) => Promise<void>
     deleteMany: (accountIds: string[]) => Promise<AccountDeleteResult>
-    listDeleted: () => Promise<DeletedAccountWithSite[]>
+    listDeleted: (tabId?: string) => Promise<DeletedAccountWithSite[]>
     restore: (accountId: string) => Promise<AccountWithSite>
+    restoreMany: (accountIds: string[]) => Promise<AccountDeleteResult>
+    purge: (accountId: string) => Promise<void>
+    purgeMany: (accountIds: string[]) => Promise<AccountDeleteResult>
+    moveToGroup: (input: AccountMoveInput) => Promise<AccountWithSite[]>
+    reorder: (input: AccountReorderInput) => Promise<AccountWithSite[]>
     reveal: (accountId: string) => Promise<PasswordReveal>
     copyUsername: (accountId: string) => Promise<void>
     copy: (accountId: string) => Promise<void>
@@ -528,6 +666,7 @@ export interface AutologinApi {
   login: {
     start: (input: LoginStartInput) => Promise<LoginViewState>
     startBatch: (accountIds: string[]) => Promise<LoginBatchState>
+    cancelBatch: () => Promise<LoginBatchState>
     getBatchState: () => Promise<LoginBatchState | null>
     close: () => Promise<void>
     retry: () => Promise<void>
@@ -563,6 +702,8 @@ export interface AutologinApi {
     listAppLogs: (limit?: number) => Promise<AppLogEntry[]>
     deleteAppLogs: (ids: string[]) => Promise<AppLogDeleteResult>
     clearAppLogs: () => Promise<AppLogClearResult>
+    listAccessLogs: (query?: AccessLogQuery) => Promise<AccessLogEntry[]>
+    deleteAccessLogs: (ids: string[]) => Promise<AccessLogDeleteResult>
     restart: () => Promise<void>
     reportActivity: () => void
     clearAllData: () => Promise<void>
@@ -572,13 +713,19 @@ export interface AutologinApi {
     testProxy: (settings: ProxySettings) => Promise<ProxyTestResult>
   }
   data: {
-    exportVault: () => Promise<FileOperationResult>
+    exportTab: (input: DataExportInput) => Promise<FileOperationResult>
     exportCsvTemplate: () => Promise<FileOperationResult>
     importCsv: () => Promise<DataImportResult | null>
     chooseKdbx: () => Promise<KdbxSelection | null>
     importKdbx: (input: KdbxImportInput) => Promise<DataImportResult>
+    chooseAutologin: () => Promise<AutologinSelection | null>
+    importAutologin: (input: AutologinImportInput) => Promise<DataImportResult>
+    importBookmarks: () => Promise<DataImportResult | null>
     listBackups: () => Promise<BackupRecord[]>
     restoreBackup: (backupId: string) => Promise<void>
+  }
+  bookmarks: {
+    visit: (accountId: string) => Promise<AccessLogEntry>
   }
   windowControls: {
     updateTheme: (theme: {

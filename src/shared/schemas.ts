@@ -1,8 +1,11 @@
 import { z } from 'zod'
 import {
+  ACCOUNT_TAB_COLORS,
+  ACCOUNT_TAB_SOURCES,
   APP_LANGUAGES,
   AUTO_LOCK_OPTIONS,
   COLOR_MODES,
+  DEFAULT_ACCOUNT_TAB_ID,
   DEFAULT_PROXY_TEST_URL,
   FONT_SIZE_SCALE_OPTIONS,
   GROUP_NAME_MAX_LENGTH,
@@ -51,6 +54,29 @@ const groupNameSchema = z
   .regex(/^[\p{L}\p{N} _-]+$/u, '分组名称不能包含特殊字符')
 
 const groupPathSchema = z.string().trim().min(1).max(80)
+const tabIdSchema = idSchema.default(DEFAULT_ACCOUNT_TAB_ID)
+const tabNameSchema = z.string().trim().min(1, '标签页名称不能为空').max(40)
+const tabColorSchema = z.string().regex(/^#[0-9a-fA-F]{6}$/, '标签页颜色无效')
+
+const defaultLocalTab = {
+  id: DEFAULT_ACCOUNT_TAB_ID,
+  name: '本地账号',
+  color: ACCOUNT_TAB_COLORS[0],
+  source: 'local' as const,
+  hidden: false,
+  createdAt: '1970-01-01T00:00:00.000Z',
+  updatedAt: '1970-01-01T00:00:00.000Z'
+}
+
+export const accountTabSchema = z.object({
+  id: idSchema,
+  name: tabNameSchema,
+  color: tabColorSchema,
+  source: z.enum(ACCOUNT_TAB_SOURCES),
+  hidden: z.boolean().default(false),
+  createdAt: z.string(),
+  updatedAt: z.string()
+})
 
 const siteIconDataUrlSchema = z
   .string()
@@ -108,6 +134,7 @@ export const loginRecipeSchema = z.object({
 
 export const siteSchema = z.object({
   id: idSchema,
+  tabId: tabIdSchema,
   name: z.string().min(1).max(80),
   startUrl: httpUrl,
   allowedOrigins: z.array(originSchema).min(1),
@@ -142,6 +169,7 @@ export const manualLoginSelectorsSchema = z
 
 export const storedAccountSchema = z.object({
   id: idSchema,
+  tabId: tabIdSchema,
   siteId: idSchema,
   label: z.string().min(1).max(80),
   username: z.string().max(320),
@@ -152,6 +180,7 @@ export const storedAccountSchema = z.object({
   recipes: z.array(accountRecipeSchema).max(3).default([]),
   activeRecipeId: idSchema.optional(),
   lastUsedAt: z.string().optional(),
+  sortOrder: z.number().int().min(0).max(1_000_000).optional(),
   createdAt: z.string(),
   updatedAt: z.string()
 })
@@ -217,15 +246,10 @@ export const proxySettingsSchema = z
         }
       }, '测试 URL 必须是有效的 http/https 地址')
   })
-  .superRefine((value, context) => {
-    if (value.mode === 'custom' && value.enabled && !value.host) {
-      context.addIssue({ code: 'custom', path: ['host'], message: '请输入代理服务器地址' })
-    }
-  })
 
 const defaultProxySettings = {
   mode: 'custom' as const,
-  enabled: false,
+  enabled: true,
   protocol: 'http' as const,
   host: '',
   port: 8080,
@@ -251,8 +275,11 @@ export const appSettingsSchema = z.object({
   customTheme: themeColorsSchema.default(defaultThemeColors),
   interfaceScale: interfaceScaleSchema.default(100),
   fontSizeScale: fontSizeScaleSchema.default(100).catch(100),
+  accountCopyShortcutEnabled: z.boolean().default(false),
+  accountCopyShortcut: z.string().trim().min(1).max(40).default('Ctrl+C'),
   proxy: proxySettingsSchema.default(defaultProxySettings),
-  groupOrder: groupOrderSchema.default([])
+  groupOrder: groupOrderSchema.default([]),
+  groupOrders: z.record(z.string(), groupOrderSchema).default({})
 })
 
 export const appSettingsPatchSchema = z
@@ -267,8 +294,11 @@ export const appSettingsPatchSchema = z
     customTheme: themeColorsSchema.optional(),
     interfaceScale: interfaceScaleSchema.optional(),
     fontSizeScale: fontSizeScaleSchema.optional(),
+    accountCopyShortcutEnabled: z.boolean().optional(),
+    accountCopyShortcut: z.string().trim().min(1).max(40).optional(),
     proxy: proxySettingsSchema.optional(),
-    groupOrder: groupOrderSchema.optional()
+    groupOrder: groupOrderSchema.optional(),
+    groupOrders: z.record(z.string(), groupOrderSchema).optional()
   })
   .strict()
   .refine((value) => Object.keys(value).length > 0, {
@@ -277,11 +307,13 @@ export const appSettingsPatchSchema = z
 
 export const vaultDataSchema = z.object({
   schemaVersion: z.literal(1),
+  tabs: z.array(accountTabSchema).min(1).default([defaultLocalTab]),
   sites: z.array(siteSchema),
   accounts: z.array(storedAccountSchema),
   groupDefinitions: z
     .array(
       z.object({
+        tabId: tabIdSchema,
         path: groupPathSchema,
         name: z.string().trim().min(1).max(40),
         createdAt: z.string(),
@@ -295,6 +327,7 @@ export const vaultDataSchema = z.object({
       z.object({
         account: storedAccountSchema,
         site: siteSchema,
+        tabId: tabIdSchema,
         deletedAt: z.string()
       })
     )
@@ -308,6 +341,7 @@ export const masterPasswordSchema = z.string().min(10, '主密码至少需要 10
 
 export const siteInputSchema = z.object({
   id: idSchema.optional(),
+  tabId: tabIdSchema.optional(),
   name: z.string().trim().min(1, '请输入站点名称').max(80),
   startUrl: httpUrl,
   allowedOrigins: z.array(originSchema).optional(),
@@ -324,6 +358,7 @@ export const siteIconFetchInputSchema = z
 
 export const groupCreateInputSchema = z
   .object({
+    tabId: tabIdSchema.optional(),
     parentPath: groupPathSchema.optional(),
     name: groupNameSchema
   })
@@ -331,6 +366,7 @@ export const groupCreateInputSchema = z
 
 export const groupMoveInputSchema = z
   .object({
+    tabId: tabIdSchema.optional(),
     fromPath: groupPathSchema,
     parentPath: groupPathSchema.optional()
   })
@@ -339,8 +375,10 @@ export const groupMoveInputSchema = z
 export const accountCreateInputSchema = z.object({
   siteId: idSchema,
   label: z.string().trim().min(1, '请输入账号名称').max(80),
-  username: z.string().trim().min(1, '请输入用户名').max(320),
-  password: z.string().min(1, '请输入密码').max(2048),
+  // Bookmarks intentionally store no credentials. The main process checks
+  // non-empty credentials when the target tab is a regular account tab.
+  username: z.string().trim().max(320),
+  password: z.string().max(2048),
   favorite: z.boolean().optional(),
   loginStrategy: z.enum(LOGIN_STRATEGIES).optional(),
   manualSelectors: manualLoginSelectorsSchema.optional()
@@ -361,7 +399,7 @@ export const accountBatchStrategyInputSchema = z
     accountIds: z
       .array(idSchema)
       .min(1)
-      .max(100)
+      .max(500)
       .refine((ids) => new Set(ids).size === ids.length, '账号标识不能重复'),
     loginStrategy: z.enum(LOGIN_STRATEGIES),
     manualSelectors: manualLoginSelectorsSchema.optional()
@@ -371,18 +409,61 @@ export const accountBatchStrategyInputSchema = z
 export const accountIdsSchema = z
   .array(idSchema)
   .min(1)
-  .max(100)
+  .max(500)
   .refine((ids) => new Set(ids).size === ids.length, '账号标识不能重复')
+
+export const accountBatchIconFetchInputSchema = accountIdsSchema
+
+export const accountBatchIconInputSchema = z
+  .object({
+    accountIds: accountIdsSchema,
+    icon: siteIconDataUrlSchema
+  })
+  .strict()
 
 export const accountDuplicateInputSchema = accountIdsSchema
 export const accountDeleteManyInputSchema = accountIdsSchema
+
+export const accountReorderInputSchema = z
+  .object({
+    accountIds: accountIdsSchema,
+    tabId: tabIdSchema.optional()
+  })
+  .strict()
+
+export const accountMoveInputSchema = z
+  .object({
+    accountIds: accountIdsSchema,
+    groupPath: groupPathSchema.optional(),
+    tabId: tabIdSchema.optional()
+  })
+  .strict()
+
+export const accountTabCreateInputSchema = z
+  .object({
+    name: tabNameSchema.optional(),
+    color: tabColorSchema.optional(),
+    source: z.enum(['local', 'bookmarks']).optional()
+  })
+  .strict()
+  .optional()
+
+export const accountTabUpdateInputSchema = z
+  .object({
+    name: tabNameSchema.optional(),
+    color: tabColorSchema.optional()
+  })
+  .strict()
+  .refine((value) => Object.keys(value).length > 0, {
+    message: '至少需要更新一项标签页属性'
+  })
 
 export const loginStartSchema = z.object({
   accountId: idSchema,
   mode: z.enum(['login', 'record'])
 })
 
-export const loginBatchStartSchema = z.array(idSchema).min(1).max(100)
+export const loginBatchStartSchema = z.array(idSchema).min(1).max(500)
 
 export const selectorTestInputSchema = z
   .object({
@@ -400,6 +481,7 @@ export const favoriteGroupInputSchema = z.object({
 
 export const groupRenameInputSchema = z
   .object({
+    tabId: tabIdSchema.optional(),
     fromName: groupPathSchema,
     toName: groupNameSchema
   })
@@ -407,6 +489,7 @@ export const groupRenameInputSchema = z
 
 export const groupDeleteInputSchema = z
   .object({
+    tabId: tabIdSchema.optional(),
     groupName: groupPathSchema
   })
   .strict()
@@ -441,11 +524,33 @@ export const appLogDeleteSchema = z
   .max(100)
   .refine((ids) => new Set(ids).size === ids.length, { message: '日志标识不能重复' })
 
+export const accessLogQuerySchema = z
+  .object({
+    date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+    siteId: idSchema.optional(),
+    siteName: z.string().trim().max(80).optional(),
+    groupName: z.string().trim().max(120).optional(),
+    status: z.enum(['success', 'error']).optional()
+  })
+  .strict()
+  .optional()
+
+export const accessLogDeleteSchema = appLogDeleteSchema
+
 export const proxyTestInputSchema = proxySettingsSchema
 
 export const kdbxSelectionImportSchema = z
   .object({
     token: z.string().regex(/^[a-f0-9-]{36}$/),
     password: z.string().min(1, '请输入 KeePassXC 数据库主密码').max(256)
+  })
+  .strict()
+
+export const autologinSelectionImportSchema = kdbxSelectionImportSchema
+
+export const dataExportInputSchema = z
+  .object({
+    tabId: idSchema,
+    password: masterPasswordSchema.optional()
   })
   .strict()

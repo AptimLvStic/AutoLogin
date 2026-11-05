@@ -16,7 +16,12 @@ import { createCipheriv, createDecipheriv } from 'node:crypto'
 import { argon2id } from 'hash-wasm'
 import { vaultDataSchema } from '@shared/schemas'
 import { DEFAULT_APP_SETTINGS } from '@shared/theme'
+import {
+  ACCOUNT_TAB_COLORS,
+  DEFAULT_ACCOUNT_TAB_ID
+} from '@shared/types'
 import type {
+  AccountTab,
   AppSettings,
   AppSettingsPatch,
   AutoLockMinutes,
@@ -74,6 +79,7 @@ export class VaultManager {
   private data: VaultData | null = null
   private lockTimer: NodeJS.Timeout | null = null
   private autoLockMinutes: AutoLockMinutes = 10
+  private saveListener: ((data: VaultData) => void) | null = null
 
   constructor(
     userDataPath: string,
@@ -107,6 +113,7 @@ export class VaultManager {
 
     const data: VaultData = {
       schemaVersion: 1,
+      tabs: [createLocalTab()],
       sites: [],
       accounts: [],
       groupDefinitions: [],
@@ -168,6 +175,10 @@ export class VaultManager {
     if (this.data) {
       this.scheduleLock()
     }
+  }
+
+  setSaveListener(listener: ((data: VaultData) => void) | null): void {
+    this.saveListener = listener
   }
 
   requireData(): VaultData {
@@ -235,6 +246,22 @@ export class VaultManager {
     copyFileSync(this.vaultPath, destination)
   }
 
+  async readEncryptedSnapshot(path: string, password: string): Promise<VaultData> {
+    try {
+      const decrypted = await this.decryptFile(path, password)
+      const data = structuredClone(decrypted.data)
+      decrypted.key.fill(0)
+      return data
+    } catch (error) {
+      throw normalizeUnlockError(error)
+    }
+  }
+
+  writeEncryptedSnapshot(destination: string, snapshot: VaultData): void {
+    this.requireData()
+    this.writeEnvelope(destination, snapshot)
+  }
+
   restoreEncryptedFrom(sourcePath: string): VaultStatus {
     this.readEnvelope(sourcePath)
     this.clearLockTimer()
@@ -281,10 +308,14 @@ export class VaultManager {
     if (this.key) {
       this.key.fill(0)
     }
-    this.data = decrypted.data
+    const normalized = normalizeVaultData(decrypted.data)
+    this.data = normalized
     this.key = decrypted.key
     this.salt = decrypted.salt
-    this.autoLockMinutes = decrypted.data.settings.autoLockMinutes
+    this.autoLockMinutes = normalized.settings.autoLockMinutes
+    if (JSON.stringify(normalized) !== JSON.stringify(decrypted.data)) {
+      this.writeEncrypted()
+    }
   }
 
   private async decryptFile(path: string, password: string): Promise<DecryptedEnvelope> {
@@ -330,8 +361,20 @@ export class VaultManager {
     if (!this.key || !this.salt || !this.data) {
       throw new VaultError('保险库已锁定', 'LOCKED')
     }
+    this.writeEnvelope(this.vaultPath, this.data, true)
+    this.saveListener?.(this.data)
+  }
 
-    const plaintext = Buffer.from(JSON.stringify(this.data), 'utf8')
+  private writeEnvelope(
+    destination: string,
+    snapshot: VaultData,
+    updateBackup = false
+  ): void {
+    if (!this.key || !this.salt) {
+      throw new VaultError('保险库已锁定', 'LOCKED')
+    }
+
+    const plaintext = Buffer.from(JSON.stringify(snapshot), 'utf8')
     const iv = randomBytes(IV_LENGTH)
     const cipher = createCipheriv('aes-256-gcm', this.key, iv)
     const ciphertext = Buffer.concat([cipher.update(plaintext), cipher.final()])
@@ -356,8 +399,8 @@ export class VaultManager {
       ciphertext: ciphertext.toString('base64')
     }
 
-    const tempPath = `${this.vaultPath}.${process.pid}.tmp`
-    mkdirSync(dirname(this.vaultPath), { recursive: true })
+    const tempPath = `${destination}.${process.pid}.tmp`
+    mkdirSync(dirname(destination), { recursive: true })
     const file = openSync(tempPath, 'w', 0o600)
     try {
       writeSync(file, JSON.stringify(envelope))
@@ -366,17 +409,17 @@ export class VaultManager {
       closeSync(file)
     }
 
-    if (existsSync(this.vaultPath)) {
+    if (updateBackup && existsSync(this.vaultPath)) {
       copyFileSync(this.vaultPath, this.backupPath)
     }
 
     try {
-      renameSync(tempPath, this.vaultPath)
+      renameSync(tempPath, destination)
     } catch (error) {
       const code = (error as NodeJS.ErrnoException).code
       if (code === 'EEXIST' || code === 'EPERM') {
-        rmSync(this.vaultPath, { force: true })
-        renameSync(tempPath, this.vaultPath)
+        rmSync(destination, { force: true })
+        renameSync(tempPath, destination)
       } else {
         rmSync(tempPath, { force: true })
         throw error
@@ -460,4 +503,75 @@ function isNonEmptyBase64(value: unknown): boolean {
 
 function isBase64(value: string): boolean {
   return value.length % 4 === 0 && /^[a-zA-Z0-9+/]*={0,2}$/.test(value)
+}
+
+function createLocalTab(): AccountTab {
+  const now = new Date().toISOString()
+  return {
+    id: DEFAULT_ACCOUNT_TAB_ID,
+    name: '本地账号',
+    color: ACCOUNT_TAB_COLORS[0],
+    source: 'local',
+    hidden: false,
+    createdAt: now,
+    updatedAt: now
+  }
+}
+
+function normalizeVaultData(input: VaultData): VaultData {
+  const data = structuredClone(input)
+  const tabsById = new Map<string, AccountTab>()
+  for (const tab of data.tabs) {
+    if (!tabsById.has(tab.id)) tabsById.set(tab.id, tab)
+  }
+  if (!tabsById.has(DEFAULT_ACCOUNT_TAB_ID)) {
+    const local = createLocalTab()
+    data.tabs.unshift(local)
+    tabsById.set(local.id, local)
+  }
+  data.tabs = [...tabsById.values()]
+
+  const normalizeTabId = (tabId: string | undefined): string =>
+    tabId && tabsById.has(tabId) ? tabId : DEFAULT_ACCOUNT_TAB_ID
+
+  for (const site of data.sites) {
+    site.tabId = normalizeTabId(site.tabId)
+  }
+  for (const account of data.accounts) {
+    account.tabId = normalizeTabId(account.tabId)
+    const site = data.sites.find((entry) => entry.id === account.siteId)
+    if (site) account.tabId = site.tabId
+  }
+  for (const group of data.groupDefinitions) {
+    group.tabId = normalizeTabId(group.tabId)
+  }
+  for (const record of data.deletedAccounts) {
+    record.tabId = normalizeTabId(record.tabId)
+    record.site.tabId = record.tabId
+    record.account.tabId = record.tabId
+  }
+
+  for (const tab of data.tabs) {
+    const tabAccounts = data.accounts.filter((account) => account.tabId === tab.id)
+    let nextSortOrder = Math.max(
+      -1,
+      ...tabAccounts.map((account) =>
+        typeof account.sortOrder === 'number' ? account.sortOrder : -1
+      )
+    )
+    for (const account of tabAccounts) {
+      if (typeof account.sortOrder !== 'number') {
+        nextSortOrder += 1
+        account.sortOrder = nextSortOrder
+      }
+    }
+  }
+
+  if (!data.settings.groupOrders[DEFAULT_ACCOUNT_TAB_ID] && data.settings.groupOrder.length > 0) {
+    data.settings.groupOrders[DEFAULT_ACCOUNT_TAB_ID] = [...data.settings.groupOrder]
+  }
+  if (data.settings.proxy.mode === 'custom') {
+    data.settings.proxy.enabled = true
+  }
+  return data
 }

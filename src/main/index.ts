@@ -6,15 +6,25 @@ import type { IpcMainEvent, IpcMainInvokeEvent } from 'electron'
 import { autoUpdater } from 'electron-updater'
 import { CancellationToken } from 'builder-util-runtime'
 import {
+  accountBatchIconFetchInputSchema,
+  accountBatchIconInputSchema,
   accountBatchStrategyInputSchema,
   accountCreateInputSchema,
   accountDeleteManyInputSchema,
   accountDuplicateInputSchema,
+  accountMoveInputSchema,
+  accountReorderInputSchema,
+  accountTabCreateInputSchema,
+  accountTabUpdateInputSchema,
   accountUpdateInputSchema,
+  accessLogDeleteSchema,
+  accessLogQuerySchema,
   appLogDeleteSchema,
   appLogQuerySchema,
   appSettingsPatchSchema,
+  autologinSelectionImportSchema,
   changePasswordSchema,
+  dataExportInputSchema,
   favoriteGroupInputSchema,
   groupCreateInputSchema,
   groupDeleteInputSchema,
@@ -32,13 +42,21 @@ import {
   siteInputSchema
 } from '@shared/schemas'
 import {
+  ACCOUNT_TAB_COLORS,
+  DEFAULT_ACCOUNT_TAB_ID,
   GROUP_MAX_DEPTH,
   GROUP_PATH_SEPARATOR,
   UNGROUPED_GROUP_KEY
 } from '@shared/types'
 import type {
+  AccountBatchIconFetchResult,
+  AccountBatchIconInput,
   AccountBatchStrategyInput,
   AccountDeleteResult,
+  AccountMoveInput,
+  AccountReorderInput,
+  AccountTab,
+  AccountTabUpdateInput,
   AccountWithSite,
   AboutInfo,
   AppUpdateState,
@@ -75,10 +93,20 @@ import type {
 import { BackupManager } from './backups'
 import { appendAppLog, clearAppLogs, deleteAppLogs, readAppLogs } from './app-log'
 import {
+  appendAccessLog,
+  deleteAccessLogs,
+  readAccessLogs
+} from './access-log'
+import {
   CSV_TEMPLATE,
+  mergeAutologinSnapshot,
   mergeImportedLogins,
+  parseBookmarksImport,
   parseCsvImport,
   parseKdbxImport,
+  serializeTabBookmarks,
+  serializeTabCsv,
+  serializeTabKdbx,
   type ParsedImport
 } from './data-transfer'
 import {
@@ -141,7 +169,13 @@ let updaterInitialized = false
 let startupUpdateCheckStarted = false
 let updateDownloadToken: CancellationToken | null = null
 let updateDownloadCancelled = false
+let lastLoggedBatchId: string | null = null
+let diagnosticsRegistered = false
 const pendingKdbxSelections = new Map<
+  string,
+  { path: string; fileName: string; size: number; expiresAt: number }
+>()
+const pendingAutologinSelections = new Map<
   string,
   { path: string; fileName: string; size: number; expiresAt: number }
 >()
@@ -182,6 +216,7 @@ app.whenReady().then(() => {
     category: 'startup',
     message: `AutoLogin v${app.getVersion()} 已启动`
   })
+  registerDiagnosticLogging()
   try {
     backupManager.createFromVault(vault.path)
   } catch {
@@ -246,7 +281,7 @@ function createWindow(): void {
       webSecurity: true,
       allowRunningInsecureContent: false,
       spellcheck: false,
-      devTools: !app.isPackaged
+      devTools: true
     }
   })
   mainWindow = window
@@ -268,8 +303,26 @@ function createWindow(): void {
   window.webContents.on('will-navigate', (event) => {
     event.preventDefault()
   })
-  window.webContents.on('before-input-event', () => {
+  window.webContents.on('before-input-event', (event, input) => {
     vault?.touch()
+    if (
+      input.type === 'keyDown' &&
+      !input.control &&
+      !input.alt &&
+      !input.meta &&
+      input.key === 'F12'
+    ) {
+      event.preventDefault()
+      window.webContents.toggleDevTools()
+    }
+  })
+  window.webContents.on('render-process-gone', (_event, details) => {
+    appendAppLog(dataDirectory, {
+      level: 'error',
+      category: 'error',
+      message: '渲染进程异常退出',
+      details: `原因：${details.reason}，退出码：${details.exitCode}`
+    })
   })
   window.webContents.setWindowOpenHandler(({ url }) => {
     if (isHttpUrl(url)) {
@@ -289,13 +342,88 @@ function createWindow(): void {
   registerIpc()
 }
 
+function registerDiagnosticLogging(): void {
+  if (diagnosticsRegistered) return
+  diagnosticsRegistered = true
+  process.on('uncaughtExceptionMonitor', (error) => {
+    appendAppLog(dataDirectory, {
+      level: 'error',
+      category: 'error',
+      message: '主进程未捕获异常',
+      details: sanitizeLogDetails(`${error.name}: ${error.message}`)
+    })
+  })
+  process.on('unhandledRejection', (reason) => {
+    appendAppLog(dataDirectory, {
+      level: 'error',
+      category: 'error',
+      message: '主进程未处理 Promise 拒绝',
+      details: sanitizeLogDetails(
+        reason instanceof Error ? `${reason.name}: ${reason.message}` : String(reason)
+      )
+    })
+  })
+}
+
 function initializeDataStores(): void {
   vault = new VaultManager(dataDirectory, () => {
     void closeLoginManagers()
     sendToRenderer('vault:locked')
   })
+  vault.setSaveListener((data) => syncTabSnapshotFiles(data))
   backupManager = new BackupManager(dataDirectory)
   sessionIndex = new SessionIndex(dataDirectory)
+}
+
+function syncTabSnapshotFiles(data: VaultData): void {
+  const tabsDirectory = join(dataDirectory, 'tabs')
+  try {
+    mkdirSync(tabsDirectory, { recursive: true })
+  } catch (error) {
+    appendAppLog(dataDirectory, {
+      level: 'error',
+      category: 'error',
+      message: '无法创建标签页数据库目录',
+      details: sanitizeLogDetails(error instanceof Error ? error.message : String(error))
+    })
+    return
+  }
+
+  for (const tab of data.tabs) {
+    try {
+      const snapshot: VaultData = {
+        ...structuredClone(data),
+        tabs: [structuredClone(tab)],
+        sites: structuredClone(data.sites.filter((site) => site.tabId === tab.id)),
+        accounts: structuredClone(
+          data.accounts.filter((account) => account.tabId === tab.id)
+        ),
+        groupDefinitions: structuredClone(
+          data.groupDefinitions.filter((group) => group.tabId === tab.id)
+        ),
+        deletedAccounts: structuredClone(
+          data.deletedAccounts.filter((record) => record.tabId === tab.id)
+        ),
+        favoriteGroups: [],
+        settings: {
+          ...structuredClone(data.settings),
+          groupOrder: [...getTabGroupOrder(data, tab.id)],
+          groupOrders: { [tab.id]: [...getTabGroupOrder(data, tab.id)] }
+        }
+      }
+      vault.writeEncryptedSnapshot(
+        join(tabsDirectory, `tab-${tab.id}.autologin`),
+        snapshot
+      )
+    } catch (error) {
+      appendAppLog(dataDirectory, {
+        level: 'error',
+        category: 'error',
+        message: `标签页数据库写入失败：${tab.name}`,
+        details: sanitizeLogDetails(error instanceof Error ? error.message : String(error))
+      })
+    }
+  }
 }
 
 function ensureLoginManagers(): void {
@@ -314,7 +442,21 @@ function ensureLoginManagers(): void {
       dataDirectory,
       allowDevelopmentOverrides ? process.env.AUTOLOGIN_BROWSER_EXECUTABLE : undefined,
       allowDevelopmentOverrides && process.env.AUTOLOGIN_BROWSER_HEADLESS === '1',
-      (state) => sendToRenderer('login:batch-state', state)
+      (state) => {
+        sendToRenderer('login:batch-state', state)
+        if (!state.active && state.finishedAt && lastLoggedBatchId !== state.batchId) {
+          lastLoggedBatchId = state.batchId
+          appendAppLog(dataDirectory, {
+            level: state.failed > 0 || state.canceled > 0 ? 'warning' : 'success',
+            category: 'login',
+            message:
+              state.canceled > 0
+                ? `批量登录已中断：成功 ${state.success}，失败 ${state.failed}，已取消 ${state.canceled}`
+                : `批量登录完成：成功 ${state.success}，失败 ${state.failed}，需人工处理 ${state.manual}`,
+            details: `批次 ${state.batchId}，共 ${state.total} 个账号`
+          })
+        }
+      }
     )
   }
 }
@@ -351,6 +493,7 @@ function registerIpc(): void {
     ensureLoginManagers()
     applyInterfaceScale(vault.getSettings().interfaceScale)
     await applySystemProxy(vault.getSettings().proxy)
+    syncTabSnapshotFiles(vault.requireData())
     return status
   })
   ipcMain.handle('vault:unlock', async (event, password: unknown) => {
@@ -369,6 +512,7 @@ function registerIpc(): void {
     ensureLoginManagers()
     applyInterfaceScale(vault.getSettings().interfaceScale)
     await applySystemProxy(vault.getSettings().proxy)
+    syncTabSnapshotFiles(vault.requireData())
     return status
   })
   ipcMain.handle('vault:lock', (event) => {
@@ -391,9 +535,39 @@ function registerIpc(): void {
     await vault.changePassword(parsed.data.currentPassword, parsed.data.nextPassword)
   })
 
-  ipcMain.handle('sites:list', (event) => {
+  ipcMain.handle('tabs:list', (event): AccountTab[] => {
     assertTrustedSender(event)
-    return structuredClone(vault.requireData().sites)
+    return structuredClone(vault.requireData().tabs)
+  })
+  ipcMain.handle('tabs:create', (event, payload: unknown): AccountTab => {
+    assertTrustedSender(event)
+    const parsed = accountTabCreateInputSchema.safeParse(payload)
+    if (!parsed.success) {
+      throw new Error(firstIssue(parsed.error))
+    }
+    return createAccountTab(parsed.data)
+  })
+  ipcMain.handle('tabs:update', (event, tabId: unknown, payload: unknown): AccountTab => {
+    assertTrustedSender(event)
+    const parsed = accountTabUpdateInputSchema.safeParse(payload)
+    if (!parsed.success) {
+      throw new Error(firstIssue(parsed.error))
+    }
+    return updateAccountTab(requireId(tabId), parsed.data)
+  })
+  ipcMain.handle('tabs:delete', async (event, tabId: unknown) => {
+    assertTrustedSender(event)
+    await deleteAccountTab(requireId(tabId))
+  })
+
+  ipcMain.handle('sites:list', (event, tabId: unknown) => {
+    assertTrustedSender(event)
+    const scopedTabId = requireOptionalTabId(tabId)
+    return structuredClone(
+      vault
+        .requireData()
+        .sites.filter((site) => !scopedTabId || site.tabId === scopedTabId)
+    )
   })
   ipcMain.handle('sites:fetch-icon', async (event, payload: unknown) => {
     assertTrustedSender(event)
@@ -409,7 +583,14 @@ function registerIpc(): void {
     if (!parsed.success) {
       throw new Error(firstIssue(parsed.error))
     }
-    return saveSite(parsed.data)
+    const site = saveSite(parsed.data)
+    appendAppLog(dataDirectory, {
+      level: 'success',
+      category: 'data',
+      message: `${parsed.data.id ? '站点已更新' : '站点已创建'}：${site.name}`,
+      details: safeLogUrl(site.startUrl)
+    })
+    return site
   })
   ipcMain.handle('sites:delete', (event, siteId: unknown) => {
     assertTrustedSender(event)
@@ -420,11 +601,16 @@ function registerIpc(): void {
     }
     data.sites = data.sites.filter((site) => site.id !== id)
     vault.save()
+    appendAppLog(dataDirectory, {
+      level: 'info',
+      category: 'data',
+      message: '站点已删除'
+    })
   })
 
-  ipcMain.handle('groups:list', (event): GroupDefinition[] => {
+  ipcMain.handle('groups:list', (event, tabId: unknown): GroupDefinition[] => {
     assertTrustedSender(event)
-    return listGroups()
+    return listGroups(requireOptionalTabId(tabId))
   })
   ipcMain.handle('groups:create', (event, payload: unknown): GroupDefinition => {
     assertTrustedSender(event)
@@ -432,7 +618,13 @@ function registerIpc(): void {
     if (!parsed.success) {
       throw new Error(firstIssue(parsed.error))
     }
-    return createGroup(parsed.data)
+    const group = createGroup(parsed.data)
+    appendAppLog(dataDirectory, {
+      level: 'success',
+      category: 'data',
+      message: `分组已创建：${group.path}`
+    })
+    return group
   })
   ipcMain.handle('groups:move', (event, payload: unknown): GroupMoveResult => {
     assertTrustedSender(event)
@@ -440,7 +632,13 @@ function registerIpc(): void {
     if (!parsed.success) {
       throw new Error(firstIssue(parsed.error))
     }
-    return moveGroup(parsed.data)
+    const result = moveGroup(parsed.data)
+    appendAppLog(dataDirectory, {
+      level: 'success',
+      category: 'data',
+      message: `分组已移动：${result.fromPath} → ${result.toPath}`
+    })
+    return result
   })
   ipcMain.handle('groups:list-favorites', (event) => {
     assertTrustedSender(event)
@@ -469,6 +667,11 @@ function registerIpc(): void {
       throw new Error(firstIssue(parsed.error))
     }
     renameGroup(parsed.data)
+    appendAppLog(dataDirectory, {
+      level: 'success',
+      category: 'data',
+      message: `分组已重命名：${parsed.data.fromName} → ${parsed.data.toName}`
+    })
   })
   ipcMain.handle('groups:delete', (event, payload: unknown) => {
     assertTrustedSender(event)
@@ -476,7 +679,14 @@ function registerIpc(): void {
     if (!parsed.success) {
       throw new Error(firstIssue(parsed.error))
     }
-    return deleteGroup(parsed.data.groupName)
+    const affected = deleteGroup(parsed.data.groupName, parsed.data.tabId)
+    appendAppLog(dataDirectory, {
+      level: 'success',
+      category: 'data',
+      message: `分组已删除：${parsed.data.groupName}`,
+      details: `${affected} 个站点已移至未分组`
+    })
+    return affected
   })
 
   ipcMain.handle('accounts:list', (event) => {
@@ -489,7 +699,14 @@ function registerIpc(): void {
     if (!parsed.success) {
       throw new Error(firstIssue(parsed.error))
     }
-    return createAccount(parsed.data)
+    const account = createAccount(parsed.data)
+    appendAppLog(dataDirectory, {
+      level: 'success',
+      category: 'data',
+      message: `账号已创建：${account.site.name}`,
+      details: `用户名：${safeLogValue(account.username)}`
+    })
+    return account
   })
   ipcMain.handle('accounts:update', (event, accountId: unknown, payload: unknown) => {
     assertTrustedSender(event)
@@ -498,7 +715,14 @@ function registerIpc(): void {
     if (!parsed.success) {
       throw new Error(firstIssue(parsed.error))
     }
-    return updateAccount(id, parsed.data)
+    const account = updateAccount(id, parsed.data)
+    appendAppLog(dataDirectory, {
+      level: 'success',
+      category: 'data',
+      message: `账号已更新：${account.site.name}`,
+      details: `用户名：${safeLogValue(account.username)}`
+    })
+    return account
   })
   ipcMain.handle('accounts:set-strategy-batch', (event, payload: unknown) => {
     assertTrustedSender(event)
@@ -506,7 +730,44 @@ function registerIpc(): void {
     if (!parsed.success) {
       throw new Error(firstIssue(parsed.error))
     }
-    return setAccountStrategyBatch(parsed.data)
+    const accounts = setAccountStrategyBatch(parsed.data)
+    appendAppLog(dataDirectory, {
+      level: 'success',
+      category: 'data',
+      message: `批量更新 ${accounts.length} 个账号的登录配置`
+    })
+    return accounts
+  })
+  ipcMain.handle('accounts:set-icon-batch', (event, payload: unknown) => {
+    assertTrustedSender(event)
+    const parsed = accountBatchIconInputSchema.safeParse(payload)
+    if (!parsed.success) {
+      throw new Error(firstIssue(parsed.error))
+    }
+    const accounts = setAccountIconBatch(parsed.data)
+    appendAppLog(dataDirectory, {
+      level: 'success',
+      category: 'data',
+      message: `批量更新 ${accounts.length} 个账号的 Logo`
+    })
+    return accounts
+  })
+  ipcMain.handle('accounts:fetch-icons-batch', async (event, payload: unknown) => {
+    assertTrustedSender(event)
+    const parsed = accountBatchIconFetchInputSchema.safeParse(payload)
+    if (!parsed.success) {
+      throw new Error(firstIssue(parsed.error))
+    }
+    const result = await fetchAccountIconsFromSites(parsed.data)
+    appendAppLog(dataDirectory, {
+      level: result.failedSites.length > 0 ? 'warning' : 'success',
+      category: 'data',
+      message: `批量获取站点图标：更新 ${result.updatedSites} 个站点、${result.updatedAccounts} 个账号`,
+      ...(result.failedSites.length > 0
+        ? { details: `未获取到图标：${result.failedSites.join('、')}` }
+        : {})
+    })
+    return result
   })
   ipcMain.handle('accounts:duplicate', (event, payload: unknown) => {
     assertTrustedSender(event)
@@ -514,7 +775,14 @@ function registerIpc(): void {
     if (!parsed.success) {
       throw new Error(firstIssue(parsed.error))
     }
-    return duplicateAccounts(parsed.data)
+    const accounts = duplicateAccounts(parsed.data)
+    appendAppLog(dataDirectory, {
+      level: 'success',
+      category: 'data',
+      message: `已复制 ${accounts.length} 个账号`,
+      details: accounts.map((account) => account.site.name).join('、')
+    })
+    return accounts
   })
   ipcMain.handle(
     'accounts:set-active-recipe',
@@ -529,6 +797,22 @@ function registerIpc(): void {
     assertTrustedSender(event)
     return deleteAccountRecipe(requireId(accountId), requireId(recipeId))
   })
+  ipcMain.handle('accounts:reorder', (event, payload: unknown) => {
+    assertTrustedSender(event)
+    const parsed = accountReorderInputSchema.safeParse(payload)
+    if (!parsed.success) {
+      throw new Error(firstIssue(parsed.error))
+    }
+    return reorderAccounts(parsed.data)
+  })
+  ipcMain.handle('accounts:move-to-group', (event, payload: unknown) => {
+    assertTrustedSender(event)
+    const parsed = accountMoveInputSchema.safeParse(payload)
+    if (!parsed.success) {
+      throw new Error(firstIssue(parsed.error))
+    }
+    return moveAccountsToGroup(parsed.data)
+  })
   ipcMain.handle('accounts:delete', async (event, accountId: unknown) => {
     assertTrustedSender(event)
     const id = requireId(accountId)
@@ -542,6 +826,11 @@ function registerIpc(): void {
     clearManagedSessionDirectories(dataDirectory, id)
     moveAccountsToTrash([id])
     sessionIndex.remove(id)
+    appendAppLog(dataDirectory, {
+      level: 'warning',
+      category: 'data',
+      message: '账号已移入回收站'
+    })
   })
   ipcMain.handle(
     'accounts:delete-many',
@@ -568,16 +857,71 @@ function registerIpc(): void {
       const deletedSet = new Set(existingIds)
       moveAccountsToTrash(existingIds)
       for (const id of existingIds) sessionIndex.remove(id)
+      appendAppLog(dataDirectory, {
+        level: 'warning',
+        category: 'data',
+        message: `已将 ${existingIds.length} 个账号移入回收站`
+      })
       return { deleted: existingIds.length }
     }
   )
-  ipcMain.handle('accounts:list-deleted', (event): DeletedAccountWithSite[] => {
+  ipcMain.handle('accounts:list-deleted', (event, tabId: unknown): DeletedAccountWithSite[] => {
     assertTrustedSender(event)
-    return listDeletedAccounts()
+    return listDeletedAccounts(requireOptionalTabId(tabId))
   })
   ipcMain.handle('accounts:restore', (event, accountId: unknown): AccountWithSite => {
     assertTrustedSender(event)
-    return restoreDeletedAccount(requireId(accountId))
+    const account = restoreDeletedAccount(requireId(accountId))
+    appendAppLog(dataDirectory, {
+      level: 'success',
+      category: 'data',
+      message: `账号已恢复：${account.site.name}`
+    })
+    return account
+  })
+  ipcMain.handle('accounts:restore-many', (event, payload: unknown): AccountDeleteResult => {
+    assertTrustedSender(event)
+    const parsed = accountDeleteManyInputSchema.safeParse(payload)
+    if (!parsed.success) {
+      throw new Error(firstIssue(parsed.error))
+    }
+    const restored = parsed.data.filter((accountId) => {
+      try {
+        restoreDeletedAccount(accountId)
+        return true
+      } catch {
+        return false
+      }
+    }).length
+    appendAppLog(dataDirectory, {
+      level: 'success',
+      category: 'data',
+      message: `已从回收站恢复 ${restored} 个账号`
+    })
+    return { deleted: restored }
+  })
+  ipcMain.handle('accounts:purge', (event, accountId: unknown) => {
+    assertTrustedSender(event)
+    purgeDeletedAccount(requireId(accountId))
+    appendAppLog(dataDirectory, {
+      level: 'warning',
+      category: 'data',
+      message: '账号已从回收站永久删除'
+    })
+  })
+  ipcMain.handle('accounts:purge-many', (event, payload: unknown): AccountDeleteResult => {
+    assertTrustedSender(event)
+    const parsed = accountDeleteManyInputSchema.safeParse(payload)
+    if (!parsed.success) {
+      throw new Error(firstIssue(parsed.error))
+    }
+    const deleted = purgeDeletedAccounts(parsed.data)
+    appendAppLog(dataDirectory, {
+      level: 'warning',
+      category: 'data',
+      message: `已从回收站永久删除 ${deleted} 个账号`
+    })
+    return { deleted }
   })
   ipcMain.handle('accounts:reveal', (event, accountId: unknown): PasswordReveal => {
     assertTrustedSender(event)
@@ -596,6 +940,11 @@ function registerIpc(): void {
       throw new Error('账号不存在')
     }
     await copySecret(account.password)
+    appendAppLog(dataDirectory, {
+      level: 'info',
+      category: 'data',
+      message: '账号密码已复制到剪贴板'
+    })
   })
   ipcMain.handle('accounts:copy-username', (event, accountId: unknown) => {
     assertTrustedSender(event)
@@ -605,6 +954,11 @@ function registerIpc(): void {
       throw new Error('账号不存在')
     }
     clipboard.writeText(account.username)
+    appendAppLog(dataDirectory, {
+      level: 'info',
+      category: 'data',
+      message: '账号用户名已复制到剪贴板'
+    })
   })
   ipcMain.handle('accounts:copy-url', (event, accountId: unknown) => {
     assertTrustedSender(event)
@@ -619,6 +973,53 @@ function registerIpc(): void {
       throw new Error('站点不存在')
     }
     clipboard.writeText(site.startUrl)
+    appendAppLog(dataDirectory, {
+      level: 'info',
+      category: 'data',
+      message: '站点 URL 已复制到剪贴板',
+      details: safeLogUrl(site.startUrl)
+    })
+  })
+  ipcMain.handle('bookmarks:visit', async (event, accountId: unknown) => {
+    assertTrustedSender(event)
+    const id = requireId(accountId)
+    const data = vault.requireData()
+    const account = data.accounts.find((entry) => entry.id === id)
+    const site = account
+      ? data.sites.find((entry) => entry.id === account.siteId)
+      : null
+    const tab = account
+      ? data.tabs.find((entry) => entry.id === account.tabId)
+      : null
+    if (!account || !site || tab?.source !== 'bookmarks') {
+      throw new Error('书签不存在')
+    }
+    let status: 'success' | 'error' = 'success'
+    let reason = '已在系统默认浏览器中打开'
+    try {
+      await openExternalUrl(site.startUrl)
+    } catch (error) {
+      status = 'error'
+      reason =
+        error instanceof Error ? error.message : '无法在系统默认浏览器中打开'
+    }
+    const entry = appendAccessLog(dataDirectory, {
+      accountId: account.id,
+      siteId: site.id,
+      accountLabel: account.label,
+      siteName: site.name,
+      groupName: site.group?.trim() || '未分组',
+      url: site.startUrl,
+      status,
+      reason
+    })
+    appendAppLog(dataDirectory, {
+      level: status === 'success' ? 'info' : 'error',
+      category: 'visit',
+      message: `书签访问${status === 'success' ? '成功' : '失败'}：${site.name}`,
+      details: safeLogUrl(site.startUrl)
+    })
+    return entry
   })
 
   ipcMain.handle('login:start', async (event, payload: unknown): Promise<LoginViewState> => {
@@ -653,11 +1054,24 @@ function registerIpc(): void {
     if (!batchManager) {
       throw new Error('批量登录尚未准备好')
     }
-    return batchManager.start(parsed.data)
+    const state = await batchManager.start(parsed.data)
+    appendAppLog(dataDirectory, {
+      level: 'info',
+      category: 'login',
+      message: `批量登录已启动，共 ${state.total} 个账号`
+    })
+    return state
   })
   ipcMain.handle('login:get-batch-state', (event) => {
     assertTrustedSender(event)
     return batchManager?.getState() ?? null
+  })
+  ipcMain.handle('login:cancel-batch', async (event) => {
+    assertTrustedSender(event)
+    if (!batchManager) {
+      throw new Error('没有可中断的批量登录任务')
+    }
+    return batchManager.cancel()
   })
   ipcMain.handle('login:close', async (event) => {
     assertTrustedSender(event)
@@ -717,6 +1131,9 @@ function registerIpc(): void {
     if (!parsed.success) {
       throw new Error(firstIssue(parsed.error))
     }
+    if (parsed.data.proxy) {
+      parsed.data.proxy.enabled = parsed.data.proxy.mode === 'custom'
+    }
     const settings = vault.updateSettings(parsed.data)
     if (parsed.data.trashRetentionDays) {
       purgeExpiredDeletedAccounts()
@@ -731,6 +1148,12 @@ function registerIpc(): void {
             : `网络代理配置已更新（${settings.proxy.enabled ? '自定义代理' : '直连'}）`
       })
     }
+    appendAppLog(dataDirectory, {
+      level: 'info',
+      category: 'settings',
+      message: '应用设置已更新',
+      details: Object.keys(parsed.data).join('、')
+    })
     applyInterfaceScale(settings.interfaceScale)
     await applySystemProxy(settings.proxy)
     return settings
@@ -753,23 +1176,92 @@ function registerIpc(): void {
     return result
   })
 
-  ipcMain.handle('data:export-vault', async (event): Promise<FileOperationResult> => {
+  ipcMain.handle('data:export-vault', async (event, payload: unknown): Promise<FileOperationResult> => {
     assertTrustedSender(event)
-    vault.requireData()
+    const parsed = dataExportInputSchema.safeParse(payload)
+    if (!parsed.success) {
+      throw new Error(firstIssue(parsed.error))
+    }
+    const data = vault.requireData()
+    const tab = data.tabs.find((entry) => entry.id === parsed.data.tabId)
+    if (!tab) {
+      throw new Error('导出标签页不存在')
+    }
     if (!mainWindow) {
       return { canceled: true }
     }
-    const defaultName = `AutoLogin-v${app.getVersion()}-${fileDateStamp()}.autologin`
+
+    const format =
+      tab.source === 'csv'
+        ? 'csv'
+        : tab.source === 'kdbx'
+          ? 'kdbx'
+          : tab.source === 'bookmarks'
+            ? 'html'
+            : 'autologin'
+    const filterNames: Record<typeof format, string> = {
+      autologin: 'AutoLogin 加密配置',
+      csv: 'CSV 账号文件',
+      kdbx: 'KeePass KDBX 数据库',
+      html: '浏览器书签 HTML'
+    }
+    const extensions: Record<typeof format, string> = {
+      autologin: 'autologin',
+      csv: 'csv',
+      kdbx: 'kdbx',
+      html: 'html'
+    }
+    const defaultName = `${safeFileBaseName(tab.name)}-v${app.getVersion()}-${fileDateStamp()}.${extensions[format]}`
     const selection = await dialog.showSaveDialog(mainWindow, {
-      title: '导出 AutoLogin 加密配置',
+      title:
+        format === 'autologin'
+          ? '导出 AutoLogin 加密配置'
+          : format === 'kdbx'
+            ? '导出 KDBX 数据库'
+            : format === 'csv'
+              ? '导出 CSV 账号'
+              : '导出浏览器书签',
       buttonLabel: '导出',
       defaultPath: join(app.getPath('documents'), defaultName),
-      filters: [{ name: 'AutoLogin 加密配置', extensions: ['autologin'] }]
+      filters: [{ name: filterNames[format], extensions: [extensions[format]] }]
     })
     if (selection.canceled || !selection.filePath) {
       return { canceled: true }
     }
-    vault.copyEncryptedTo(selection.filePath)
+
+    if (format === 'autologin') {
+      vault.copyEncryptedTo(selection.filePath)
+    } else if (format === 'csv') {
+      writeFileSync(selection.filePath, serializeTabCsv(data, tab.id), {
+        encoding: 'utf8',
+        mode: 0o600
+      })
+    } else if (format === 'kdbx') {
+      if (!parsed.data.password) {
+        throw new Error('导出 KDBX 数据库需要设置数据库主密码')
+      }
+      const buffer = await serializeTabKdbx(data, tab.id, parsed.data.password)
+      writeFileSync(selection.filePath, Buffer.from(buffer), { mode: 0o600 })
+    } else {
+      writeFileSync(selection.filePath, serializeTabBookmarks(data, tab.id), {
+        encoding: 'utf8',
+        mode: 0o600
+      })
+    }
+
+    appendAppLog(dataDirectory, {
+      level: 'success',
+      category: 'data',
+      message:
+        format === 'autologin'
+          ? '加密配置已导出'
+          : format === 'kdbx'
+            ? 'KDBX 数据库已导出'
+            : format === 'csv'
+              ? 'CSV 账号已导出'
+              : '浏览器书签已导出',
+      details: `${tab.name}；${basename(selection.filePath)}`
+    })
     return { canceled: false, fileName: basename(selection.filePath) }
   })
   ipcMain.handle('data:export-csv-template', async (event): Promise<FileOperationResult> => {
@@ -790,6 +1282,12 @@ function registerIpc(): void {
       encoding: 'utf8',
       mode: 0o600
     })
+    appendAppLog(dataDirectory, {
+      level: 'info',
+      category: 'data',
+      message: 'CSV 导入模板已保存',
+      details: basename(selection.filePath)
+    })
     return { canceled: false, fileName: basename(selection.filePath) }
   })
   ipcMain.handle('data:import-csv', async (event): Promise<DataImportResult | null> => {
@@ -806,7 +1304,9 @@ function registerIpc(): void {
       return null
     }
     const parsed = await parseCsvImport(path)
-    return applyDataImport(parsed, 'csv')
+    const result = applyDataImport(parsed, 'csv', basename(path))
+    appendImportLog(result, basename(path))
+    return result
   })
   ipcMain.handle('data:choose-kdbx', async (event): Promise<KdbxSelection | null> => {
     assertTrustedSender(event)
@@ -850,11 +1350,79 @@ function registerIpc(): void {
         throw new Error('KeePassXC 数据库选择已过期，请重新选择文件')
       }
       const imported = await parseKdbxImport(selection.path, parsed.data.password)
-      const result = applyDataImport(imported, 'kdbx')
+      const result = applyDataImport(imported, 'kdbx', selection.fileName)
       pendingKdbxSelections.delete(parsed.data.token)
+      appendImportLog(result, selection.fileName)
       return result
     }
   )
+  ipcMain.handle('data:choose-autologin', async (event) => {
+    assertTrustedSender(event)
+    if (!mainWindow) return null
+    cleanExpiredAutologinSelections()
+    const selection = await dialog.showOpenDialog(mainWindow, {
+      title: '选择 AutoLogin 加密配置',
+      buttonLabel: '选择配置',
+      properties: ['openFile'],
+      filters: [{ name: 'AutoLogin 加密配置', extensions: ['autologin'] }]
+    })
+    const path = selection.filePaths[0]
+    if (selection.canceled || !path) {
+      return null
+    }
+    if (!path.toLocaleLowerCase().endsWith('.autologin')) {
+      throw new Error('请选择 .autologin 格式的 AutoLogin 配置文件')
+    }
+    const stats = statSync(path)
+    const token = randomUUID()
+    const fileName = basename(path)
+    pendingAutologinSelections.set(token, {
+      path,
+      fileName,
+      size: stats.size,
+      expiresAt: Date.now() + 10 * 60 * 1000
+    })
+    return { token, fileName, size: stats.size }
+  })
+  ipcMain.handle(
+    'data:import-autologin',
+    async (event, payload: unknown): Promise<DataImportResult> => {
+      assertTrustedSender(event)
+      const parsed = autologinSelectionImportSchema.safeParse(payload)
+      if (!parsed.success) {
+        throw new Error(firstIssue(parsed.error))
+      }
+      cleanExpiredAutologinSelections()
+      const selection = pendingAutologinSelections.get(parsed.data.token)
+      if (!selection) {
+        throw new Error('AutoLogin 配置文件选择已过期，请重新选择文件')
+      }
+      const imported = await vault.readEncryptedSnapshot(
+        selection.path,
+        parsed.data.password
+      )
+      const result = applyAutologinImport(imported)
+      pendingAutologinSelections.delete(parsed.data.token)
+      appendImportLog(result, selection.fileName)
+      return result
+    }
+  )
+  ipcMain.handle('data:import-bookmarks', async (event): Promise<DataImportResult | null> => {
+    assertTrustedSender(event)
+    if (!mainWindow) return null
+    const selection = await dialog.showOpenDialog(mainWindow, {
+      title: '导入浏览器书签',
+      buttonLabel: '导入书签',
+      properties: ['openFile'],
+      filters: [{ name: '浏览器书签 HTML', extensions: ['html', 'htm'] }]
+    })
+    const path = selection.filePaths[0]
+    if (selection.canceled || !path) return null
+    const parsed = await parseBookmarksImport(path)
+    const result = applyDataImport(parsed, 'bookmarks', basename(path))
+    appendImportLog(result, basename(path))
+    return result
+  })
   ipcMain.handle('data:list-backups', (event): BackupRecord[] => {
     assertTrustedSender(event)
     return backupManager.list()
@@ -870,6 +1438,12 @@ function registerIpc(): void {
     vault.restoreEncryptedFrom(backupPath)
     sessionIndex.clear()
     ensureLoginManagers()
+    appendAppLog(dataDirectory, {
+      level: 'success',
+      category: 'backup',
+      message: '本地备份已恢复',
+      details: backupId
+    })
   })
 
   ipcMain.handle('window:update-theme', (event, payload: unknown) => {
@@ -1005,6 +1579,22 @@ function registerIpc(): void {
     const deleted = clearAppLogs(dataDirectory)
     return { deleted }
   })
+  ipcMain.handle('app:list-access-logs', (event, payload: unknown) => {
+    assertTrustedSender(event)
+    const parsed = accessLogQuerySchema.safeParse(payload)
+    if (!parsed.success) {
+      throw new Error(firstIssue(parsed.error))
+    }
+    return readAccessLogs(dataDirectory, parsed.data)
+  })
+  ipcMain.handle('app:delete-access-logs', (event, payload: unknown) => {
+    assertTrustedSender(event)
+    const parsed = accessLogDeleteSchema.safeParse(payload)
+    if (!parsed.success) {
+      throw new Error(firstIssue(parsed.error))
+    }
+    return { deleted: deleteAccessLogs(dataDirectory, parsed.data) }
+  })
   ipcMain.handle('app:restart', async (event) => {
     assertTrustedSender(event)
     await closeLoginManagers()
@@ -1035,7 +1625,13 @@ function registerIpc(): void {
     sessionIndex.clear()
     vault.clearAllFiles()
     backupManager.clear()
+    rmSync(join(dataDirectory, 'tabs'), { recursive: true, force: true })
     ensureLoginManagers()
+    appendAppLog(dataDirectory, {
+      level: 'warning',
+      category: 'data',
+      message: '所有本地数据已清除'
+    })
   })
   ipcMain.handle('app:open-privacy', async (event) => {
     assertTrustedSender(event)
@@ -1068,16 +1664,17 @@ function registerIpc(): void {
 
 function renameGroup(input: GroupRenameInput): void {
   const data = vault.requireData()
-  ensureGroupDefinitions(data)
+  const tabId = input.tabId ?? DEFAULT_ACCOUNT_TAB_ID
+  ensureGroupDefinitions(data, tabId)
   const fromPath = input.fromName.trim()
   const toName = input.toName.trim()
-  const exists = groupPathExists(data, fromPath)
+  const exists = groupPathExists(data, fromPath, tabId)
   if (!exists) throw new Error('分组不存在')
   const parentPath = groupParentPath(fromPath)
   const toPath = parentPath ? `${parentPath}${GROUP_PATH_SEPARATOR}${toName}` : toName
   if (fromPath === toPath) return
   if (
-    allGroupPaths(data).some(
+    allGroupPaths(data, tabId).some(
       (path) => path !== fromPath && path === toPath
     )
   ) {
@@ -1095,12 +1692,12 @@ function renameGroup(input: GroupRenameInput): void {
 
   data.groupDefinitions = data.groupDefinitions.map((group) => ({
     ...group,
-    path: renamePath(group.path),
-    name: group.path === fromPath ? toName : group.name,
+    path: group.tabId === tabId ? renamePath(group.path) : group.path,
+    name: group.tabId === tabId && group.path === fromPath ? toName : group.name,
     updatedAt: now
   }))
   for (const site of data.sites) {
-    if (!site.group) continue
+    if (site.tabId !== tabId || !site.group) continue
     const next = renamePath(site.group)
     if (next !== site.group) {
       site.group = next
@@ -1108,28 +1705,30 @@ function renameGroup(input: GroupRenameInput): void {
     }
   }
   for (const record of data.deletedAccounts) {
-    if (record.site.group) record.site.group = renamePath(record.site.group)
+    if (record.tabId === tabId && record.site.group) {
+      record.site.group = renamePath(record.site.group)
+    }
   }
-  data.favoriteGroups = [...new Set(data.favoriteGroups.map(renamePath))]
-  data.settings.groupOrder = [
+  setTabGroupOrder(data, tabId, [
     ...new Set(
-      data.settings.groupOrder.map((path) =>
+      getTabGroupOrder(data, tabId).map((path) =>
         path === UNGROUPED_GROUP_KEY ? path : renamePath(path)
       )
     )
-  ]
+  ])
   vault.save()
 }
 
 function moveGroup(input: GroupMoveInput): GroupMoveResult {
   const data = vault.requireData()
-  ensureGroupDefinitions(data)
+  const tabId = input.tabId ?? DEFAULT_ACCOUNT_TAB_ID
+  ensureGroupDefinitions(data, tabId)
   const fromPath = input.fromPath.trim()
   const parentPath = input.parentPath?.trim() || undefined
-  if (!groupPathExists(data, fromPath)) {
+  if (!groupPathExists(data, fromPath, tabId)) {
     throw new Error('分组不存在')
   }
-  if (parentPath && !groupPathExists(data, parentPath)) {
+  if (parentPath && !groupPathExists(data, parentPath, tabId)) {
     throw new Error('目标分组不存在')
   }
   if (
@@ -1148,7 +1747,7 @@ function moveGroup(input: GroupMoveInput): GroupMoveResult {
   const toPath = parentPath
     ? `${parentPath}${GROUP_PATH_SEPARATOR}${groupName}`
     : groupName
-  const paths = allGroupPaths(data)
+  const paths = allGroupPaths(data, tabId)
   if (paths.some((path) => path === toPath && path !== fromPath)) {
     throw new Error('目标分组下已存在同名分组')
   }
@@ -1176,11 +1775,11 @@ function moveGroup(input: GroupMoveInput): GroupMoveResult {
 
   data.groupDefinitions = data.groupDefinitions.map((group) => ({
     ...group,
-    path: movePath(group.path),
+    path: group.tabId === tabId ? movePath(group.path) : group.path,
     updatedAt: now
   }))
   for (const site of data.sites) {
-    if (!site.group) continue
+    if (site.tabId !== tabId || !site.group) continue
     const next = movePath(site.group)
     if (next !== site.group) {
       site.group = next
@@ -1188,67 +1787,74 @@ function moveGroup(input: GroupMoveInput): GroupMoveResult {
     }
   }
   for (const record of data.deletedAccounts) {
-    if (record.site.group) record.site.group = movePath(record.site.group)
+    if (record.tabId === tabId && record.site.group) {
+      record.site.group = movePath(record.site.group)
+    }
   }
-  data.favoriteGroups = [...new Set(data.favoriteGroups.map(movePath))]
-  data.settings.groupOrder = [
+  setTabGroupOrder(data, tabId, [
     ...new Set(
-      data.settings.groupOrder.map((path) =>
+      getTabGroupOrder(data, tabId).map((path) =>
         path === UNGROUPED_GROUP_KEY ? path : movePath(path)
       )
     )
-  ]
+  ])
   vault.save()
   return { fromPath, toPath }
 }
 
-function deleteGroup(groupName: string): number {
+function deleteGroup(groupName: string, requestedTabId?: string): number {
   const data = vault.requireData()
-  ensureGroupDefinitions(data)
+  const tabId = requestedTabId ?? DEFAULT_ACCOUNT_TAB_ID
+  ensureGroupDefinitions(data, tabId)
   const root = groupName.trim()
-  if (!groupPathExists(data, root)) return 0
+  if (!groupPathExists(data, root, tabId)) return 0
   const removedPaths = new Set(
-    allGroupPaths(data).filter(
+    allGroupPaths(data, tabId).filter(
       (path) => path === root || path.startsWith(`${root}${GROUP_PATH_SEPARATOR}`)
     )
   )
   const now = new Date().toISOString()
   let affected = 0
   for (const site of data.sites) {
-    if (site.group && removedPaths.has(site.group)) {
+    if (site.tabId === tabId && site.group && removedPaths.has(site.group)) {
       site.group = undefined
       site.updatedAt = now
       affected += 1
     }
   }
   for (const record of data.deletedAccounts) {
-    if (record.site.group && removedPaths.has(record.site.group)) {
+    if (record.tabId === tabId && record.site.group && removedPaths.has(record.site.group)) {
       record.site.group = undefined
     }
   }
   data.groupDefinitions = data.groupDefinitions.filter(
-    (entry) => !removedPaths.has(entry.path)
+    (entry) => entry.tabId !== tabId || !removedPaths.has(entry.path)
   )
-  data.favoriteGroups = data.favoriteGroups.filter((entry) => !removedPaths.has(entry))
-  data.settings.groupOrder = data.settings.groupOrder.filter(
-    (entry) => !removedPaths.has(entry)
+  setTabGroupOrder(
+    data,
+    tabId,
+    getTabGroupOrder(data, tabId).filter((entry) => !removedPaths.has(entry))
   )
   vault.save()
   return affected
 }
 
-function listGroups(): GroupDefinition[] {
+function listGroups(tabId?: string): GroupDefinition[] {
   const data = vault.requireData()
-  if (ensureGroupDefinitions(data)) vault.save()
-  return structuredClone(data.groupDefinitions)
+  const scopedTabId = tabId ?? DEFAULT_ACCOUNT_TAB_ID
+  if (ensureGroupDefinitions(data, scopedTabId)) vault.save()
+  return structuredClone(
+    data.groupDefinitions.filter((group) => group.tabId === scopedTabId)
+  )
 }
 
 function createGroup(input: GroupCreateInput): GroupDefinition {
   const data = vault.requireData()
-  ensureGroupDefinitions(data)
+  const tabId = input.tabId ?? DEFAULT_ACCOUNT_TAB_ID
+  ensureGroupDefinitions(data, tabId)
   const name = input.name.trim()
   const parentPath = input.parentPath?.trim() || undefined
-  if (parentPath && !groupPathExists(data, parentPath)) {
+  if (parentPath && !groupPathExists(data, parentPath, tabId)) {
     throw new Error('父级分组不存在')
   }
   const depth = parentPath ? groupDepth(parentPath) + 1 : 1
@@ -1256,36 +1862,44 @@ function createGroup(input: GroupCreateInput): GroupDefinition {
     throw new Error(`分组最多支持 ${GROUP_MAX_DEPTH} 级`)
   }
   const path = parentPath ? `${parentPath}${GROUP_PATH_SEPARATOR}${name}` : name
-  if (groupPathExists(data, path)) {
+  if (groupPathExists(data, path, tabId)) {
     throw new Error('同级分组名称已存在')
   }
 
   const now = new Date().toISOString()
   const group: GroupDefinition = {
+    tabId,
     path,
     name,
     createdAt: now,
     updatedAt: now
   }
   data.groupDefinitions.push(group)
-  if (!data.settings.groupOrder.includes(path)) {
-    data.settings.groupOrder.push(path)
-  }
+  const order = getTabGroupOrder(data, tabId)
+  if (!order.includes(path)) setTabGroupOrder(data, tabId, [...order, path])
   vault.save()
   return structuredClone(group)
 }
 
-function ensureGroupDefinitions(data: VaultData): boolean {
-  const existing = new Set(data.groupDefinitions.map((group) => group.path))
+function ensureGroupDefinitions(data: VaultData, tabId?: string): boolean {
+  const scopedTabId = tabId ?? DEFAULT_ACCOUNT_TAB_ID
+  const matchesTab = (entryTabId: string | undefined): boolean =>
+    !tabId || (entryTabId ?? DEFAULT_ACCOUNT_TAB_ID) === scopedTabId
+  const existing = new Set(
+    data.groupDefinitions
+      .filter((group) => matchesTab(group.tabId))
+      .map((group) => group.path)
+  )
   const paths = new Set<string>()
   for (const site of data.sites) {
-    if (site.group?.trim()) paths.add(site.group.trim())
+    if (matchesTab(site.tabId) && site.group?.trim()) paths.add(site.group.trim())
   }
   for (const record of data.deletedAccounts) {
-    if (record.site.group?.trim()) paths.add(record.site.group.trim())
+    if (matchesTab(record.tabId) && record.site.group?.trim()) {
+      paths.add(record.site.group.trim())
+    }
   }
-  for (const path of data.favoriteGroups) paths.add(path.trim())
-  for (const path of data.settings.groupOrder) {
+  for (const path of getTabGroupOrder(data, scopedTabId)) {
     if (path.trim() === UNGROUPED_GROUP_KEY) continue
     paths.add(path.trim())
   }
@@ -1298,6 +1912,7 @@ function ensureGroupDefinitions(data: VaultData): boolean {
       if (!prefix || existing.has(prefix)) continue
       const now = new Date().toISOString()
       data.groupDefinitions.push({
+        tabId: scopedTabId,
         path: prefix,
         name: segments[index - 1] ?? prefix,
         createdAt: now,
@@ -1310,24 +1925,43 @@ function ensureGroupDefinitions(data: VaultData): boolean {
   return changed
 }
 
-function allGroupPaths(data: VaultData): string[] {
-  const paths = new Set(data.groupDefinitions.map((group) => group.path))
+function allGroupPaths(data: VaultData, tabId: string): string[] {
+  const paths = new Set(
+    data.groupDefinitions
+      .filter((group) => group.tabId === tabId)
+      .map((group) => group.path)
+  )
   for (const site of data.sites) {
-    if (site.group?.trim()) paths.add(site.group.trim())
+    if (site.tabId === tabId && site.group?.trim()) paths.add(site.group.trim())
   }
   for (const record of data.deletedAccounts) {
-    if (record.site.group?.trim()) paths.add(record.site.group.trim())
+    if (record.tabId === tabId && record.site.group?.trim()) {
+      paths.add(record.site.group.trim())
+    }
   }
-  for (const path of data.favoriteGroups) paths.add(path)
-  for (const path of data.settings.groupOrder) {
+  for (const path of getTabGroupOrder(data, tabId)) {
     if (path === UNGROUPED_GROUP_KEY) continue
     paths.add(path)
   }
   return [...paths]
 }
 
-function groupPathExists(data: VaultData, path: string): boolean {
-  return allGroupPaths(data).includes(path)
+function groupPathExists(data: VaultData, path: string, tabId: string): boolean {
+  return allGroupPaths(data, tabId).includes(path)
+}
+
+function getTabGroupOrder(data: VaultData, tabId: string): string[] {
+  return (
+    data.settings.groupOrders[tabId] ??
+    (tabId === DEFAULT_ACCOUNT_TAB_ID ? data.settings.groupOrder : [])
+  )
+}
+
+function setTabGroupOrder(data: VaultData, tabId: string, order: string[]): void {
+  data.settings.groupOrders[tabId] = order
+  if (tabId === DEFAULT_ACCOUNT_TAB_ID) {
+    data.settings.groupOrder = [...order]
+  }
 }
 
 function groupParentPath(path: string): string | undefined {
@@ -1340,18 +1974,26 @@ function groupDepth(path: string): number {
   return path.split(GROUP_PATH_SEPARATOR).filter(Boolean).length
 }
 
-function listDeletedAccounts(): DeletedAccountWithSite[] {
+function listDeletedAccounts(tabId?: string): DeletedAccountWithSite[] {
   const data = vault.requireData()
   purgeExpiredDeletedAccounts()
+  const tabs = new Map(data.tabs.map((tab) => [tab.id, tab] as const))
   return [...data.deletedAccounts]
+    .filter((record) => !tabId || record.tabId === tabId)
     .sort(
       (left, right) =>
         new Date(right.deletedAt).getTime() - new Date(left.deletedAt).getTime()
     )
-    .map((record) => ({
-      ...toPublicAccount(record.account, record.site),
-      deletedAt: record.deletedAt
-    }))
+    .map((record) => {
+      const tab = tabs.get(record.tabId)
+      return {
+        ...toPublicAccount(record.account, record.site),
+        deletedAt: record.deletedAt,
+        tabId: record.tabId,
+        tabName: tab?.name ?? '本地账号',
+        source: tab?.source ?? 'local'
+      }
+    })
 }
 
 function purgeExpiredDeletedAccounts(): number {
@@ -1382,6 +2024,7 @@ function moveAccountsToTrash(accountIds: string[]): void {
     data.deletedAccounts.push({
       account: structuredClone(account),
       site: structuredClone(site),
+      tabId: account.tabId ?? site.tabId ?? DEFAULT_ACCOUNT_TAB_ID,
       deletedAt: now
     })
     removedSiteIds.add(site.id)
@@ -1403,10 +2046,12 @@ function restoreDeletedAccount(accountId: string): AccountWithSite {
     throw new Error('同名账号已被恢复')
   }
 
-  const takenNames = new Set(data.sites.map((site) => normalizeSiteName(site.name)))
-  let site = data.sites.find((entry) => entry.id === record.site.id)
+  const tabId = record.tabId ?? record.account.tabId ?? DEFAULT_ACCOUNT_TAB_ID
+  const tabSites = data.sites.filter((entry) => entry.tabId === tabId)
+  const takenNames = new Set(tabSites.map((site) => normalizeSiteName(site.name)))
+  let site = tabSites.find((entry) => entry.id === record.site.id)
   if (!site) {
-    const sameName = data.sites.find(
+    const sameName = tabSites.find(
       (entry) => normalizeSiteName(entry.name) === normalizeSiteName(record.site.name)
     )
     if (sameName && sameName.startUrl === record.site.startUrl) {
@@ -1414,6 +2059,7 @@ function restoreDeletedAccount(accountId: string): AccountWithSite {
     } else {
       site = {
         ...structuredClone(record.site),
+        tabId,
         name:
           sameName || takenNames.has(normalizeSiteName(record.site.name))
             ? uniqueCopyName(record.site.name, takenNames)
@@ -1425,16 +2071,41 @@ function restoreDeletedAccount(accountId: string): AccountWithSite {
 
   const account: StoredAccount = {
     ...structuredClone(record.account),
+    tabId,
     siteId: site.id
   }
   data.accounts.push(account)
   data.deletedAccounts = data.deletedAccounts.filter(
     (entry) => entry.account.id !== accountId
   )
-  ensureGroupDefinitions(data)
+  ensureGroupDefinitions(data, tabId)
   vault.save()
   sessionIndex.add(account.id)
   return toPublicAccount(account, site)
+}
+
+function purgeDeletedAccount(accountId: string): void {
+  const data = vault.requireData()
+  const before = data.deletedAccounts.length
+  data.deletedAccounts = data.deletedAccounts.filter(
+    (record) => record.account.id !== accountId
+  )
+  if (data.deletedAccounts.length === before) {
+    throw new Error('回收站中不存在该账号')
+  }
+  vault.save()
+}
+
+function purgeDeletedAccounts(accountIds: string[]): number {
+  const data = vault.requireData()
+  const requested = new Set(accountIds)
+  const before = data.deletedAccounts.length
+  data.deletedAccounts = data.deletedAccounts.filter(
+    (record) => !requested.has(record.account.id)
+  )
+  const removed = before - data.deletedAccounts.length
+  if (removed > 0) vault.save()
+  return removed
 }
 
 function saveSite(input: SiteInput): Site {
@@ -1444,9 +2115,12 @@ function saveSite(input: SiteInput): Site {
   const startOrigin = new URL(startUrl).origin
   const requestedName = input.name.trim()
   const normalizedName = normalizeSiteName(requestedName)
+  const tabId = input.tabId ?? DEFAULT_ACCOUNT_TAB_ID
   const duplicate = data.sites.find(
     (site) =>
-      site.id !== input.id && normalizeSiteName(site.name) === normalizedName
+      site.tabId === tabId &&
+      site.id !== input.id &&
+      normalizeSiteName(site.name) === normalizedName
   )
   if (duplicate) {
     throw new Error('站点名称已存在，请使用其他名称')
@@ -1463,6 +2137,9 @@ function saveSite(input: SiteInput): Site {
     const existing = data.sites.find((site) => site.id === input.id)
     if (!existing) {
       throw new Error('站点不存在')
+    }
+    if (input.tabId && existing.tabId !== input.tabId) {
+      throw new Error('不能将站点移动到其他标签页')
     }
     const previousName = existing.name
     existing.name = requestedName
@@ -1486,6 +2163,7 @@ function saveSite(input: SiteInput): Site {
 
   const site: Site = {
     id: randomUUID(),
+    tabId,
     name: requestedName,
     startUrl,
     allowedOrigins,
@@ -1518,12 +2196,21 @@ function createAccount(input: {
   if (!site) {
     throw new Error('站点不存在')
   }
+  const tab = data.tabs.find((entry) => entry.id === (site.tabId ?? DEFAULT_ACCOUNT_TAB_ID))
+  const isBookmark = tab?.source === 'bookmarks'
+  if (!isBookmark && !input.username.trim()) {
+    throw new Error('请输入用户名')
+  }
+  if (!isBookmark && !input.password) {
+    throw new Error('请输入密码')
+  }
   const loginStrategy = input.loginStrategy ?? 'auto'
   const manualSelectors = normalizeManualSelectors(input.manualSelectors)
   assertManualSelectors(loginStrategy, manualSelectors)
   const now = new Date().toISOString()
-  data.accounts.push({
+  const account: StoredAccount = {
     id: randomUUID(),
+    tabId: site.tabId,
     siteId: site.id,
     label: site.name,
     username: input.username.trim(),
@@ -1531,12 +2218,27 @@ function createAccount(input: {
     favorite: input.favorite ?? false,
     loginStrategy,
     manualSelectors,
+    sortOrder: nextAccountSortOrder(data, site.tabId),
     createdAt: now,
     updatedAt: now
-  })
+  }
+  data.accounts.push(account)
   vault.save()
-  sessionIndex.add(data.accounts[data.accounts.length - 1]!.id)
-  return toPublicAccount(data.accounts[data.accounts.length - 1]!, site)
+  sessionIndex.add(account.id)
+  return toPublicAccount(account, site)
+}
+
+function nextAccountSortOrder(data: VaultData, tabId: string): number {
+  return (
+    Math.max(
+      -1,
+      ...data.accounts
+        .filter((account) => account.tabId === tabId)
+        .map((account) =>
+          typeof account.sortOrder === 'number' ? account.sortOrder : -1
+        )
+    ) + 1
+  )
 }
 
 function normalizeManualSelectors(input: {
@@ -1718,6 +2420,103 @@ function setAccountStrategyBatch(
   )
 }
 
+function setAccountIconBatch(input: AccountBatchIconInput): AccountWithSite[] {
+  const data = vault.requireData()
+  const siteMap = new Map(data.sites.map((site) => [site.id, site]))
+  const accounts = input.accountIds.map((accountId) => {
+    const account = data.accounts.find((entry) => entry.id === accountId)
+    if (!account) throw new Error('所选账号中包含不存在的记录')
+    if (!siteMap.has(account.siteId)) throw new Error('所选账号包含失效的站点')
+    return account
+  })
+  const siteIds = new Set(accounts.map((account) => account.siteId))
+  const now = new Date().toISOString()
+
+  for (const site of data.sites) {
+    if (!siteIds.has(site.id)) continue
+    site.icon = input.icon
+    site.updatedAt = now
+  }
+  for (const account of accounts) {
+    account.updatedAt = now
+  }
+
+  vault.save()
+  return accounts.map((account) =>
+    toPublicAccount(account, siteMap.get(account.siteId)!)
+  )
+}
+
+async function fetchAccountIconsFromSites(
+  accountIds: string[]
+): Promise<AccountBatchIconFetchResult> {
+  const data = vault.requireData()
+  const siteMap = new Map(data.sites.map((site) => [site.id, site]))
+  const selectedIds = new Set(accountIds)
+  const uniqueSites = new Map<string, Site>()
+
+  for (const account of data.accounts) {
+    if (!selectedIds.has(account.id)) continue
+    const site = siteMap.get(account.siteId)
+    if (!site) throw new Error('所选账号包含失效的站点')
+    uniqueSites.set(site.id, site)
+  }
+  if (uniqueSites.size === 0) throw new Error('所选账号中包含不存在的记录')
+
+  const queue = [...uniqueSites.values()]
+  const results = new Map<string, string>()
+  let cursor = 0
+  const worker = async (): Promise<void> => {
+    while (cursor < queue.length) {
+      const site = queue[cursor]
+      cursor += 1
+      if (!site) continue
+      try {
+        results.set(site.id, await fetchSiteIcon(site.startUrl))
+      } catch {
+        // Continue with the remaining sites and report failures together.
+      }
+    }
+  }
+  await Promise.all(
+    Array.from({ length: Math.min(4, queue.length) }, () => worker())
+  )
+
+  const latestData = vault.requireData()
+  const latestSiteMap = new Map(latestData.sites.map((site) => [site.id, site]))
+  const updatedSiteIds = new Set(results.keys())
+  const now = new Date().toISOString()
+  const failedSites: string[] = []
+  const updatedAccountIds = new Set<string>()
+
+  for (const site of uniqueSites.values()) {
+    const latestSite = latestSiteMap.get(site.id)
+    if (!latestSite) {
+      updatedSiteIds.delete(site.id)
+      continue
+    }
+    const icon = results.get(site.id)
+    if (!icon) {
+      failedSites.push(latestSite.name)
+      continue
+    }
+    latestSite.icon = icon
+    latestSite.updatedAt = now
+  }
+  for (const account of latestData.accounts) {
+    if (!selectedIds.has(account.id) || !updatedSiteIds.has(account.siteId)) continue
+    account.updatedAt = now
+    updatedAccountIds.add(account.id)
+  }
+
+  if (updatedSiteIds.size > 0) vault.save()
+  return {
+    updatedAccounts: updatedAccountIds.size,
+    updatedSites: updatedSiteIds.size,
+    failedSites
+  }
+}
+
 function duplicateAccounts(accountIds: string[]): AccountWithSite[] {
   const data = vault.requireData()
   const siteMap = new Map(data.sites.map((site) => [site.id, site]))
@@ -1729,15 +2528,28 @@ function duplicateAccounts(accountIds: string[]): AccountWithSite[] {
     return { account, site }
   })
 
-  const takenNames = new Set(data.sites.map((site) => normalizeSiteName(site.name)))
+  const namesByTab = new Map<string, Set<string>>()
+  const namesForTab = (tabId: string): Set<string> => {
+    const existing = namesByTab.get(tabId)
+    if (existing) return existing
+    const created = new Set(
+      data.sites
+        .filter((site) => site.tabId === tabId)
+        .map((site) => normalizeSiteName(site.name))
+    )
+    namesByTab.set(tabId, created)
+    return created
+  }
   const now = new Date().toISOString()
   const created: Array<{ account: StoredAccount; site: Site }> = []
 
   for (const original of originals) {
-    const copyName = uniqueCopyName(original.site.name, takenNames)
+    const tabId = original.site.tabId ?? original.account.tabId ?? DEFAULT_ACCOUNT_TAB_ID
+    const copyName = uniqueCopyName(original.site.name, namesForTab(tabId))
     const site: Site = {
       ...structuredClone(original.site),
       id: randomUUID(),
+      tabId,
       name: copyName,
       createdAt: now,
       updatedAt: now
@@ -1751,6 +2563,7 @@ function duplicateAccounts(accountIds: string[]): AccountWithSite[] {
     const account: StoredAccount = {
       ...structuredClone(original.account),
       id: randomUUID(),
+      tabId,
       siteId: site.id,
       label: copyName,
       favorite: false,
@@ -1759,6 +2572,7 @@ function duplicateAccounts(accountIds: string[]): AccountWithSite[] {
         ? recipeIds.get(original.account.activeRecipeId)
         : undefined,
       lastUsedAt: undefined,
+      sortOrder: nextAccountSortOrder(data, tabId),
       createdAt: now,
       updatedAt: now
     }
@@ -1790,6 +2604,60 @@ function uniqueCopyName(baseName: string, takenNames: Set<string>): string {
   }
 }
 
+function reorderAccounts(input: AccountReorderInput): AccountWithSite[] {
+  const data = vault.requireData()
+  const accounts = input.accountIds.map((accountId) => {
+    const account = data.accounts.find((entry) => entry.id === accountId)
+    if (!account) throw new Error('排序列表中包含不存在的账号')
+    return account
+  })
+  const tabId = input.tabId ?? accounts[0]?.tabId ?? DEFAULT_ACCOUNT_TAB_ID
+  if (accounts.some((account) => account.tabId !== tabId)) {
+    throw new Error('不能跨标签页排序账号')
+  }
+  accounts.forEach((account, index) => {
+    account.sortOrder = index
+  })
+  vault.save()
+  const sites = new Map(data.sites.map((site) => [site.id, site]))
+  return accounts.map((account) => toPublicAccount(account, sites.get(account.siteId)!))
+}
+
+function moveAccountsToGroup(input: AccountMoveInput): AccountWithSite[] {
+  const data = vault.requireData()
+  const accounts = input.accountIds.map((accountId) => {
+    const account = data.accounts.find((entry) => entry.id === accountId)
+    if (!account) throw new Error('所选账号中包含不存在的记录')
+    return account
+  })
+  const tabId = input.tabId ?? accounts[0]?.tabId ?? DEFAULT_ACCOUNT_TAB_ID
+  if (accounts.some((account) => account.tabId !== tabId)) {
+    throw new Error('不能跨标签页移动账号')
+  }
+  const groupPath = input.groupPath?.trim() || undefined
+  ensureGroupDefinitions(data, tabId)
+  if (groupPath && !groupPathExists(data, groupPath, tabId)) {
+    throw new Error('目标分组不存在')
+  }
+
+  const siteIds = new Set(accounts.map((account) => account.siteId))
+  const now = new Date().toISOString()
+  for (const site of data.sites) {
+    if (site.tabId !== tabId || !siteIds.has(site.id)) continue
+    site.group = groupPath
+    site.updatedAt = now
+  }
+  let nextSortOrder = nextAccountSortOrder(data, tabId)
+  for (const account of accounts) {
+    account.sortOrder = nextSortOrder
+    account.updatedAt = now
+    nextSortOrder += 1
+  }
+  vault.save()
+  const sites = new Map(data.sites.map((site) => [site.id, site]))
+  return accounts.map((account) => toPublicAccount(account, sites.get(account.siteId)!))
+}
+
 function listAccounts(): AccountWithSite[] {
   const data = vault.requireData()
   const sites = new Map(data.sites.map((site) => [site.id, site]))
@@ -1805,6 +2673,7 @@ function toPublicAccount(
 ): AccountWithSite {
   return {
     id: account.id,
+    tabId: account.tabId,
     siteId: account.siteId,
     label: account.label,
     username: account.username,
@@ -1814,6 +2683,7 @@ function toPublicAccount(
     recipes: structuredClone(account.recipes ?? []),
     activeRecipeId: account.activeRecipeId,
     lastUsedAt: account.lastUsedAt,
+    sortOrder: account.sortOrder,
     createdAt: account.createdAt,
     updatedAt: account.updatedAt,
     site: structuredClone(site)
@@ -1865,14 +2735,151 @@ function deleteAccountRecipe(accountId: string, recipeId: string): AccountWithSi
   return toPublicAccount(account, site)
 }
 
-function applyDataImport(parsed: ParsedImport, source: 'csv' | 'kdbx'): DataImportResult {
+function createAccountTab(input?: {
+  name?: string
+  color?: string
+  source?: 'local' | 'bookmarks'
+}): AccountTab {
   const data = vault.requireData()
-  const merged = mergeImportedLogins(data, source, parsed)
+  const source = input?.source ?? 'local'
+  const tab = buildAccountTab(
+    data,
+    input?.name ?? (source === 'bookmarks' ? '新书签标签' : '新标签'),
+    source,
+    input?.color ??
+      ACCOUNT_TAB_COLORS[
+        data.tabs.length % ACCOUNT_TAB_COLORS.length
+      ] ??
+      ACCOUNT_TAB_COLORS[0]
+  )
+  data.tabs.push(tab)
+  vault.save()
+  appendAppLog(dataDirectory, {
+    level: 'info',
+    category: 'data',
+    message: `${source === 'bookmarks' ? '书签' : '账号'}标签页已创建：${tab.name}`
+  })
+  return structuredClone(tab)
+}
+
+function updateAccountTab(tabId: string, input: AccountTabUpdateInput): AccountTab {
+  const data = vault.requireData()
+  const tab = data.tabs.find((entry) => entry.id === tabId)
+  if (!tab) throw new Error('标签页不存在')
+  if (input.name !== undefined) {
+    const name = input.name.trim()
+    if (
+      data.tabs.some(
+        (entry) =>
+          entry.id !== tabId &&
+          entry.name.toLocaleLowerCase() === name.toLocaleLowerCase()
+      )
+    ) {
+      throw new Error('标签页名称已存在')
+    }
+    tab.name = name
+  }
+  if (input.color !== undefined) tab.color = input.color
+  tab.updatedAt = new Date().toISOString()
+  vault.save()
+  appendAppLog(dataDirectory, {
+    level: 'info',
+    category: 'data',
+    message: `账号标签页已更新：${tab.name}`
+  })
+  return structuredClone(tab)
+}
+
+async function deleteAccountTab(tabId: string): Promise<void> {
+  const data = vault.requireData()
+  const tab = data.tabs.find((entry) => entry.id === tabId)
+  if (!tab) throw new Error('标签页不存在')
+  tab.hidden = true
+  tab.updatedAt = new Date().toISOString()
+  vault.save()
+  appendAppLog(dataDirectory, {
+    level: 'warning',
+    category: 'data',
+    message: `标签页已关闭：${tab.name}`
+  })
+}
+
+function buildAccountTab(
+  data: VaultData,
+  requestedName: string,
+  source: AccountTab['source'],
+  color: string
+): AccountTab {
+  const baseName = requestedName.trim().slice(0, 40) || '新标签'
+  const taken = new Set(data.tabs.map((tab) => tab.name.toLocaleLowerCase()))
+  let name = baseName
+  let sequence = 2
+  while (taken.has(name.toLocaleLowerCase())) {
+    const suffix = ` ${sequence}`
+    name = `${baseName.slice(0, 40 - suffix.length).trimEnd()}${suffix}`
+    sequence += 1
+  }
+  const now = new Date().toISOString()
+  return {
+    id: randomUUID(),
+    name,
+    color,
+    source,
+    hidden: false,
+    createdAt: now,
+    updatedAt: now
+  }
+}
+
+function applyDataImport(
+  parsed: ParsedImport,
+  source: 'csv' | 'kdbx' | 'bookmarks',
+  fileName: string
+): DataImportResult {
+  const data = vault.requireData()
+  const sourceColors: Record<typeof source, string> = {
+    csv: '#0E7567',
+    kdbx: '#2F80ED',
+    bookmarks: '#D97706'
+  }
+  const fileNameWithoutExtension = fileName.replace(/\.(csv|kdbx|html?|htm)$/i, '')
+  const tab = buildAccountTab(
+    data,
+    fileNameWithoutExtension,
+    source,
+    sourceColors[source]
+  )
+  const staged = structuredClone(data)
+  staged.tabs.push(tab)
+  const merged = mergeImportedLogins(staged, source, parsed, tab.id)
+  data.tabs = merged.data.tabs
   data.sites = merged.data.sites
   data.accounts = merged.data.accounts
+  data.groupDefinitions = merged.data.groupDefinitions
   vault.save()
   sessionIndex.replace(data.accounts.map((account) => account.id))
   return merged.result
+}
+
+function applyAutologinImport(imported: VaultData): DataImportResult {
+  const data = vault.requireData()
+  const merged = mergeAutologinSnapshot(data, imported)
+  data.tabs = merged.data.tabs
+  data.sites = merged.data.sites
+  data.accounts = merged.data.accounts
+  data.groupDefinitions = merged.data.groupDefinitions
+  vault.save()
+  sessionIndex.replace(data.accounts.map((account) => account.id))
+  return merged.result
+}
+
+function appendImportLog(result: DataImportResult, fileName: string): void {
+  appendAppLog(dataDirectory, {
+    level: result.accountsCreated > 0 ? 'success' : 'warning',
+    category: 'data',
+    message: `账号导入完成：${result.tabName}`,
+    details: `${fileName}；新增 ${result.sitesCreated} 个站点、${result.accountsCreated} 个账号，跳过 ${result.skipped} 条`
+  })
 }
 
 async function copySecret(value: string): Promise<void> {
@@ -1895,6 +2902,24 @@ function cleanExpiredKdbxSelections(): void {
       pendingKdbxSelections.delete(token)
     }
   }
+}
+
+function cleanExpiredAutologinSelections(): void {
+  const now = Date.now()
+  for (const [token, selection] of pendingAutologinSelections) {
+    if (selection.expiresAt <= now) {
+      pendingAutologinSelections.delete(token)
+    }
+  }
+}
+
+function safeFileBaseName(value: string): string {
+  const cleaned = value
+    .replace(/[<>:"/\\|?*\u0000-\u001f]/g, '-')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .replace(/[. ]+$/g, '')
+  return cleaned || 'AutoLogin-export'
 }
 
 function fileDateStamp(): string {
@@ -1988,6 +3013,11 @@ async function openExternalUrl(value: string): Promise<void> {
 function initializeAutoUpdater(): void {
   if (updaterInitialized) return
   updaterInitialized = true
+  autoUpdater.setFeedURL({
+    provider: 'github',
+    owner: 'AptimLvStic',
+    repo: 'AutoLogin'
+  })
   autoUpdater.autoDownload = false
   autoUpdater.autoInstallOnAppQuit = true
   autoUpdater.allowDowngrade = false
@@ -2404,6 +3434,21 @@ function requireId(value: unknown): string {
     throw new Error('无效的标识')
   }
   return value
+}
+
+function requireOptionalTabId(value: unknown): string | undefined {
+  if (value === undefined || value === null || value === '') return undefined
+  return requireId(value)
+}
+
+function safeLogValue(value: string): string {
+  const trimmed = value.trim()
+  if (!trimmed) return '（空）'
+  if (trimmed.includes('@')) {
+    const [name, domain] = trimmed.split('@', 2)
+    return `${(name ?? '').slice(0, 2)}***@${domain ?? ''}`
+  }
+  return trimmed.length <= 2 ? '***' : `${trimmed.slice(0, 1)}***${trimmed.slice(-1)}`
 }
 
 function firstIssue(error: { issues: Array<{ message: string }> }): string {

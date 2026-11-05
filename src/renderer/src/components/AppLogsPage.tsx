@@ -2,7 +2,6 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import {
   BookOpen,
   Check,
-  ChevronLeft,
   ChevronRight,
   LoaderCircle,
   RefreshCw,
@@ -11,13 +10,15 @@ import {
 } from 'lucide-react'
 import type { AppLogEntry, AppLogLevel } from '@shared/types'
 import { useI18n } from '../i18n'
+import {
+  LogPagination,
+  type LogPageSize
+} from './LogPagination'
 import { LogsTabs, type LogView } from './LogsTabs'
 import { ConfirmDialog } from './Modal'
 
 type AppLogStatusFilter = 'all' | AppLogLevel
-type PageSize = 10 | 20 | 50 | 100 | 200
 
-const PAGE_SIZES: PageSize[] = [10, 20, 50, 100, 200]
 const MAX_DELETE_COUNT = 100
 
 export function AppLogsPage({
@@ -32,7 +33,7 @@ export function AppLogsPage({
   const [loading, setLoading] = useState(true)
   const [date, setDate] = useState('')
   const [status, setStatus] = useState<AppLogStatusFilter>('all')
-  const [pageSize, setPageSize] = useState<PageSize>(20)
+  const [pageSize, setPageSize] = useState<LogPageSize>(20)
   const [page, setPage] = useState(1)
   const [selectedIds, setSelectedIds] = useState<Set<string>>(() => new Set())
   const [confirmDeleteOpen, setConfirmDeleteOpen] = useState(false)
@@ -245,20 +246,6 @@ export function AppLogsPage({
               <option value="error">{tr('错误', 'Error', '錯誤')}</option>
             </select>
           </label>
-          <label className="field">
-            <span className="field__label">{tr('每页条数', 'Rows per page', '每頁筆數')}</span>
-            <select
-              className="filter-control"
-              value={pageSize}
-              onChange={(event) => setPageSize(Number(event.target.value) as PageSize)}
-            >
-              {PAGE_SIZES.map((size) => (
-                <option key={size} value={size}>
-                  {size}
-                </option>
-              ))}
-            </select>
-          </label>
           <div className="log-filters__actions">
             <button className="button button--soft" onClick={() => void load()} disabled={loading}>
               {loading ? <LoaderCircle size={15} className="spin" /> : <RefreshCw size={15} />}
@@ -391,34 +378,14 @@ export function AppLogsPage({
               ))}
             </div>
 
-            <footer className="log-pagination">
-              <span>
-                {tr(
-                  '共 {count} 条，第 {page}/{pages} 页',
-                  '{count} records, page {page} of {pages}',
-                  '共 {count} 筆，第 {page}/{pages} 頁',
-                  { count: filtered.length, page: currentPage, pages: pageCount }
-                )}
-              </span>
-              <div>
-                <button
-                  className="icon-button icon-button--small"
-                  onClick={() => setPage((value) => Math.max(1, value - 1))}
-                  disabled={currentPage <= 1}
-                  aria-label={tr('上一页', 'Previous page', '上一頁')}
-                >
-                  <ChevronLeft size={16} />
-                </button>
-                <button
-                  className="icon-button icon-button--small"
-                  onClick={() => setPage((value) => Math.min(pageCount, value + 1))}
-                  disabled={currentPage >= pageCount}
-                  aria-label={tr('下一页', 'Next page', '下一頁')}
-                >
-                  <ChevronRight size={16} />
-                </button>
-              </div>
-            </footer>
+            <LogPagination
+              count={filtered.length}
+              page={currentPage}
+              pageCount={pageCount}
+              pageSize={pageSize}
+              onPageChange={setPage}
+              onPageSizeChange={setPageSize}
+            />
           </div>
         )}
       </section>
@@ -487,10 +454,12 @@ function appLogCategoryLabel(
     vault: ['保险库', 'Vault', '保險庫'],
     proxy: ['网络代理', 'Proxy', '網路代理'],
     login: ['登录任务', 'Login task', '登入工作'],
+    visit: ['书签访问', 'Bookmark visit', '書籤存取'],
     update: ['应用更新', 'App update', '應用程式更新'],
     backup: ['备份', 'Backup', '備份'],
     data: ['数据操作', 'Data', '資料操作'],
-    settings: ['设置', 'Settings', '設定']
+    settings: ['设置', 'Settings', '設定'],
+    error: ['软件错误', 'Application error', '軟體錯誤']
   }
   const label = labels[category]
   return label ? tr(label[0], label[1], label[2]) : category

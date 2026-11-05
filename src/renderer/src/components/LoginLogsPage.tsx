@@ -1,7 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import {
   Check,
-  ChevronLeft,
   ChevronRight,
   Eye,
   FileText,
@@ -17,13 +16,15 @@ import type {
   Site
 } from '@shared/types'
 import { useI18n } from '../i18n'
+import {
+  LogPagination,
+  type LogPageSize
+} from './LogPagination'
 import { LogsTabs, type LogView } from './LogsTabs'
 import { ConfirmDialog, Modal } from './Modal'
 
 type LogStatusFilter = 'all' | LoginLogEntry['status']
-type PageSize = 10 | 20 | 50 | 100 | 200
 
-const PAGE_SIZES: PageSize[] = [10, 20, 50, 100, 200]
 const MAX_DELETE_COUNT = 100
 
 export function LoginLogsPage({
@@ -46,7 +47,7 @@ export function LoginLogsPage({
   const [siteId, setSiteId] = useState('all')
   const [groupName, setGroupName] = useState('all')
   const [status, setStatus] = useState<LogStatusFilter>('all')
-  const [pageSize, setPageSize] = useState<PageSize>(20)
+  const [pageSize, setPageSize] = useState<LogPageSize>(20)
   const [page, setPage] = useState(1)
   const [selectedIds, setSelectedIds] = useState<Set<string>>(() => new Set())
   const [detailEntry, setDetailEntry] = useState<LoginLogEntry | null>(null)
@@ -242,7 +243,7 @@ export function LoginLogsPage({
 
         <LogsTabs active="loginLogs" onChange={onNavigate} />
 
-        <div className="log-filters">
+        <div className="log-filters log-filters--login">
           <label className="field">
             <span className="field__label">{tr('日期', 'Date', '日期')}</span>
             <input
@@ -294,20 +295,6 @@ export function LoginLogsPage({
               <option value="error">{tr('失败', 'Failed', '失敗')}</option>
               <option value="timeout">{tr('超时', 'Timed out', '逾時')}</option>
               <option value="manual">{tr('待人工处理', 'Manual action', '待人工處理')}</option>
-            </select>
-          </label>
-          <label className="field">
-            <span className="field__label">{tr('每页条数', 'Rows per page', '每頁筆數')}</span>
-            <select
-              className="filter-control"
-              value={pageSize}
-              onChange={(event) => setPageSize(Number(event.target.value) as PageSize)}
-            >
-              {PAGE_SIZES.map((size) => (
-                <option key={size} value={size}>
-                  {size}
-                </option>
-              ))}
             </select>
           </label>
           <div className="log-filters__actions">
@@ -440,34 +427,14 @@ export function LoginLogsPage({
               ))}
             </div>
 
-            <footer className="log-pagination">
-              <span>
-                {tr(
-                  '共 {count} 条，第 {page}/{pages} 页',
-                  '{count} records, page {page} of {pages}',
-                  '共 {count} 筆，第 {page}/{pages} 頁',
-                  { count: filtered.length, page: currentPage, pages: pageCount }
-                )}
-              </span>
-              <div>
-                <button
-                  className="icon-button icon-button--small"
-                  onClick={() => setPage((value) => Math.max(1, value - 1))}
-                  disabled={currentPage <= 1}
-                  aria-label={tr('上一页', 'Previous page', '上一頁')}
-                >
-                  <ChevronLeft size={16} />
-                </button>
-                <button
-                  className="icon-button icon-button--small"
-                  onClick={() => setPage((value) => Math.min(pageCount, value + 1))}
-                  disabled={currentPage >= pageCount}
-                  aria-label={tr('下一页', 'Next page', '下一頁')}
-                >
-                  <ChevronRight size={16} />
-                </button>
-              </div>
-            </footer>
+            <LogPagination
+              count={filtered.length}
+              page={currentPage}
+              pageCount={pageCount}
+              pageSize={pageSize}
+              onPageChange={setPage}
+              onPageSizeChange={setPageSize}
+            />
           </div>
         )}
       </section>

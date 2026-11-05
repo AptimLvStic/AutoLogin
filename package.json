@@ -1,6 +1,6 @@
 {
   "name": "autologin",
-  "version": "0.8.7",
+  "version": "0.9.1",
   "description": "A calm, local-first login workspace for Windows.",
   "main": "./out/main/index.js",
   "author": "AutoLogin",
@@ -69,6 +69,10 @@
       {
         "from": "resources/icon.ico",
         "to": "icon.ico"
+      },
+      {
+        "from": "resources/app-update.yml",
+        "to": "app-update.yml"
       }
     ],
     "win": {

@@ -2,14 +2,18 @@ import { forwardRef, useEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import {
   ArchiveRestore,
+  Bookmark,
   Check,
   ChevronDown,
+  ChevronLeft,
   ChevronRight,
   Copy,
+  Database,
   FileClock,
-  FolderInput,
+  FileSpreadsheet,
   Globe2,
   GripVertical,
+  ImagePlus,
   KeyRound,
   Layers3,
   LoaderCircle,
@@ -25,15 +29,22 @@ import {
   Search,
   Settings,
   SlidersHorizontal,
+  Sparkles,
+  Square,
   Trash2,
   Undo2,
-  UserRound
+  UserRound,
+  X
 } from 'lucide-react'
 import {
+  ACCOUNT_TAB_COLORS,
+  DEFAULT_ACCOUNT_TAB_ID,
   GROUP_MAX_DEPTH,
   GROUP_PATH_SEPARATOR,
   TRASH_RETENTION_OPTIONS,
   UNGROUPED_GROUP_KEY,
+  type AccountTab,
+  type AccountTabSource,
   type AccountWithSite,
   type AppSettings,
   type AppUpdateState,
@@ -45,28 +56,49 @@ import {
   type Site,
   type TrashRetentionDays
 } from '@shared/types'
+import { matchesKeyboardShortcut } from '@shared/shortcuts'
 import { useI18n } from '../i18n'
 import { AccountDrawer } from './AccountDrawer'
+import { AccountTransferControls } from './AccountTransferControls'
+import { AccessLogsPage } from './AccessLogsPage'
 import { AppLogsPage } from './AppLogsPage'
+import {
+  BookmarkExportButton,
+  BookmarkImportButton
+} from './BookmarkImportButton'
 import { LoadingSpinner } from './LoadingSpinner'
 import { LoginLogsPage } from './LoginLogsPage'
 import { ConfirmDialog, Modal } from './Modal'
+import { PasswordGenerator } from './PasswordGenerator'
 import { SettingsPage, type SettingsModule } from './SettingsPage'
 import { SiteMark } from './SiteMark'
 
-type LibraryView = 'accounts' | 'loginLogs' | 'appLogs' | 'trash' | 'settings'
+type LibraryView =
+  | 'accounts'
+  | 'bookmarks'
+  | 'passwordGenerator'
+  | 'loginLogs'
+  | 'accessLogs'
+  | 'appLogs'
+  | 'trash'
+  | 'settings'
 type GroupDropPosition = 'before' | 'after' | 'inside'
 type DrawerState = { mode: 'create'; siteId?: string } | { mode: 'edit'; accountId: string }
 type AccountMenuState =
   | { kind: 'account'; account: AccountWithSite; left: number; top: number }
   | { kind: 'page'; left: number; top: number }
 type AccountColumnSizing = 'content' | 'window' | 'manual'
+type AccountPageSize = 10 | 20 | 50 | 100 | 200
 const ACCOUNT_COLUMN_KEYS = ['username', 'group', 'updated', 'status', 'url'] as const
+const ACCOUNT_PAGE_SIZES: AccountPageSize[] = [10, 20, 50, 100, 200]
 type AccountColumnKey = (typeof ACCOUNT_COLUMN_KEYS)[number]
 type AccountColumnResizeKey = 'site' | AccountColumnKey | 'actions'
 const ACCOUNT_COLUMN_STORAGE_KEY = 'autologin.account.visibleColumns'
+const ACCOUNT_COLUMN_ORDER_STORAGE_KEY = 'autologin.account.columnOrder'
 const ACCOUNT_COLUMN_SIZING_STORAGE_KEY = 'autologin.account.columnSizing'
 const ACCOUNT_COLUMN_WIDTH_STORAGE_KEY = 'autologin.account.columnWidths'
+const ACCOUNT_ACTIVE_TAB_STORAGE_KEY = 'autologin.account.activeTab'
+const BOOKMARK_ACTIVE_TAB_STORAGE_KEY = 'autologin.bookmark.activeTab'
 const ACCOUNT_COLUMN_DEFAULT_WIDTHS: Record<AccountColumnResizeKey, number> = {
   site: 220,
   username: 150,
@@ -151,18 +183,20 @@ const ACCOUNT_SUBNAV_HIDE_THRESHOLD = 132
 
 function accountColumnTemplate(
   visibleColumns: Set<AccountColumnKey>,
+  columnOrder: readonly AccountColumnKey[],
   density: keyof typeof ACCOUNT_COLUMN_TRACKS,
   sizing: AccountColumnSizing,
-  manualWidths: Record<AccountColumnResizeKey, number>
+  manualWidths: Record<AccountColumnResizeKey, number>,
+  fitContentWidths: Record<AccountColumnResizeKey, number>
 ): string {
   if (sizing === 'content') {
     return [
       '22px',
-      'max-content',
-      ...ACCOUNT_COLUMN_KEYS.filter((key) => visibleColumns.has(key)).map(
-        () => 'max-content'
+      `${fitContentWidths.site}px`,
+      ...columnOrder.filter((key) => visibleColumns.has(key)).map(
+        (key) => `${fitContentWidths[key]}px`
       ),
-      '44px'
+      `${fitContentWidths.actions}px`
     ].join(' ')
   }
   const tracks = ACCOUNT_COLUMN_TRACKS[density]
@@ -170,7 +204,7 @@ function accountColumnTemplate(
     return [
       tracks.checkbox,
       `${manualWidths.site}px`,
-      ...ACCOUNT_COLUMN_KEYS.filter((key) => visibleColumns.has(key)).map(
+      ...columnOrder.filter((key) => visibleColumns.has(key)).map(
         (key) => `${manualWidths[key]}px`
       ),
       `${manualWidths.actions}px`
@@ -179,16 +213,90 @@ function accountColumnTemplate(
   return [
     tracks.checkbox,
     tracks.site,
-    ...ACCOUNT_COLUMN_KEYS.filter((key) => visibleColumns.has(key)).map(
+    ...columnOrder.filter((key) => visibleColumns.has(key)).map(
       (key) => tracks[key]
     ),
     tracks.actions
   ].join(' ')
 }
 
+function normalizeAccountColumnOrder(value: unknown): AccountColumnKey[] {
+  const valid = Array.isArray(value)
+    ? value.filter(
+        (entry): entry is AccountColumnKey =>
+          typeof entry === 'string' &&
+          ACCOUNT_COLUMN_KEYS.includes(entry as AccountColumnKey)
+      )
+    : []
+  return [
+    ...new Set(valid),
+    ...ACCOUNT_COLUMN_KEYS.filter((key) => !valid.includes(key))
+  ]
+}
+
+function accountColumnOrderStyle(
+  columnOrder: readonly AccountColumnKey[],
+  key: AccountColumnResizeKey
+): number {
+  if (key === 'site') return 1
+  if (key === 'actions') return columnOrder.length + 2
+  const index = columnOrder.indexOf(key)
+  return index < 0 ? columnOrder.length + 1 : index + 2
+}
+
+function measureAccountColumnWidths(
+  header: HTMLElement,
+  rows: HTMLElement[],
+  visibleColumns: Set<AccountColumnKey>
+): Record<AccountColumnResizeKey, number> {
+  const widths = { ...ACCOUNT_COLUMN_DEFAULT_WIDTHS }
+  const probe = document.createElement('div')
+  probe.style.cssText =
+    'position:fixed;left:-10000px;top:0;display:flex;flex-direction:column;align-items:flex-start;width:max-content;visibility:hidden;pointer-events:none;'
+  document.body.append(probe)
+
+  const measure = (source: HTMLElement | null): number => {
+    if (!source) return 0
+    const clone = source.cloneNode(true) as HTMLElement
+    clone
+      .querySelectorAll('.account-column-resizer')
+      .forEach((node) => node.remove())
+    clone.style.cssText =
+      'display:flex;width:max-content;min-width:0;max-width:none;align-items:center;'
+    probe.append(clone)
+    const width = clone.getBoundingClientRect().width
+    clone.remove()
+    return width
+  }
+
+  try {
+    for (const key of ['site', ...ACCOUNT_COLUMN_KEYS, 'actions'] as const) {
+      if (key !== 'site' && key !== 'actions' && !visibleColumns.has(key)) {
+        continue
+      }
+      const cells = [
+        header.querySelector<HTMLElement>(`[data-column-key="${key}"]`),
+        ...rows.map((row) =>
+          row.querySelector<HTMLElement>(`[data-column-key="${key}"]`)
+        )
+      ]
+      const contentWidth = Math.max(0, ...cells.map(measure))
+      const horizontalRoom = key === 'actions' ? 8 : 18
+      widths[key] = Math.max(
+        ACCOUNT_COLUMN_MIN_WIDTHS[key],
+        Math.min(520, Math.ceil(contentWidth + horizontalRoom))
+      )
+    }
+  } finally {
+    probe.remove()
+  }
+
+  return widths
+}
+
 export function LibraryScreen({
-  accounts,
-  sites,
+  accounts: allAccounts,
+  sites: allSites,
   settings,
   appVersion,
   updateState,
@@ -196,6 +304,7 @@ export function LibraryScreen({
   onRefresh,
   onLock,
   onStartBatch,
+  onCancelBatch,
   onRecord,
   onDownloadUpdate,
   onCancelUpdate,
@@ -212,6 +321,7 @@ export function LibraryScreen({
   onRefresh: () => Promise<void>
   onLock: () => Promise<void>
   onStartBatch: (accountIds: string[]) => Promise<boolean>
+  onCancelBatch: () => Promise<void>
   onRecord: (account: AccountWithSite) => void
   onDownloadUpdate: () => Promise<void>
   onCancelUpdate: () => Promise<void>
@@ -220,7 +330,58 @@ export function LibraryScreen({
   notify: (kind: 'success' | 'error' | 'info', message: string) => void
 }): React.JSX.Element {
   const { tr, language, formatDate } = useI18n()
+  const [tabs, setTabs] = useState<AccountTab[]>([])
+  const [accountTabId, setAccountTabId] = useState(() => {
+    const stored = window.localStorage.getItem(ACCOUNT_ACTIVE_TAB_STORAGE_KEY)
+    return stored?.trim() || DEFAULT_ACCOUNT_TAB_ID
+  })
+  const [bookmarkTabId, setBookmarkTabId] = useState(
+    () => window.localStorage.getItem(BOOKMARK_ACTIVE_TAB_STORAGE_KEY)?.trim() || ''
+  )
   const [view, setView] = useState<LibraryView>('accounts')
+  const activeTabId = view === 'bookmarks' ? bookmarkTabId : accountTabId
+  const accountTabs = useMemo(
+    () => tabs.filter((tab) => !tab.hidden && tab.source !== 'bookmarks'),
+    [tabs]
+  )
+  const bookmarkTabs = useMemo(
+    () => tabs.filter((tab) => !tab.hidden && tab.source === 'bookmarks'),
+    [tabs]
+  )
+  const visibleTabs = view === 'bookmarks' ? bookmarkTabs : accountTabs
+  const isAccountCollectionView = view === 'accounts' || view === 'bookmarks'
+  const isLogView =
+    view === 'loginLogs' || view === 'accessLogs' || view === 'appLogs'
+  const bookmarkTabIds = useMemo(
+    () => new Set(bookmarkTabs.map((tab) => tab.id)),
+    [bookmarkTabs]
+  )
+  const bookmarkAccountCount = useMemo(
+    () =>
+      allAccounts.filter((account) => bookmarkTabIds.has(account.tabId)).length,
+    [allAccounts, bookmarkTabIds]
+  )
+  const bookmarkAccounts = useMemo(
+    () => allAccounts.filter((account) => bookmarkTabIds.has(account.tabId)),
+    [allAccounts, bookmarkTabIds]
+  )
+  const bookmarkSites = useMemo(
+    () => allSites.filter((site) => bookmarkTabIds.has(site.tabId)),
+    [allSites, bookmarkTabIds]
+  )
+  const accountCollectionCount = useMemo(
+    () =>
+      allAccounts.filter((account) => !bookmarkTabIds.has(account.tabId)).length,
+    [allAccounts, bookmarkTabIds]
+  )
+  const accounts = useMemo(
+    () => allAccounts.filter((account) => account.tabId === activeTabId),
+    [activeTabId, allAccounts]
+  )
+  const sites = useMemo(
+    () => allSites.filter((site) => site.tabId === activeTabId),
+    [activeTabId, allSites]
+  )
   const [groupFilter, setGroupFilter] = useState<string | null>(null)
   const [settingsModule, setSettingsModule] = useState<SettingsModule>('general')
   const [sidebarCollapsed, setSidebarCollapsed] = useState(
@@ -247,6 +408,30 @@ export function LibraryScreen({
       return new Set(ACCOUNT_COLUMN_KEYS)
     }
   })
+  const availableAccountColumnKeys = useMemo(
+    () =>
+      view === 'bookmarks'
+        ? ACCOUNT_COLUMN_KEYS.filter((key) => key !== 'status')
+        : [...ACCOUNT_COLUMN_KEYS],
+    [view]
+  )
+  const effectiveVisibleAccountColumns = useMemo(
+    () =>
+      view === 'bookmarks'
+        ? new Set([...visibleAccountColumns].filter((key) => key !== 'status'))
+        : visibleAccountColumns,
+    [view, visibleAccountColumns]
+  )
+  const [accountColumnOrder, setAccountColumnOrder] = useState<AccountColumnKey[]>(
+    () => {
+      try {
+        const stored = window.localStorage.getItem(ACCOUNT_COLUMN_ORDER_STORAGE_KEY)
+        return normalizeAccountColumnOrder(stored ? JSON.parse(stored) : null)
+      } catch {
+        return [...ACCOUNT_COLUMN_KEYS]
+      }
+    }
+  )
   const [accountColumnWidths, setAccountColumnWidths] = useState<
     Record<AccountColumnResizeKey, number>
   >(() => {
@@ -273,13 +458,20 @@ export function LibraryScreen({
       return { ...ACCOUNT_COLUMN_DEFAULT_WIDTHS }
     }
   })
+  const [accountFitContentWidths, setAccountFitContentWidths] = useState<
+    Record<AccountColumnResizeKey, number>
+  >(() => ({ ...ACCOUNT_COLUMN_DEFAULT_WIDTHS }))
   const [accountColumnSizing, setAccountColumnSizing] =
     useState<AccountColumnSizing>(() => {
       const stored = window.localStorage.getItem(ACCOUNT_COLUMN_SIZING_STORAGE_KEY)
-      return stored === 'content' || stored === 'manual' ? stored : 'window'
+      if (stored === 'content' || stored === 'manual') return stored
+      return 'window'
     })
   const [columnMenuOpen, setColumnMenuOpen] = useState(false)
   const [columnMenuPosition, setColumnMenuPosition] = useState({ left: 0, top: 0 })
+  const [draggedColumnKey, setDraggedColumnKey] = useState<AccountColumnKey | null>(
+    null
+  )
   const [accountGroupTreeExpanded, setAccountGroupTreeExpanded] = useState(
     () => window.localStorage.getItem('autologin.account.groups.treeExpanded') !== '0'
   )
@@ -308,6 +500,18 @@ export function LibraryScreen({
   )
   const [groupDefinitions, setGroupDefinitions] = useState<GroupDefinition[]>([])
   const [deletedAccounts, setDeletedAccounts] = useState<DeletedAccountWithSite[]>([])
+  const [trashSection, setTrashSection] = useState<'accounts' | 'bookmarks'>(
+    'accounts'
+  )
+  const visibleDeletedAccounts = useMemo(
+    () =>
+      deletedAccounts.filter((record) =>
+        trashSection === 'bookmarks'
+          ? record.source === 'bookmarks'
+          : record.source !== 'bookmarks'
+      ),
+    [deletedAccounts, trashSection]
+  )
   const [groupCreateState, setGroupCreateState] = useState<{
     parent: GroupSummary | null
     left: number
@@ -317,11 +521,30 @@ export function LibraryScreen({
   const [groupCreateError, setGroupCreateError] = useState('')
   const [groupCreateBusy, setGroupCreateBusy] = useState(false)
   const [accountMenu, setAccountMenu] = useState<AccountMenuState | null>(null)
+  const [tabMenu, setTabMenu] = useState<{
+    tab: AccountTab
+    left: number
+    top: number
+  } | null>(null)
+  const [renameTabTarget, setRenameTabTarget] = useState<AccountTab | null>(null)
+  const [renameTabValue, setRenameTabValue] = useState('')
+  const [tabBusy, setTabBusy] = useState(false)
   const [restoringAccountId, setRestoringAccountId] = useState<string | null>(null)
+  const [trashSelection, setTrashSelection] = useState<Set<string>>(() => new Set())
+  const [purgeTargets, setPurgeTargets] = useState<string[] | null>(null)
+  const [trashActionBusy, setTrashActionBusy] = useState(false)
   const [trashRetentionSaving, setTrashRetentionSaving] = useState(false)
+  const [trashRetentionOpen, setTrashRetentionOpen] = useState(false)
   const [selectedIds, setSelectedIds] = useState<Set<string>>(() => new Set())
+  const [accountPageSize, setAccountPageSize] = useState<AccountPageSize>(20)
+  const [accountPage, setAccountPage] = useState(1)
   const [drawer, setDrawer] = useState<DrawerState | null>(null)
   const [draggedGroupPath, setDraggedGroupPath] = useState<string | null>(null)
+  const [draggedAccountIds, setDraggedAccountIds] = useState<string[]>([])
+  const [accountDropTarget, setAccountDropTarget] = useState<{
+    accountId: string
+    position: 'before' | 'after'
+  } | null>(null)
   const [groupDropTarget, setGroupDropTarget] = useState<{
     path: string
     position: GroupDropPosition
@@ -333,10 +556,6 @@ export function LibraryScreen({
   } | null>(null)
   const [renameGroupTarget, setRenameGroupTarget] = useState<GroupSummary | null>(null)
   const [renameGroupValue, setRenameGroupValue] = useState('')
-  const [moveGroupTarget, setMoveGroupTarget] = useState<GroupSummary | null>(null)
-  const [moveGroupDestination, setMoveGroupDestination] = useState('')
-  const [moveGroupBusy, setMoveGroupBusy] = useState(false)
-  const [moveGroupError, setMoveGroupError] = useState('')
   const [deleteGroupTarget, setDeleteGroupTarget] = useState<GroupSummary | null>(null)
   const [groupActionBusy, setGroupActionBusy] = useState(false)
   const [batchStrategyOpen, setBatchStrategyOpen] = useState(false)
@@ -344,22 +563,36 @@ export function LibraryScreen({
   const [batchSelectors, setBatchSelectors] = useState<ManualLoginSelectors>({})
   const [batchStrategyError, setBatchStrategyError] = useState('')
   const [batchStrategyBusy, setBatchStrategyBusy] = useState(false)
+  const [batchIcon, setBatchIcon] = useState<string | null>(null)
+  const [batchIconBusy, setBatchIconBusy] = useState(false)
+  const [batchIconFetchBusy, setBatchIconFetchBusy] = useState(false)
   const [duplicateBusy, setDuplicateBusy] = useState(false)
   const [accountClipboardIds, setAccountClipboardIds] = useState<string[]>([])
   const [keyboardDuplicateBusy, setKeyboardDuplicateBusy] = useState(false)
+  const [batchCancelBusy, setBatchCancelBusy] = useState(false)
   const [manualRefreshing, setManualRefreshing] = useState(false)
   const [deleteSelectedOpen, setDeleteSelectedOpen] = useState(false)
   const [deleteSelectedBusy, setDeleteSelectedBusy] = useState(false)
   const searchRef = useRef<HTMLInputElement>(null)
   const selectAllRef = useRef<HTMLInputElement>(null)
+  const selectionAnchorRef = useRef<string | null>(null)
+  const trashSelectAllRef = useRef<HTMLInputElement>(null)
+  const trashRetentionRef = useRef<HTMLDivElement>(null)
   const groupCreateInputRef = useRef<HTMLInputElement>(null)
+  const batchIconInputRef = useRef<HTMLInputElement>(null)
   const columnMenuRef = useRef<HTMLDivElement>(null)
   const columnResizeCleanupRef = useRef<(() => void) | null>(null)
+  const accountListRef = useRef<HTMLElement>(null)
+  const accountTableScrollRef = useRef<HTMLDivElement>(null)
+  const accountLayoutRef = useRef<HTMLDivElement>(null)
   const draggedGroupPathRef = useRef<string | null>(null)
+  const draggedAccountIdsRef = useRef<string[]>([])
   const subnavResizeRef = useRef<{
     startX: number
     startWidth: number
     latestWidth: number
+    pendingWidth: number
+    frameId: number | null
   } | null>(null)
   const subnavResizeCleanupRef = useRef<(() => void) | null>(null)
   const subnavResizeMovedRef = useRef(false)
@@ -419,13 +652,25 @@ export function LibraryScreen({
       })
     }
 
-    const order = new Map(settings.groupOrder.map((name, index) => [name, index]))
+    const scopedGroupOrder =
+      settings.groupOrders?.[activeTabId] ??
+      (activeTabId === DEFAULT_ACCOUNT_TAB_ID ? settings.groupOrder : [])
+    const order = new Map(scopedGroupOrder.map((name, index) => [name, index]))
     const values = [...grouped.values()].map((group) => ({
       ...group,
       accounts: [...group.accounts].sort(compareAccounts)
     }))
     return flattenGroupTree(values, order, language)
-  }, [accounts, groupDefinitions, language, settings.groupOrder, sites, tr])
+  }, [
+    accounts,
+    activeTabId,
+    groupDefinitions,
+    language,
+    settings.groupOrder,
+    settings.groupOrders,
+    sites,
+    tr
+  ])
   const namedGroups = useMemo(
     () => groups.filter((group) => group.actualName !== null),
     [groups]
@@ -463,7 +708,15 @@ export function LibraryScreen({
     : null
   const currentBreadcrumb = useMemo(() => {
     if (!currentGroup) {
-      return [{ label: tr('全部账号', 'All accounts', '全部帳號'), path: null as string | null }]
+      return [
+        {
+          label:
+            view === 'bookmarks'
+              ? tr('全部书签', 'All bookmarks', '全部書籤')
+              : tr('全部账号', 'All accounts', '全部帳號'),
+          path: null as string | null
+        }
+      ]
     }
     if (!currentGroup.actualName) {
       return [
@@ -478,33 +731,7 @@ export function LibraryScreen({
       label,
       path: segments.slice(0, index + 1).join(GROUP_PATH_SEPARATOR)
     }))
-  }, [currentGroup, tr])
-  const moveGroupDestinations = useMemo(() => {
-    if (!moveGroupTarget?.actualName) return []
-    const sourcePath = moveGroupTarget.actualName
-    const sourceLevel = groupLevel(sourcePath)
-    const sourceMaxLevel = Math.max(
-      sourceLevel,
-      ...groups
-        .filter(
-          (group) =>
-            group.actualName === sourcePath ||
-            group.actualName?.startsWith(`${sourcePath}${GROUP_PATH_SEPARATOR}`)
-        )
-        .map((group) => groupLevel(group.actualName ?? group.key))
-    )
-    return groups.filter((group) => {
-      if (!group.actualName) return false
-      if (
-        group.actualName === sourcePath ||
-        group.actualName.startsWith(`${sourcePath}${GROUP_PATH_SEPARATOR}`)
-      ) {
-        return false
-      }
-      return groupLevel(group.actualName) + 1 + (sourceMaxLevel - sourceLevel) <= GROUP_MAX_DEPTH
-    })
-  }, [groups, moveGroupTarget])
-
+  }, [currentGroup, tr, view])
   const filteredAccounts = useMemo(() => {
     const query = search.trim().toLocaleLowerCase(language)
     return accounts
@@ -525,14 +752,31 @@ export function LibraryScreen({
       .sort(compareAccounts)
   }, [accounts, groupFilter, language, search])
 
+  const accountPageCount = Math.max(
+    1,
+    Math.ceil(filteredAccounts.length / accountPageSize)
+  )
+  const currentAccountPage = Math.min(accountPage, accountPageCount)
+  const pagedAccounts = useMemo(
+    () =>
+      filteredAccounts.slice(
+        (currentAccountPage - 1) * accountPageSize,
+        currentAccountPage * accountPageSize
+      ),
+    [accountPageSize, currentAccountPage, filteredAccounts]
+  )
   const visibleSelectedIds = useMemo(
     () =>
       filteredAccounts.filter((account) => selectedIds.has(account.id)).map((account) => account.id),
     [filteredAccounts, selectedIds]
   )
-  const allVisibleSelected =
-    filteredAccounts.length > 0 && visibleSelectedIds.length === filteredAccounts.length
-  const someVisibleSelected = visibleSelectedIds.length > 0 && !allVisibleSelected
+  const pageSelectedIds = useMemo(
+    () => pagedAccounts.filter((account) => selectedIds.has(account.id)).map((account) => account.id),
+    [pagedAccounts, selectedIds]
+  )
+  const allPageSelected =
+    pagedAccounts.length > 0 && pageSelectedIds.length === pagedAccounts.length
+  const somePageSelected = pageSelectedIds.length > 0 && !allPageSelected
   const selectedAccountCount = selectedIds.size
   const selectedAccounts = useMemo(
     () => accounts.filter((account) => selectedIds.has(account.id)),
@@ -549,50 +793,122 @@ export function LibraryScreen({
     () =>
       ({
         '--account-columns-wide': accountColumnTemplate(
-          visibleAccountColumns,
+          effectiveVisibleAccountColumns,
+          accountColumnOrder,
           'wide',
           accountColumnSizing,
-          accountColumnWidths
+          accountColumnWidths,
+          accountFitContentWidths
         ),
         '--account-columns-medium': accountColumnTemplate(
-          visibleAccountColumns,
+          effectiveVisibleAccountColumns,
+          accountColumnOrder,
           'medium',
           accountColumnSizing,
-          accountColumnWidths
+          accountColumnWidths,
+          accountFitContentWidths
         ),
         '--account-columns-compact': accountColumnTemplate(
-          visibleAccountColumns,
+          effectiveVisibleAccountColumns,
+          accountColumnOrder,
           'compact',
           accountColumnSizing,
-          accountColumnWidths
+          accountColumnWidths,
+          accountFitContentWidths
         ),
         '--account-columns-narrow': accountColumnTemplate(
-          visibleAccountColumns,
+          effectiveVisibleAccountColumns,
+          accountColumnOrder,
           'narrow',
           accountColumnSizing,
-          accountColumnWidths
+          accountColumnWidths,
+          accountFitContentWidths
         )
       }) as React.CSSProperties,
-    [accountColumnSizing, accountColumnWidths, visibleAccountColumns]
+    [
+      accountFitContentWidths,
+      accountColumnOrder,
+      accountColumnSizing,
+      accountColumnWidths,
+      effectiveVisibleAccountColumns
+    ]
   )
 
   useEffect(() => {
     let cancelled = false
-    void Promise.all([window.autologin.groups.list(), window.autologin.accounts.listDeleted()])
-      .then(([nextGroups, nextDeleted]) => {
+    void Promise.all([
+      window.autologin.tabs.list(),
+      window.autologin.accounts.listDeleted()
+    ])
+      .then(([nextTabs, nextDeleted]) => {
         if (cancelled) return
-        setGroupDefinitions(nextGroups)
+        setTabs(nextTabs)
+        const nextAccountTabs = nextTabs.filter(
+          (tab) => !tab.hidden && tab.source !== 'bookmarks'
+        )
+        if (!nextAccountTabs.some((tab) => tab.id === accountTabId)) {
+          setAccountTabId(
+            nextAccountTabs.find((tab) => tab.id === DEFAULT_ACCOUNT_TAB_ID)?.id ??
+              nextAccountTabs[0]?.id ??
+              DEFAULT_ACCOUNT_TAB_ID
+          )
+        }
+        const nextBookmarkTabs = nextTabs.filter(
+          (tab) => !tab.hidden && tab.source === 'bookmarks'
+        )
+        if (!nextBookmarkTabs.some((tab) => tab.id === bookmarkTabId)) {
+          setBookmarkTabId(nextBookmarkTabs[0]?.id ?? '')
+        }
         setDeletedAccounts(nextDeleted)
       })
       .catch(() => {
         if (cancelled) return
-        setGroupDefinitions([])
+        setTabs([])
         setDeletedAccounts([])
       })
     return () => {
       cancelled = true
     }
-  }, [])
+  }, [accountTabId, activeTabId, bookmarkTabId])
+
+  useEffect(() => {
+    let cancelled = false
+    setGroupFilter(null)
+    setSearch('')
+    setSearchExpanded(false)
+    setSelectedIds(new Set())
+    selectionAnchorRef.current = null
+    setDrawer(null)
+    if (!activeTabId) {
+      setGroupDefinitions([])
+      return () => {
+        cancelled = true
+      }
+    }
+    void window.autologin.groups
+      .list(activeTabId)
+      .then((nextGroups) => {
+        if (!cancelled) setGroupDefinitions(nextGroups)
+      })
+      .catch(() => {
+        if (!cancelled) setGroupDefinitions([])
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [activeTabId])
+
+  useEffect(() => {
+    window.localStorage.setItem(ACCOUNT_ACTIVE_TAB_STORAGE_KEY, accountTabId)
+  }, [accountTabId])
+
+  useEffect(() => {
+    if (bookmarkTabId) {
+      window.localStorage.setItem(BOOKMARK_ACTIVE_TAB_STORAGE_KEY, bookmarkTabId)
+    } else {
+      window.localStorage.removeItem(BOOKMARK_ACTIVE_TAB_STORAGE_KEY)
+    }
+  }, [bookmarkTabId])
 
   useEffect(() => {
     setSelectedIds((current) => {
@@ -601,6 +917,16 @@ export function LibraryScreen({
       return next.size === current.size ? current : next
     })
   }, [accounts])
+
+  useEffect(() => {
+    setTrashSelection((current) => {
+      const available = new Set(
+        visibleDeletedAccounts.map((account) => account.id)
+      )
+      const next = new Set([...current].filter((id) => available.has(id)))
+      return next.size === current.size ? current : next
+    })
+  }, [visibleDeletedAccounts])
 
   useEffect(() => {
     if (view !== 'trash') return
@@ -615,13 +941,72 @@ export function LibraryScreen({
 
   useEffect(() => {
     if (selectAllRef.current) {
-      selectAllRef.current.indeterminate = someVisibleSelected
+      selectAllRef.current.indeterminate = somePageSelected
     }
-  }, [someVisibleSelected])
+  }, [somePageSelected])
 
   useEffect(() => {
-    if (view !== 'accounts') setSelectedIds(new Set())
-  }, [view])
+    setAccountPage(1)
+  }, [accountPageSize, activeTabId, groupFilter, search])
+
+  useEffect(() => {
+    if (trashSelectAllRef.current) {
+      trashSelectAllRef.current.indeterminate =
+        trashSelection.size > 0 &&
+        trashSelection.size < visibleDeletedAccounts.length
+    }
+  }, [trashSelection.size, visibleDeletedAccounts.length])
+
+  useEffect(() => {
+    if (!trashRetentionOpen) return
+    const closeOnPointer = (event: PointerEvent): void => {
+      if (
+        event.target instanceof Node &&
+        trashRetentionRef.current?.contains(event.target)
+      ) {
+        return
+      }
+      setTrashRetentionOpen(false)
+    }
+    const closeOnEscape = (event: KeyboardEvent): void => {
+      if (event.key === 'Escape') setTrashRetentionOpen(false)
+    }
+    document.addEventListener('pointerdown', closeOnPointer)
+    document.addEventListener('keydown', closeOnEscape)
+    return () => {
+      document.removeEventListener('pointerdown', closeOnPointer)
+      document.removeEventListener('keydown', closeOnEscape)
+    }
+  }, [trashRetentionOpen])
+
+  useEffect(() => {
+    if (!isAccountCollectionView) {
+      setSelectedIds(new Set())
+      selectionAnchorRef.current = null
+    }
+  }, [isAccountCollectionView])
+
+  useEffect(() => {
+    if (!tabMenu) return
+    const close = (): void => setTabMenu(null)
+    const closeOnPointer = (event: PointerEvent): void => {
+      if (event.target instanceof Element && event.target.closest('.account-tab-menu')) {
+        return
+      }
+      close()
+    }
+    const closeOnEscape = (event: KeyboardEvent): void => {
+      if (event.key === 'Escape') close()
+    }
+    document.addEventListener('pointerdown', closeOnPointer)
+    document.addEventListener('keydown', closeOnEscape)
+    window.addEventListener('blur', close)
+    return () => {
+      document.removeEventListener('pointerdown', closeOnPointer)
+      document.removeEventListener('keydown', closeOnEscape)
+      window.removeEventListener('blur', close)
+    }
+  }, [tabMenu])
 
   useEffect(() => {
     if (!groupMenu) return
@@ -677,10 +1062,6 @@ export function LibraryScreen({
 
   useEffect(() => {
     if (!accountMenu) return
-    let scrollArmed = false
-    const armScrollClose = window.requestAnimationFrame(() => {
-      scrollArmed = true
-    })
     const close = (): void => setAccountMenu(null)
     const closeOnPointer = (event: PointerEvent): void => {
       if (event.target instanceof Element && event.target.closest('.account-context-menu')) {
@@ -688,22 +1069,16 @@ export function LibraryScreen({
       }
       close()
     }
-    const closeOnScroll = (): void => {
-      if (scrollArmed) close()
-    }
     const closeOnEscape = (event: KeyboardEvent): void => {
       if (event.key === 'Escape') close()
     }
     document.addEventListener('pointerdown', closeOnPointer)
     document.addEventListener('keydown', closeOnEscape)
     window.addEventListener('resize', close)
-    window.addEventListener('scroll', closeOnScroll, true)
     return () => {
-      window.cancelAnimationFrame(armScrollClose)
       document.removeEventListener('pointerdown', closeOnPointer)
       document.removeEventListener('keydown', closeOnEscape)
       window.removeEventListener('resize', close)
-      window.removeEventListener('scroll', closeOnScroll, true)
     }
   }, [accountMenu])
 
@@ -750,13 +1125,50 @@ export function LibraryScreen({
     window.localStorage.setItem(ACCOUNT_COLUMN_SIZING_STORAGE_KEY, accountColumnSizing)
   }, [accountColumnSizing])
 
+  useEffect(() => {
+    if (accountColumnSizing !== 'content') return
+    const list = accountListRef.current
+    const header = list?.querySelector<HTMLElement>('.account-list__header')
+    if (!list || !header) return
+    const rows = [...list.querySelectorAll<HTMLElement>('.account-row')]
+    const frame = window.requestAnimationFrame(() => {
+      const next = measureAccountColumnWidths(
+        header,
+        rows,
+        effectiveVisibleAccountColumns
+      )
+      setAccountFitContentWidths((current) =>
+        Object.entries(next).every(
+          ([key, value]) =>
+            current[key as AccountColumnResizeKey] === value
+        )
+          ? current
+          : next
+      )
+    })
+    return () => window.cancelAnimationFrame(frame)
+  }, [
+    accountColumnSizing,
+    accountColumnOrder,
+    pagedAccounts,
+    settings.fontSizeScale,
+    effectiveVisibleAccountColumns
+  ])
+
+  useEffect(() => {
+    window.localStorage.setItem(
+      ACCOUNT_COLUMN_ORDER_STORAGE_KEY,
+      JSON.stringify(accountColumnOrder)
+    )
+  }, [accountColumnOrder])
+
   useEffect(() => () => subnavResizeCleanupRef.current?.(), [])
   useEffect(() => () => columnResizeCleanupRef.current?.(), [])
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent): void => {
       if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'k') {
-        if (view !== 'accounts') return
+        if (!isAccountCollectionView) return
         event.preventDefault()
         setSearchExpanded(true)
         window.requestAnimationFrame(() => searchRef.current?.focus())
@@ -764,12 +1176,12 @@ export function LibraryScreen({
     }
     window.addEventListener('keydown', onKeyDown)
     return () => window.removeEventListener('keydown', onKeyDown)
-  }, [view])
+  }, [isAccountCollectionView])
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent): void => {
       if (
-        view !== 'accounts' ||
+        !isAccountCollectionView ||
         accountEditorOpen ||
         batchState?.active ||
         batchStrategyOpen ||
@@ -786,7 +1198,10 @@ export function LibraryScreen({
         return
       }
       const modifier = event.ctrlKey || event.metaKey
-      if (modifier && event.key.toLowerCase() === 'c') {
+      if (
+        settings.accountCopyShortcutEnabled &&
+        matchesKeyboardShortcut(event, settings.accountCopyShortcut)
+      ) {
         if (visibleSelectedIds.length === 0) return
         event.preventDefault()
         setAccountClipboardIds([...visibleSelectedIds])
@@ -822,28 +1237,53 @@ export function LibraryScreen({
     keyboardDuplicateBusy,
     notify,
     selectedIds.size,
+    settings.accountCopyShortcut,
+    settings.accountCopyShortcutEnabled,
     tr,
-    view,
+    isAccountCollectionView,
     visibleSelectedIds
   ])
 
   async function refreshAll(): Promise<void> {
-    const [, nextGroups, nextDeleted] = await Promise.all([
+    const [, nextTabs, nextGroups, nextDeleted] = await Promise.all([
       onRefresh(),
-      window.autologin.groups.list(),
+      window.autologin.tabs.list(),
+      activeTabId ? window.autologin.groups.list(activeTabId) : Promise.resolve([]),
       window.autologin.accounts.listDeleted()
     ])
+    setTabs(nextTabs)
     setGroupDefinitions(nextGroups)
     setDeletedAccounts(nextDeleted)
   }
 
+  async function handleDataImported(tabId: string): Promise<void> {
+    const [nextTabs] = await Promise.all([
+      window.autologin.tabs.list(),
+      onRefresh()
+    ])
+    setTabs(nextTabs)
+    const importedTab = nextTabs.find((tab) => tab.id === tabId)
+    if (importedTab?.source === 'bookmarks') {
+      setBookmarkTabId(tabId)
+      setView('bookmarks')
+    } else {
+      setAccountTabId(tabId)
+      setView('accounts')
+    }
+    setGroupDefinitions(
+      (await window.autologin.groups.list(tabId)) ?? []
+    )
+  }
+
   function switchView(next: LibraryView): void {
     setView(next)
+    setDrawer(null)
     setSearch('')
     setSearchExpanded(false)
     setColumnMenuOpen(false)
     setGroupFilter(null)
     setSelectedIds(new Set())
+    selectionAnchorRef.current = null
   }
 
   function toggleAccountColumn(key: AccountColumnKey): void {
@@ -858,6 +1298,19 @@ export function LibraryScreen({
         ACCOUNT_COLUMN_STORAGE_KEY,
         JSON.stringify(ACCOUNT_COLUMN_KEYS.filter((column) => next.has(column)))
       )
+      return next
+    })
+  }
+
+  function moveAccountColumn(source: AccountColumnKey, target: AccountColumnKey): void {
+    if (source === target) return
+    setAccountColumnOrder((current) => {
+      const from = current.indexOf(source)
+      const to = current.indexOf(target)
+      if (from < 0 || to < 0) return current
+      const next = [...current]
+      next.splice(from, 1)
+      next.splice(to, 0, source)
       return next
     })
   }
@@ -942,6 +1395,14 @@ export function LibraryScreen({
     )
   }
 
+  function accountColumnLabel(key: AccountColumnKey): string {
+    if (key === 'username') return tr('用户名', 'Username', '使用者名稱')
+    if (key === 'group') return tr('分组', 'Group', '分組')
+    if (key === 'updated') return tr('最后更新', 'Last updated', '最後更新')
+    if (key === 'status') return tr('状态', 'Status', '狀態')
+    return tr('站点 URL', 'Site URL', '站點 URL')
+  }
+
   function chooseAllAccounts(): void {
     setView('accounts')
     setGroupFilter(null)
@@ -951,7 +1412,7 @@ export function LibraryScreen({
   }
 
   function chooseGroup(group: GroupSummary): void {
-    setView('accounts')
+    setView(view === 'bookmarks' ? 'bookmarks' : 'accounts')
     setGroupFilter(group.key)
     setSearch('')
     setSearchExpanded(false)
@@ -959,8 +1420,20 @@ export function LibraryScreen({
   }
 
   function chooseAllAccountsFromTree(): void {
-    chooseAllAccounts()
+    setGroupFilter(null)
+    setSearch('')
+    setSearchExpanded(false)
+    setSelectedIds(new Set())
     toggleAccountGroupTree()
+  }
+
+  function chooseBookmarks(): void {
+    const targetId =
+      bookmarkTabs.find((tab) => tab.id === bookmarkTabId)?.id ??
+      bookmarkTabs[0]?.id ??
+      ''
+    setBookmarkTabId(targetId)
+    switchView('bookmarks')
   }
 
   function chooseGroupFromTree(group: GroupSummary, hasChildren: boolean): void {
@@ -980,7 +1453,7 @@ export function LibraryScreen({
     })
   }
 
-  function chooseLogView(next: 'loginLogs' | 'appLogs'): void {
+  function chooseLogView(next: 'loginLogs' | 'accessLogs' | 'appLogs'): void {
     switchView(next)
   }
 
@@ -1002,6 +1475,154 @@ export function LibraryScreen({
 
   function openSettings(): void {
     chooseSettingsModule(settingsModule)
+  }
+
+  async function createTab(source: 'local' | 'bookmarks' = 'local'): Promise<void> {
+    if (tabBusy) return
+    setTabBusy(true)
+    try {
+      const tab = await window.autologin.tabs.create({
+        name:
+          source === 'bookmarks'
+            ? tr('新书签标签', 'New bookmark tab', '新書籤標籤')
+            : tr('新标签', 'New tab', '新標籤'),
+        source
+      })
+      setTabs((current) => [...current, tab])
+      if (source === 'bookmarks') {
+        setBookmarkTabId(tab.id)
+        setView('bookmarks')
+      } else {
+        setAccountTabId(tab.id)
+        setView('accounts')
+      }
+      notify(
+        'success',
+        source === 'bookmarks'
+          ? tr('书签标签页已创建', 'Bookmark tab created.', '書籤標籤頁已建立')
+          : tr('标签页已创建', 'Tab created.', '標籤頁已建立')
+      )
+    } catch (error) {
+      notify(
+        'error',
+        error instanceof Error
+          ? error.message
+          : tr('创建标签页失败', 'Could not create tab.', '建立標籤頁失敗')
+      )
+    } finally {
+      setTabBusy(false)
+    }
+  }
+
+  function openTabMenu(
+    event: React.MouseEvent<HTMLElement>,
+    tab: AccountTab
+  ): void {
+    event.preventDefault()
+    event.stopPropagation()
+    const width = 224
+    const height = 218
+    setTabMenu({
+      tab,
+      left: Math.max(8, Math.min(event.clientX, window.innerWidth - width - 8)),
+      top:
+        event.clientY + height + 8 <= window.innerHeight
+          ? event.clientY
+          : Math.max(8, event.clientY - height)
+    })
+  }
+
+  function beginRenameTab(tab: AccountTab): void {
+    setTabMenu(null)
+    setRenameTabTarget(tab)
+    setRenameTabValue(tab.name)
+  }
+
+  async function saveTabName(event: React.FormEvent): Promise<void> {
+    event.preventDefault()
+    if (!renameTabTarget || !renameTabValue.trim() || tabBusy) return
+    setTabBusy(true)
+    try {
+      const updated = await window.autologin.tabs.update(renameTabTarget.id, {
+        name: renameTabValue.trim()
+      })
+      setTabs((current) =>
+        current.map((tab) => (tab.id === updated.id ? updated : tab))
+      )
+      setRenameTabTarget(null)
+      notify('success', tr('标签页名称已保存', 'Tab renamed.', '標籤頁已重新命名'))
+    } catch (error) {
+      notify(
+        'error',
+        error instanceof Error
+          ? error.message
+          : tr('重命名标签页失败', 'Could not rename tab.', '重新命名標籤頁失敗')
+      )
+    } finally {
+      setTabBusy(false)
+    }
+  }
+
+  async function setTabColor(tab: AccountTab, color: string): Promise<void> {
+    if (tabBusy) return
+    setTabBusy(true)
+    try {
+      const updated = await window.autologin.tabs.update(tab.id, { color })
+      setTabs((current) =>
+        current.map((entry) => (entry.id === updated.id ? updated : entry))
+      )
+      setTabMenu(null)
+    } catch (error) {
+      notify(
+        'error',
+        error instanceof Error
+          ? error.message
+          : tr('设置标签页颜色失败', 'Could not update tab color.', '設定標籤頁顏色失敗')
+      )
+    } finally {
+      setTabBusy(false)
+    }
+  }
+
+  async function closeTab(tab: AccountTab): Promise<void> {
+    if (tabBusy) return
+    setTabBusy(true)
+    try {
+      await window.autologin.tabs.delete(tab.id)
+      const nextTabs = tabs.map((entry) =>
+        entry.id === tab.id ? { ...entry, hidden: true } : entry
+      )
+      setTabs(nextTabs)
+      if (activeTabId === tab.id) {
+        if (tab.source === 'bookmarks') {
+          const nextBookmarkTab = nextTabs.find(
+            (entry) => !entry.hidden && entry.source === 'bookmarks'
+          )
+          setBookmarkTabId(nextBookmarkTab?.id ?? '')
+        } else {
+          const nextAccountTab =
+            nextTabs.find(
+              (entry) =>
+                !entry.hidden && entry.id === DEFAULT_ACCOUNT_TAB_ID
+            ) ??
+            nextTabs.find(
+              (entry) => !entry.hidden && entry.source !== 'bookmarks'
+            )
+          setAccountTabId(nextAccountTab?.id ?? '')
+        }
+      }
+      setTabMenu(null)
+      notify('success', tr('标签页已关闭', 'Tab closed.', '標籤頁已關閉'))
+    } catch (error) {
+      notify(
+        'error',
+        error instanceof Error
+          ? error.message
+          : tr('关闭标签页失败', 'Could not close tab.', '關閉標籤頁失敗')
+      )
+    } finally {
+      setTabBusy(false)
+    }
   }
 
   function toggleGroupExpanded(path: string): void {
@@ -1066,7 +1687,9 @@ export function LibraryScreen({
     subnavResizeRef.current = {
       startX: event.clientX,
       startWidth: accountSubnavWidth,
-      latestWidth: accountSubnavWidth
+      latestWidth: accountSubnavWidth,
+      pendingWidth: accountSubnavWidth,
+      frameId: null
     }
     document.body.classList.add('is-resizing-account-subnav')
     subnavResizeCleanupRef.current?.()
@@ -1075,6 +1698,11 @@ export function LibraryScreen({
       window.removeEventListener('pointermove', onMove)
       window.removeEventListener('pointerup', finish)
       window.removeEventListener('pointercancel', finish)
+      const drag = subnavResizeRef.current
+      if (drag?.frameId !== null && drag?.frameId !== undefined) {
+        window.cancelAnimationFrame(drag.frameId)
+        drag.frameId = null
+      }
       subnavResizeRef.current = null
       subnavResizeCleanupRef.current = null
       document.body.classList.remove('is-resizing-account-subnav')
@@ -1082,6 +1710,16 @@ export function LibraryScreen({
     const finish = (): void => {
       const drag = subnavResizeRef.current
       const moved = subnavResizeMovedRef.current
+      if (drag) {
+        if (drag.frameId !== null) {
+          window.cancelAnimationFrame(drag.frameId)
+          drag.frameId = null
+        }
+        accountLayoutRef.current?.style.setProperty(
+          '--account-subnav-width',
+          `${drag.latestWidth}px`
+        )
+      }
       cleanup()
       if (!drag) return
       if (moved) {
@@ -1118,7 +1756,17 @@ export function LibraryScreen({
         Math.min(ACCOUNT_SUBNAV_MAX_WIDTH, drag.startWidth + delta)
       )
       drag.latestWidth = nextWidth
-      setAccountSubnavWidth(nextWidth)
+      drag.pendingWidth = nextWidth
+      if (drag.frameId !== null) return
+      drag.frameId = window.requestAnimationFrame(() => {
+        const activeDrag = subnavResizeRef.current
+        if (!activeDrag) return
+        activeDrag.frameId = null
+        accountLayoutRef.current?.style.setProperty(
+          '--account-subnav-width',
+          `${activeDrag.pendingWidth}px`
+        )
+      })
     }
 
     window.addEventListener('pointermove', onMove)
@@ -1179,6 +1827,7 @@ export function LibraryScreen({
     setGroupCreateError('')
     try {
       await window.autologin.groups.create({
+        tabId: activeTabId,
         ...(groupCreateState?.parent?.actualName
           ? { parentPath: groupCreateState.parent.actualName }
           : {}),
@@ -1206,7 +1855,7 @@ export function LibraryScreen({
     event.preventDefault()
     event.stopPropagation()
     const menuWidth = 196
-    const menuHeight = 214
+    const menuHeight = 420
     setAccountMenu({
       kind: 'account',
       account,
@@ -1219,11 +1868,12 @@ export function LibraryScreen({
   }
 
   function openPageAccountMenu(event: React.MouseEvent<HTMLElement>): void {
+    if (view === 'bookmarks') return
     if (event.defaultPrevented) return
     const target = event.target instanceof Element ? event.target : null
     if (
       target?.closest(
-        '.account-row, .account-list__header, .account-subnav-shell, button, input, select, textarea, a, label'
+        '.account-row, .account-list__header, .account-tabs, .account-subnav-shell, button, input, select, textarea, a, label'
       )
     ) {
       return
@@ -1342,7 +1992,12 @@ export function LibraryScreen({
     try {
       await window.autologin.accounts.restore(accountId)
       await refreshAll()
-      notify('success', tr('账号已恢复', 'Account restored.', '帳號已恢復'))
+      notify(
+        'success',
+        trashSection === 'bookmarks'
+          ? tr('书签已恢复', 'Bookmark restored.', '書籤已恢復')
+          : tr('账号已恢复', 'Account restored.', '帳號已恢復')
+      )
     } catch (error) {
       notify(
         'error',
@@ -1352,6 +2007,90 @@ export function LibraryScreen({
       )
     } finally {
       setRestoringAccountId(null)
+    }
+  }
+
+  function toggleTrashSelection(accountId: string): void {
+    setTrashSelection((current) => {
+      const next = new Set(current)
+      if (next.has(accountId)) next.delete(accountId)
+      else next.add(accountId)
+      return next
+    })
+  }
+
+  function toggleAllTrashSelection(): void {
+    if (trashSelection.size === visibleDeletedAccounts.length) {
+      setTrashSelection(new Set())
+      return
+    }
+    setTrashSelection(new Set(visibleDeletedAccounts.map((account) => account.id)))
+  }
+
+  async function restoreSelectedAccounts(): Promise<void> {
+    if (trashSelection.size === 0 || trashActionBusy) return
+    setTrashActionBusy(true)
+    try {
+      const result = await window.autologin.accounts.restoreMany([...trashSelection])
+      setTrashSelection(new Set())
+      await refreshAll()
+      notify(
+        'success',
+        trashSection === 'bookmarks'
+          ? tr(
+              `已恢复 ${result.deleted} 个书签`,
+              `Restored ${result.deleted} bookmark${result.deleted === 1 ? '' : 's'}.`,
+              `已恢復 ${result.deleted} 個書籤`
+            )
+          : tr(
+              `已恢复 ${result.deleted} 个账号`,
+              `Restored ${result.deleted} account${result.deleted === 1 ? '' : 's'}.`,
+              `已恢復 ${result.deleted} 個帳號`
+            )
+      )
+    } catch (error) {
+      notify(
+        'error',
+        error instanceof Error
+          ? error.message
+          : tr('批量恢复失败', 'Could not restore accounts.', '批次恢復失敗')
+      )
+    } finally {
+      setTrashActionBusy(false)
+    }
+  }
+
+  async function purgeSelectedAccounts(): Promise<void> {
+    if (!purgeTargets || purgeTargets.length === 0 || trashActionBusy) return
+    setTrashActionBusy(true)
+    try {
+      const result = await window.autologin.accounts.purgeMany(purgeTargets)
+      setPurgeTargets(null)
+      setTrashSelection(new Set())
+      await refreshAll()
+      notify(
+        'success',
+        trashSection === 'bookmarks'
+          ? tr(
+              `已永久删除 ${result.deleted} 个书签`,
+              `Permanently deleted ${result.deleted} bookmark${result.deleted === 1 ? '' : 's'}.`,
+              `已永久刪除 ${result.deleted} 個書籤`
+            )
+          : tr(
+              `已永久删除 ${result.deleted} 个账号`,
+              `Permanently deleted ${result.deleted} account${result.deleted === 1 ? '' : 's'}.`,
+              `已永久刪除 ${result.deleted} 個帳號`
+            )
+      )
+    } catch (error) {
+      notify(
+        'error',
+        error instanceof Error
+          ? error.message
+          : tr('永久删除失败', 'Could not permanently delete accounts.', '永久刪除失敗')
+      )
+    } finally {
+      setTrashActionBusy(false)
     }
   }
 
@@ -1383,7 +2122,13 @@ export function LibraryScreen({
 
   async function saveGroupOrder(groupOrder: string[]): Promise<void> {
     try {
-      await window.autologin.settings.update({ groupOrder })
+      await window.autologin.settings.update({
+        groupOrders: {
+          ...settings.groupOrders,
+          [activeTabId]: groupOrder
+        },
+        ...(activeTabId === DEFAULT_ACCOUNT_TAB_ID ? { groupOrder } : {})
+      })
       await onRefresh()
     } catch (error) {
       notify(
@@ -1453,6 +2198,17 @@ export function LibraryScreen({
     event: React.DragEvent<HTMLDivElement>,
     group: GroupSummary
   ): void {
+    if (draggedAccountIdsRef.current.length > 0) {
+      event.preventDefault()
+      event.dataTransfer.dropEffect = 'move'
+      const path = group.actualName ?? group.key
+      setGroupDropTarget((current) =>
+        current?.path === path && current.position === 'inside'
+          ? current
+          : { path, position: 'inside' }
+      )
+      return
+    }
     const activePath = draggedGroupPathRef.current ?? draggedGroupPath
     if (!activePath) return
     const rect = event.currentTarget.getBoundingClientRect()
@@ -1466,7 +2222,12 @@ export function LibraryScreen({
     }
     event.preventDefault()
     event.dataTransfer.dropEffect = 'move'
-    setGroupDropTarget({ path: group.actualName ?? group.key, position: resolved })
+    const path = group.actualName ?? group.key
+    setGroupDropTarget((current) =>
+      current?.path === path && current.position === resolved
+        ? current
+        : { path, position: resolved }
+    )
   }
 
   async function finishGroupDrop(
@@ -1474,6 +2235,18 @@ export function LibraryScreen({
     target: GroupSummary
   ): Promise<void> {
     event.preventDefault()
+    const draggedAccounts = draggedAccountIdsRef.current
+    if (draggedAccounts.length > 0) {
+      draggedAccountIdsRef.current = []
+      setDraggedAccountIds([])
+      setGroupDropTarget(null)
+      await moveDraggedAccountsToGroup(
+        draggedAccounts,
+        target.actualName ?? undefined,
+        target.name
+      )
+      return
+    }
     const draggedPath = draggedGroupPathRef.current ?? draggedGroupPath
     const dropTarget = groupDropTarget
     draggedGroupPathRef.current = null
@@ -1532,6 +2305,7 @@ export function LibraryScreen({
     setGroupActionBusy(true)
     try {
       const result = await window.autologin.groups.move({
+        tabId: activeTabId,
         fromPath: draggedPath,
         ...(destinationParent ? { parentPath: destinationParent } : {})
       })
@@ -1559,48 +2333,131 @@ export function LibraryScreen({
     }
   }
 
-  function openMoveGroupDialog(group: GroupSummary): void {
-    if (!group.actualName) return
-    setMoveGroupTarget(group)
-    setMoveGroupDestination(group.parentPath ?? '')
-    setMoveGroupError('')
-  }
-
-  async function submitMoveGroup(event: React.FormEvent): Promise<void> {
-    event.preventDefault()
-    if (!moveGroupTarget?.actualName) return
-    const destination = moveGroupDestination || undefined
-    if (destination === (moveGroupTarget.parentPath ?? undefined)) {
-      setMoveGroupTarget(null)
+  function beginAccountDrag(
+    event: React.DragEvent<HTMLElement>,
+    account: AccountWithSite
+  ): void {
+    const target = event.target instanceof Element ? event.target : null
+    if (target?.closest('button, input, label, a')) {
+      event.preventDefault()
       return
     }
-    setMoveGroupBusy(true)
-    setMoveGroupError('')
+    const selected = selectedIds.has(account.id)
+      ? visibleSelectedIds
+      : [account.id]
+    const ids = selected.length > 0 ? selected : [account.id]
+    draggedAccountIdsRef.current = ids
+    setDraggedAccountIds(ids)
+    event.dataTransfer.effectAllowed = 'move'
+    event.dataTransfer.setData('text/plain', account.id)
+  }
+
+  function endAccountDrag(): void {
+    draggedAccountIdsRef.current = []
+    setDraggedAccountIds([])
+    setAccountDropTarget(null)
+    setGroupDropTarget(null)
+  }
+
+  function hoverAccountDropTarget(
+    event: React.DragEvent<HTMLElement>,
+    account: AccountWithSite
+  ): void {
+    if (
+      draggedAccountIdsRef.current.length === 0 ||
+      draggedAccountIdsRef.current.includes(account.id)
+    ) {
+      return
+    }
+    event.preventDefault()
+    event.dataTransfer.dropEffect = 'move'
+    const rect = event.currentTarget.getBoundingClientRect()
+    const position: 'before' | 'after' =
+      event.clientY < rect.top + rect.height / 2 ? 'before' : 'after'
+    setAccountDropTarget((current) =>
+      current?.accountId === account.id && current.position === position
+        ? current
+        : { accountId: account.id, position }
+    )
+  }
+
+  async function finishAccountDrop(
+    event: React.DragEvent<HTMLElement>,
+    targetAccount: AccountWithSite
+  ): Promise<void> {
+    event.preventDefault()
+    event.stopPropagation()
+    const dragged = draggedAccountIdsRef.current
+    const dropTarget = accountDropTarget
+    const targetRect = event.currentTarget.getBoundingClientRect()
+    const dropPosition =
+      dropTarget?.accountId === targetAccount.id
+        ? dropTarget.position
+        : event.clientY < targetRect.top + targetRect.height / 2
+          ? 'before'
+          : 'after'
+    endAccountDrag()
+    if (
+      dragged.length === 0 ||
+      dragged.includes(targetAccount.id)
+    ) {
+      return
+    }
+    const ordered = [...accounts]
+      .sort(compareAccounts)
+      .map((account) => account.id)
+    const moving = ordered.filter((id) => dragged.includes(id))
+    const remaining = ordered.filter((id) => !dragged.includes(id))
+    const targetIndex = remaining.indexOf(targetAccount.id)
+    if (targetIndex < 0) return
+    remaining.splice(
+      targetIndex + (dropPosition === 'after' ? 1 : 0),
+      0,
+      ...moving
+    )
     try {
-      const result = await window.autologin.groups.move({
-        fromPath: moveGroupTarget.actualName,
-        ...(destination ? { parentPath: destination } : {})
+      await window.autologin.accounts.reorder({
+        tabId: activeTabId,
+        accountIds: remaining
       })
-      expandGroupAncestors(result.toPath)
-      setGroupFilter(result.toPath)
       await refreshAll()
-      setMoveGroupTarget(null)
+    } catch (error) {
+      notify(
+        'error',
+        error instanceof Error
+          ? error.message
+          : tr('账号排序失败', 'Could not reorder accounts.', '帳號排序失敗')
+      )
+    }
+  }
+
+  async function moveDraggedAccountsToGroup(
+    accountIds: string[],
+    groupPath: string | undefined,
+    groupName: string
+  ): Promise<void> {
+    try {
+      await window.autologin.accounts.moveToGroup({
+        tabId: activeTabId,
+        accountIds,
+        ...(groupPath ? { groupPath } : {})
+      })
+      await refreshAll()
       notify(
         'success',
         tr(
-          `分组已移动到“${destination ?? tr('顶层分组', 'Top level', '第一層分組')}”`,
-          `Group moved to “${destination ?? 'top level'}”.`,
-          `分組已移動到「${destination ?? '第一層分組'}」`
+          `已将 ${accountIds.length} 个账号移动到“${groupName}”`,
+          `Moved ${accountIds.length} account${accountIds.length === 1 ? '' : 's'} to “${groupName}”.`,
+          `已將 ${accountIds.length} 個帳號移動到「${groupName}」`
         )
       )
     } catch (error) {
-      setMoveGroupError(
+      notify(
+        'error',
         error instanceof Error
           ? error.message
-          : tr('移动分组失败', 'Could not move group.', '移動分組失敗')
+          : tr('移动账号失败', 'Could not move accounts.', '移動帳號失敗')
       )
-    } finally {
-      setMoveGroupBusy(false)
     }
   }
 
@@ -1642,7 +2499,11 @@ export function LibraryScreen({
     }
     setGroupActionBusy(true)
     try {
-      await window.autologin.groups.rename(renameGroupTarget.actualName, nextName)
+      await window.autologin.groups.rename(
+        renameGroupTarget.actualName,
+        nextName,
+        activeTabId
+      )
       const nextPath = renameGroupTarget.parentPath
         ? `${renameGroupTarget.parentPath}${GROUP_PATH_SEPARATOR}${nextName}`
         : nextName
@@ -1666,7 +2527,10 @@ export function LibraryScreen({
     if (!deleteGroupTarget?.actualName) return
     setGroupActionBusy(true)
     try {
-      const count = await window.autologin.groups.delete(deleteGroupTarget.actualName)
+      const count = await window.autologin.groups.delete(
+        deleteGroupTarget.actualName,
+        activeTabId
+      )
       if (groupFilter === deleteGroupTarget.key) setGroupFilter(null)
       await refreshAll()
       setDeleteGroupTarget(null)
@@ -1705,11 +2569,19 @@ export function LibraryScreen({
       password: sharedSelector('password'),
       submit: sharedSelector('submit')
     })
+    setBatchIcon(null)
     setBatchStrategyError('')
     setBatchStrategyOpen(true)
   }
 
+  function closeBatchStrategy(): void {
+    if (batchStrategyBusy || batchIconBusy || batchIconFetchBusy) return
+    setBatchStrategyOpen(false)
+    setBatchIcon(null)
+  }
+
   async function applyBatchStrategy(): Promise<void> {
+    if (batchIconFetchBusy) return
     const selectors = {
       username: batchSelectors.username?.trim() || undefined,
       password: batchSelectors.password?.trim() || undefined,
@@ -1760,6 +2632,137 @@ export function LibraryScreen({
       )
     } finally {
       setBatchStrategyBusy(false)
+    }
+  }
+
+  async function selectBatchIcon(
+    event: React.ChangeEvent<HTMLInputElement>
+  ): Promise<void> {
+    if (batchIconFetchBusy) return
+    const file = event.target.files?.[0]
+    event.target.value = ''
+    if (!file) return
+    if (!file.type.startsWith('image/')) {
+      notify('error', tr('请选择图片文件', 'Choose an image file.', '請選擇圖片檔案'))
+      return
+    }
+    if (file.size > 512 * 1024) {
+      notify(
+        'error',
+        tr(
+          'Logo 文件不能超过 512 KB',
+          'The logo must be 512 KB or smaller.',
+          'Logo 檔案不能超過 512 KB'
+        )
+      )
+      return
+    }
+    try {
+      setBatchIcon(await readFileAsDataUrl(file))
+    } catch {
+      notify('error', tr('读取 Logo 失败', 'Could not read the logo.', '讀取 Logo 失敗'))
+    }
+  }
+
+  async function applyBatchIcon(): Promise<void> {
+    if (
+      !batchIcon ||
+      selectedIds.size === 0 ||
+      batchIconBusy ||
+      batchIconFetchBusy
+    ) {
+      return
+    }
+    const count = selectedIds.size
+    setBatchIconBusy(true)
+    try {
+      await window.autologin.accounts.setIconBatch({
+        accountIds: [...selectedIds],
+        icon: batchIcon
+      })
+      await onRefresh()
+      setBatchStrategyOpen(false)
+      setBatchIcon(null)
+      setSelectedIds(new Set())
+      notify(
+        'success',
+        tr(
+          `已更新 ${count} 个账号的 Logo`,
+          `Updated the logo for ${count} accounts.`,
+          `已更新 ${count} 個帳號的 Logo`
+        )
+      )
+    } catch (error) {
+      notify(
+        'error',
+        error instanceof Error
+          ? error.message
+          : tr('批量更新 Logo 失败', 'Could not update logos.', '批次更新 Logo 失敗')
+      )
+    } finally {
+      setBatchIconBusy(false)
+    }
+  }
+
+  async function fetchBatchSiteIcons(): Promise<void> {
+    if (
+      selectedIds.size === 0 ||
+      batchIconBusy ||
+      batchIconFetchBusy
+    ) {
+      return
+    }
+    setBatchIconFetchBusy(true)
+    setBatchStrategyError('')
+    try {
+      const result = await window.autologin.accounts.fetchIconsBatch([
+        ...selectedIds
+      ])
+      if (result.updatedAccounts > 0) await onRefresh()
+      if (result.failedSites.length === 0) {
+        setBatchStrategyOpen(false)
+        setBatchIcon(null)
+        setSelectedIds(new Set())
+        notify(
+          'success',
+          tr(
+            `已获取并更新 ${result.updatedAccounts} 个账号的网站图标`,
+            `Downloaded and updated site icons for ${result.updatedAccounts} accounts.`,
+            `已取得並更新 ${result.updatedAccounts} 個帳號的網站圖示`
+          )
+        )
+        return
+      }
+      const failed = result.failedSites.slice(0, 3).join('、')
+      const remaining = Math.max(0, result.failedSites.length - 3)
+      const details = remaining > 0 ? `${failed} 等 ${result.failedSites.length} 个站点` : failed
+      setBatchStrategyError(
+        tr(
+          `已更新 ${result.updatedAccounts} 个账号；${details}未获取到图标。`,
+          `Updated ${result.updatedAccounts} accounts; icons were unavailable for ${details}.`,
+          `已更新 ${result.updatedAccounts} 個帳號；${details}未取得圖示。`
+        )
+      )
+      notify(
+        'info',
+        tr(
+          '部分站点图标未获取成功',
+          'Some site icons could not be downloaded.',
+          '部分站點圖示未取得成功'
+        )
+      )
+    } catch (error) {
+      setBatchStrategyError(
+        error instanceof Error
+          ? error.message
+          : tr(
+              '批量获取网站图标失败',
+              'Could not download site icons.',
+              '批次取得網站圖示失敗'
+            )
+      )
+    } finally {
+      setBatchIconFetchBusy(false)
     }
   }
 
@@ -1822,6 +2825,7 @@ export function LibraryScreen({
       const result = await window.autologin.accounts.deleteMany([...selectedIds])
       setDeleteSelectedOpen(false)
       setSelectedIds(new Set())
+      selectionAnchorRef.current = null
       await refreshAll()
       notify(
         'success',
@@ -1844,22 +2848,40 @@ export function LibraryScreen({
     }
   }
 
-  function toggleAccountSelection(accountId: string): void {
+  function toggleAccountSelection(accountId: string, shiftKey = false): void {
+    if (shiftKey && selectionAnchorRef.current) {
+      const anchorIndex = pagedAccounts.findIndex(
+        (account) => account.id === selectionAnchorRef.current
+      )
+      const targetIndex = pagedAccounts.findIndex((account) => account.id === accountId)
+      if (anchorIndex >= 0 && targetIndex >= 0) {
+        const start = Math.min(anchorIndex, targetIndex)
+        const end = Math.max(anchorIndex, targetIndex)
+        const rangeIds = pagedAccounts
+          .slice(start, end + 1)
+          .map((account) => account.id)
+        setSelectedIds((current) => new Set([...current, ...rangeIds]))
+        return
+      }
+    }
     setSelectedIds((current) => {
       const next = new Set(current)
       if (next.has(accountId)) next.delete(accountId)
       else next.add(accountId)
       return next
     })
+    selectionAnchorRef.current = accountId
   }
 
   function toggleSelectAll(): void {
     setSelectedIds((current) => {
       const next = new Set(current)
-      if (allVisibleSelected) {
-        for (const account of filteredAccounts) next.delete(account.id)
+      if (allPageSelected) {
+        for (const account of pagedAccounts) next.delete(account.id)
+        selectionAnchorRef.current = null
       } else {
-        for (const account of filteredAccounts) next.add(account.id)
+        for (const account of pagedAccounts) next.add(account.id)
+        selectionAnchorRef.current = pagedAccounts[0]?.id ?? null
       }
       return next
     })
@@ -1868,10 +2890,53 @@ export function LibraryScreen({
   async function openSelected(): Promise<void> {
     if (selectedIds.size === 0) return
     const opened = await onStartBatch([...selectedIds])
-    if (opened) setSelectedIds(new Set())
+    if (opened) {
+      setSelectedIds(new Set())
+      selectionAnchorRef.current = null
+    }
+  }
+
+  async function cancelActiveBatch(): Promise<void> {
+    if (!batchState?.active || batchCancelBusy) return
+    setBatchCancelBusy(true)
+    try {
+      await onCancelBatch()
+    } finally {
+      setBatchCancelBusy(false)
+    }
   }
 
   async function openAccount(account: AccountWithSite): Promise<void> {
+    if (view === 'bookmarks') {
+      setDrawer(null)
+      try {
+        const entry = await window.autologin.bookmarks.visit(account.id)
+        if (entry.status === 'success') {
+          notify(
+            'success',
+            tr(
+              `已在默认浏览器中访问“${account.site.name}”`,
+              `Opened “${account.site.name}” in your default browser.`,
+              `已在預設瀏覽器中造訪「${account.site.name}」`
+            )
+          )
+        } else {
+          notify(
+            'error',
+            entry.reason ||
+              tr('无法打开书签', 'Could not open the bookmark.', '無法開啟書籤')
+          )
+        }
+      } catch (error) {
+        notify(
+          'error',
+          error instanceof Error
+            ? error.message
+            : tr('访问书签失败', 'Could not visit the bookmark.', '造訪書籤失敗')
+        )
+      }
+      return
+    }
     const opened = await onStartBatch([account.id])
     if (opened) setDrawer(null)
   }
@@ -1936,11 +3001,34 @@ export function LibraryScreen({
             >
               <KeyRound size={17} />
               <span>{tr('账号', 'Accounts', '帳號')}</span>
-              <small>{accounts.length}</small>
+              <small>{accountCollectionCount}</small>
+            </button>
+            <button
+              className={`sidebar-nav__item${view === 'bookmarks' ? ' is-active' : ''}`}
+              onClick={chooseBookmarks}
+              aria-label={tr('书签', 'Bookmarks', '書籤')}
+              title={tr('书签', 'Bookmarks', '書籤')}
+            >
+              <Bookmark size={17} />
+              <span>{tr('书签', 'Bookmarks', '書籤')}</span>
+              <small>{bookmarkAccountCount}</small>
             </button>
             <button
               className={`sidebar-nav__item${
-                view === 'loginLogs' || view === 'appLogs' ? ' is-active' : ''
+                view === 'passwordGenerator' ? ' is-active' : ''
+              }`}
+              onClick={() => switchView('passwordGenerator')}
+              aria-label={tr('密码生成器', 'Password generator', '密碼產生器')}
+              title={tr('密码生成器', 'Password generator', '密碼產生器')}
+            >
+              <Sparkles size={17} />
+              <span>{tr('密码生成器', 'Password generator', '密碼產生器')}</span>
+            </button>
+            <button
+              className={`sidebar-nav__item${
+                view === 'loginLogs' || view === 'accessLogs' || view === 'appLogs'
+                  ? ' is-active'
+                  : ''
               }`}
               onClick={() => chooseLogView('loginLogs')}
               aria-label={tr('日志', 'Logs', '日誌')}
@@ -1963,23 +3051,6 @@ export function LibraryScreen({
         </nav>
 
         <div className="sidebar-bottom">
-          <div
-            className="vault-indicator"
-            title={tr('保险库已解锁', 'Vault unlocked', '保險庫已解鎖')}
-            aria-label={tr('保险库已解锁', 'Vault unlocked', '保險庫已解鎖')}
-          >
-            <span className="vault-indicator__pulse" />
-            <div>
-              <strong>{tr('保险库已解锁', 'Vault unlocked', '保險庫已解鎖')}</strong>
-              <small>
-                {tr(
-                  `闲置 ${settings.autoLockMinutes} 分钟锁定`,
-                  `Locks after ${settings.autoLockMinutes} min`,
-                  `閒置 ${settings.autoLockMinutes} 分鐘鎖定`
-                )}
-              </small>
-            </div>
-          </div>
           <div className="sidebar-actions">
             <button
               type="button"
@@ -2004,6 +3075,58 @@ export function LibraryScreen({
           </div>
         </div>
       </aside>
+
+      {tabMenu && (
+        <div
+          className="account-tab-menu"
+          role="menu"
+          aria-label={tr('标签页操作', 'Tab actions', '標籤頁操作')}
+          style={{ left: tabMenu.left, top: tabMenu.top }}
+        >
+          <button
+            type="button"
+            role="menuitem"
+            onClick={() => beginRenameTab(tabMenu.tab)}
+          >
+            <Pencil size={14} />
+            {tr('重命名标签页', 'Rename tab', '重新命名標籤頁')}
+          </button>
+          <div className="account-tab-menu__colors">
+            <span>{tr('标签颜色', 'Tab color', '標籤顏色')}</span>
+            <div>
+              {ACCOUNT_TAB_COLORS.map((color) => (
+                <button
+                  type="button"
+                  className={`account-tab-color${
+                    tabMenu.tab.color.toLocaleLowerCase() === color.toLocaleLowerCase()
+                      ? ' is-active'
+                      : ''
+                  }`}
+                  key={color}
+                  style={{ '--tab-color': color } as React.CSSProperties}
+                  onClick={() => void setTabColor(tabMenu.tab, color)}
+                  aria-label={tr(`选择颜色 ${color}`, `Choose color ${color}`, `選擇顏色 ${color}`)}
+                  title={color}
+                >
+                  {tabMenu.tab.color.toLocaleLowerCase() === color.toLocaleLowerCase() && (
+                    <Check size={11} />
+                  )}
+                </button>
+              ))}
+            </div>
+          </div>
+          <div className="account-context-menu__divider" aria-hidden="true" />
+          <button
+            type="button"
+            role="menuitem"
+            className="is-danger"
+            onClick={() => void closeTab(tabMenu.tab)}
+          >
+            <X size={14} />
+            {tr('关闭标签页', 'Close tab', '關閉標籤頁')}
+          </button>
+        </div>
+      )}
 
       {groupMenu && (
         <div
@@ -2104,11 +3227,16 @@ export function LibraryScreen({
         </form>
       )}
 
-      {accountMenu?.kind === 'account' && (
+      {accountMenu?.kind === 'account' &&
+        createPortal(
         <div
           className="account-context-menu"
           role="menu"
-          aria-label={tr('账号操作', 'Account actions', '帳號操作')}
+          aria-label={
+            view === 'bookmarks'
+              ? tr('书签操作', 'Bookmark actions', '書籤操作')
+              : tr('账号操作', 'Account actions', '帳號操作')
+          }
           style={{ left: accountMenu.left, top: accountMenu.top }}
         >
           <button
@@ -2121,25 +3249,31 @@ export function LibraryScreen({
             }}
           >
             <Pencil size={14} />
-            {tr('编辑账号', 'Edit account', '編輯帳號')}
+            {view === 'bookmarks'
+              ? tr('编辑书签', 'Edit bookmark', '編輯書籤')
+              : tr('编辑账号', 'Edit account', '編輯帳號')}
           </button>
           <div className="account-context-menu__divider" aria-hidden="true" />
-          <button
-            type="button"
-            role="menuitem"
-            onClick={() => void copyAccountUsername(accountMenu.account)}
-          >
-            <UserRound size={14} />
-            {tr('复制用户名', 'Copy username', '複製使用者名稱')}
-          </button>
-          <button
-            type="button"
-            role="menuitem"
-            onClick={() => void copyAccountPassword(accountMenu.account)}
-          >
-            <KeyRound size={14} />
-            {tr('复制密码', 'Copy password', '複製密碼')}
-          </button>
+          {view !== 'bookmarks' && (
+            <>
+              <button
+                type="button"
+                role="menuitem"
+                onClick={() => void copyAccountUsername(accountMenu.account)}
+              >
+                <UserRound size={14} />
+                {tr('复制用户名', 'Copy username', '複製使用者名稱')}
+              </button>
+              <button
+                type="button"
+                role="menuitem"
+                onClick={() => void copyAccountPassword(accountMenu.account)}
+              >
+                <KeyRound size={14} />
+                {tr('复制密码', 'Copy password', '複製密碼')}
+              </button>
+            </>
+          )}
           <button
             type="button"
             role="menuitem"
@@ -2154,12 +3288,33 @@ export function LibraryScreen({
             onClick={() => void duplicateSingleAccount(accountMenu.account)}
           >
             <Copy size={14} />
-            {tr('复制账号', 'Duplicate account', '複製帳號')}
+            {view === 'bookmarks'
+              ? tr('复制书签', 'Duplicate bookmark', '複製書籤')
+              : tr('复制账号', 'Duplicate account', '複製帳號')}
           </button>
-        </div>
+          <div className="account-context-menu__divider" aria-hidden="true" />
+          <button
+            type="button"
+            role="menuitem"
+            className="is-danger"
+            onClick={() => {
+              const account = accountMenu.account
+              setAccountMenu(null)
+              setSelectedIds(new Set([account.id]))
+              setDeleteSelectedOpen(true)
+            }}
+          >
+            <Trash2 size={14} />
+            {view === 'bookmarks'
+              ? tr('删除书签', 'Delete bookmark', '刪除書籤')
+              : tr('删除账号', 'Delete account', '刪除帳號')}
+          </button>
+        </div>,
+        document.body
       )}
 
-      {accountMenu?.kind === 'page' && (
+      {accountMenu?.kind === 'page' &&
+        createPortal(
         <div
           className="account-context-menu"
           role="menu"
@@ -2175,16 +3330,19 @@ export function LibraryScreen({
             }}
           >
             <Plus size={14} />
-            {tr('新增账号', 'Add account', '新增帳號')}
+            {view === 'bookmarks'
+              ? tr('新增书签', 'Add bookmark', '新增書籤')
+              : tr('新增账号', 'Add account', '新增帳號')}
           </button>
-        </div>
+        </div>,
+        document.body
       )}
 
       {batchStrategyOpen && (
         <Modal
           title={tr('批量操作', 'Batch actions', '批次操作')}
           eyebrow="BATCH ACTIONS"
-          onClose={() => setBatchStrategyOpen(false)}
+          onClose={closeBatchStrategy}
           width="560px"
           className="batch-strategy-modal"
         >
@@ -2197,11 +3355,83 @@ export function LibraryScreen({
           >
             <p className="modal-description">
               {tr(
-                `将统一更新所选 ${selectedAccountCount} 个账号的登录方式。`,
-                `Update the login method for ${selectedAccountCount} selected accounts.`,
-                `將統一更新所選 ${selectedAccountCount} 個帳號的登入方式。`
+                `可统一更新所选 ${selectedAccountCount} 个账号的登录方式或账号 Logo。`,
+                `Update the login method or logo for ${selectedAccountCount} selected accounts.`,
+                `可統一更新所選 ${selectedAccountCount} 個帳號的登入方式或帳號 Logo。`
               )}
             </p>
+            <section className="batch-icon-editor">
+              <div className="batch-icon-editor__copy">
+                <span className="field__label">
+                  {tr('账号 Logo', 'Account logo', '帳號 Logo')}
+                </span>
+                <strong>{tr('批量更新账号 Logo', 'Update account logos', '批次更新帳號 Logo')}</strong>
+                <small>
+                  {tr(
+                    '选择一张本地图片统一应用，或按每个账号的站点地址获取网站图标。',
+                    'Choose one local image for all accounts, or download each site icon from its sign-in URL.',
+                    '選擇一張本機圖片統一套用，或按每個帳號的站點網址取得網站圖示。'
+                  )}
+                </small>
+                <div className="batch-icon-editor__actions">
+                  <input
+                    ref={batchIconInputRef}
+                    type="file"
+                    accept="image/png,image/jpeg,image/webp,image/gif,image/svg+xml,image/x-icon,.ico"
+                    className="batch-icon-editor__file-input"
+                    aria-label={tr('选择批量 Logo 文件', 'Choose batch logo file', '選擇批次 Logo 檔案')}
+                    onChange={(event) => void selectBatchIcon(event)}
+                  />
+                  <button
+                    type="button"
+                    className="button button--ghost button--small"
+                    onClick={() => batchIconInputRef.current?.click()}
+                    disabled={batchIconBusy || batchIconFetchBusy}
+                  >
+                    <ImagePlus size={14} />
+                    {tr('选择图片', 'Choose image', '選擇圖片')}
+                  </button>
+                  <button
+                    type="button"
+                    className="button button--ghost button--small"
+                    onClick={() => void fetchBatchSiteIcons()}
+                    disabled={batchIconBusy || batchIconFetchBusy}
+                    aria-busy={batchIconFetchBusy}
+                  >
+                    {batchIconFetchBusy ? (
+                      <LoaderCircle size={14} className="spin" />
+                    ) : (
+                      <Globe2 size={14} />
+                    )}
+                    {batchIconFetchBusy
+                      ? tr('正在获取…', 'Downloading…', '正在取得…')
+                      : tr('获取网站图标', 'Get site icons', '取得網站圖示')}
+                  </button>
+                  <button
+                    type="button"
+                    className="button button--primary button--small"
+                    onClick={() => void applyBatchIcon()}
+                    disabled={!batchIcon || batchIconBusy || batchIconFetchBusy}
+                  >
+                    {batchIconBusy ? (
+                      <LoaderCircle size={14} className="spin" />
+                    ) : (
+                      <Check size={14} />
+                    )}
+                    {batchIconBusy
+                      ? tr('正在更新…', 'Updating…', '正在更新…')
+                      : tr('应用 Logo', 'Apply logo', '套用 Logo')}
+                  </button>
+                </div>
+              </div>
+              <div className={`batch-icon-editor__preview${batchIcon ? ' has-image' : ''}`}>
+                {batchIcon ? (
+                  <img src={batchIcon} alt="" />
+                ) : (
+                  <ImagePlus size={22} aria-hidden="true" />
+                )}
+              </div>
+            </section>
             <div className="proxy-mode-options account-strategy-options">
               <label
                 className={`proxy-mode-option${batchStrategy === 'auto' ? ' is-active' : ''}`}
@@ -2303,7 +3533,12 @@ export function LibraryScreen({
                 type="button"
                 className="button button--ghost"
                 onClick={() => void duplicateSelectedAccounts()}
-                disabled={duplicateBusy || batchStrategyBusy}
+                disabled={
+                  duplicateBusy ||
+                  batchStrategyBusy ||
+                  batchIconBusy ||
+                  batchIconFetchBusy
+                }
               >
                 {duplicateBusy ? (
                   <LoaderCircle size={15} className="spin" />
@@ -2317,12 +3552,16 @@ export function LibraryScreen({
               <button
                 type="button"
                 className="button button--ghost"
-                onClick={() => setBatchStrategyOpen(false)}
-                disabled={batchStrategyBusy}
+                onClick={closeBatchStrategy}
+                disabled={batchStrategyBusy || batchIconBusy || batchIconFetchBusy}
               >
                 {tr('取消', 'Cancel', '取消')}
               </button>
-              <button type="submit" className="button button--primary" disabled={batchStrategyBusy}>
+              <button
+                type="submit"
+                className="button button--primary"
+                disabled={batchStrategyBusy || batchIconBusy || batchIconFetchBusy}
+              >
                 {batchStrategyBusy ? (
                   <LoaderCircle size={15} className="spin" />
                 ) : (
@@ -2331,6 +3570,52 @@ export function LibraryScreen({
                 {batchStrategyBusy
                   ? tr('正在应用…', 'Applying…', '正在套用…')
                   : tr('应用设置', 'Apply', '套用設定')}
+              </button>
+            </div>
+          </form>
+        </Modal>
+      )}
+
+      {renameTabTarget && (
+        <Modal
+          title={tr('重命名标签页', 'Rename tab', '重新命名標籤頁')}
+          eyebrow="ACCOUNT TAB"
+          onClose={() => {
+            if (!tabBusy) setRenameTabTarget(null)
+          }}
+          width="440px"
+        >
+          <form className="group-rename-form" onSubmit={(event) => void saveTabName(event)}>
+            <label className="field">
+              <span className="field__label">{tr('标签页名称', 'Tab name', '標籤頁名稱')}</span>
+              <span className="input-shell">
+                <Layers3 size={16} />
+                <input
+                  data-autofocus
+                  value={renameTabValue}
+                  onChange={(event) => setRenameTabValue(event.target.value)}
+                  maxLength={40}
+                />
+              </span>
+            </label>
+            <div className="modal-actions">
+              <button
+                type="button"
+                className="button button--ghost"
+                onClick={() => setRenameTabTarget(null)}
+                disabled={tabBusy}
+              >
+                {tr('取消', 'Cancel', '取消')}
+              </button>
+              <button
+                type="submit"
+                className="button button--primary"
+                disabled={tabBusy || !renameTabValue.trim()}
+              >
+                {tabBusy ? <LoaderCircle size={15} className="spin" /> : <Check size={15} />}
+                {tabBusy
+                  ? tr('正在保存…', 'Saving…', '正在儲存…')
+                  : tr('保存名称', 'Save name', '儲存名稱')}
               </button>
             </div>
           </form>
@@ -2393,75 +3678,6 @@ export function LibraryScreen({
         </Modal>
       )}
 
-      {moveGroupTarget && (
-        <Modal
-          title={tr('移动分组', 'Move group', '移動分組')}
-          eyebrow="GROUP MOVE"
-          onClose={() => {
-            if (!moveGroupBusy) setMoveGroupTarget(null)
-          }}
-          width="480px"
-          className="group-move-modal"
-        >
-          <form className="group-move-form" onSubmit={(event) => void submitMoveGroup(event)}>
-            <p className="modal-description">
-              {tr(
-                `将“${moveGroupTarget.name}”移动到新的父级分组。子分组会随父级一起移动。`,
-                `Move “${moveGroupTarget.name}” under a new parent. Child groups move with it.`,
-                `將「${moveGroupTarget.name}」移動到新的父級分組。子分組會隨父級一起移動。`
-              )}
-            </p>
-            <label className="field">
-              <span className="field__label">{tr('目标分组', 'Destination', '目標分組')}</span>
-              <select
-                className="filter-control"
-                data-autofocus
-                value={moveGroupDestination}
-                onChange={(event) => {
-                  setMoveGroupDestination(event.target.value)
-                  setMoveGroupError('')
-                }}
-              >
-                <option value="">{tr('顶层分组', 'Top level', '第一層分組')}</option>
-                {moveGroupDestinations.map((group) => (
-                  <option key={group.actualName} value={group.actualName ?? ''}>
-                    {group.actualName}
-                  </option>
-                ))}
-              </select>
-            </label>
-            {moveGroupError && <p className="form-error">{moveGroupError}</p>}
-            <div className="modal-actions">
-              <button
-                type="button"
-                className="button button--ghost"
-                onClick={() => setMoveGroupTarget(null)}
-                disabled={moveGroupBusy}
-              >
-                {tr('取消', 'Cancel', '取消')}
-              </button>
-              <button
-                type="submit"
-                className="button button--primary"
-                disabled={
-                  moveGroupBusy ||
-                  moveGroupDestination === (moveGroupTarget.parentPath ?? '')
-                }
-              >
-                {moveGroupBusy ? (
-                  <LoaderCircle size={15} className="spin" />
-                ) : (
-                  <FolderInput size={15} />
-                )}
-                {moveGroupBusy
-                  ? tr('正在移动…', 'Moving…', '正在移動…')
-                  : tr('确认移动', 'Move group', '確認移動')}
-              </button>
-            </div>
-          </form>
-        </Modal>
-      )}
-
       {deleteGroupTarget && (
         <ConfirmDialog
           title={tr('删除这个分组？', 'Delete this group?', '刪除這個分組？')}
@@ -2498,12 +3714,30 @@ export function LibraryScreen({
         />
       )}
 
+      {purgeTargets && (
+        <ConfirmDialog
+          title={tr('永久删除所选账号？', 'Permanently delete selected accounts?', '永久刪除所選帳號？')}
+          description={tr(
+            `将永久删除 ${purgeTargets.length} 个账号及其站点配置，无法再恢复。登录记录和软件日志不会被删除。`,
+            `${purgeTargets.length} account${purgeTargets.length === 1 ? '' : 's'} and site configurations will be permanently deleted and cannot be restored. Login history and app logs are kept.`,
+            `將永久刪除 ${purgeTargets.length} 個帳號及其站點設定，無法再恢復。登入記錄和軟體日誌不會被刪除。`
+          )}
+          confirmLabel={tr('永久删除', 'Delete permanently', '永久刪除')}
+          danger
+          busy={trashActionBusy}
+          onConfirm={() => void purgeSelectedAccounts()}
+          onClose={() => setPurgeTargets(null)}
+        />
+      )}
+
       <main
         className={`library-main${accountEditorOpen ? ' is-account-editor' : ''}`}
       >
         {accountEditorOpen && drawer ? (
           <AccountDrawer
+            tabId={activeTabId}
             mode={drawer.mode}
+            bookmarkMode={view === 'bookmarks'}
             account={drawer.mode === 'edit' ? drawerAccount ?? undefined : undefined}
             sites={sites}
             groups={groupDefinitions}
@@ -2518,12 +3752,116 @@ export function LibraryScreen({
         ) : (
         <div
           className={`library-content-scroll${
-            view === 'accounts' ? ' library-content-scroll--accounts' : ''
-          }`}
-          onContextMenu={view === 'accounts' ? openPageAccountMenu : undefined}
+            isAccountCollectionView ? ' library-content-scroll--accounts' : ''
+          }${isLogView ? ' library-content-scroll--logs' : ''}`}
+          onContextMenu={isAccountCollectionView ? openPageAccountMenu : undefined}
         >
-          {view === 'accounts' && (
+          {isAccountCollectionView && (
+            <>
             <div
+              className="account-tabs"
+              role="tablist"
+              aria-label={
+                view === 'bookmarks'
+                  ? tr('书签标签页', 'Bookmark tabs', '書籤標籤頁')
+                  : tr('账号标签页', 'Account tabs', '帳號標籤頁')
+              }
+            >
+              <div className="account-tabs__scroll">
+                {visibleTabs.map((tab) => {
+                  const tabCount = allAccounts.filter(
+                    (account) => account.tabId === tab.id
+                  ).length
+                  return (
+                    <div
+                      className={`account-tab${
+                        tab.id === activeTabId ? ' is-active' : ''
+                      }`}
+                      key={tab.id}
+                      style={{ '--tab-color': tab.color } as React.CSSProperties}
+                      onContextMenu={(event) => openTabMenu(event, tab)}
+                      title={tr(
+                        '单击切换，右键重命名或设置颜色',
+                        'Click to switch, right-click to rename or recolor',
+                        '單擊切換，右鍵重新命名或設定顏色'
+                      )}
+                    >
+                      <button
+                        type="button"
+                        role="tab"
+                        aria-selected={tab.id === activeTabId}
+                        className="account-tab__select"
+                        onClick={() =>
+                          view === 'bookmarks'
+                            ? setBookmarkTabId(tab.id)
+                            : setAccountTabId(tab.id)
+                        }
+                      >
+                        <span className="account-tab__marker" aria-hidden="true" />
+                        <span className="account-tab__name">{tab.name}</span>
+                        <span className="account-tab__count">{tabCount}</span>
+                        <span className={`account-tab__source is-${tab.source}`}>
+                          {accountTabSourceLabel(tab.source, tr)}
+                        </span>
+                      </button>
+                      <button
+                        type="button"
+                        className="account-tab__close"
+                        aria-label={tr(
+                          `关闭“${tab.name}”标签页`,
+                          `Close “${tab.name}” tab`,
+                          `關閉「${tab.name}」標籤頁`
+                        )}
+                        title={tr('关闭标签页', 'Close tab', '關閉標籤頁')}
+                        disabled={tabBusy}
+                        onClick={() => void closeTab(tab)}
+                      >
+                        <X size={12} />
+                      </button>
+                    </div>
+                  )
+                })}
+              </div>
+              {view === 'accounts' && (
+                <>
+                  <AccountTransferControls
+                    tabId={activeTabId}
+                    onCreateTab={() => createTab('local')}
+                    tabSource={
+                      visibleTabs.find((tab) => tab.id === activeTabId)?.source ??
+                      'local'
+                    }
+                    onImported={(result) => void handleDataImported(result.tabId)}
+                    notify={notify}
+                  />
+                </>
+              )}
+              {view === 'bookmarks' && (
+                <>
+                  <button
+                    type="button"
+                    className="account-tabs__add"
+                    onClick={() => void createTab('bookmarks')}
+                    disabled={tabBusy}
+                    aria-label={tr('新增书签标签页', 'Add bookmark tab', '新增書籤標籤頁')}
+                    title={tr('新增书签标签页', 'Add bookmark tab', '新增書籤標籤頁')}
+                  >
+                    {tabBusy ? (
+                      <LoaderCircle size={15} className="spin" />
+                    ) : (
+                      <Plus size={15} />
+                    )}
+                  </button>
+                  <BookmarkImportButton
+                    onImported={(result) => void handleDataImported(result.tabId)}
+                    notify={notify}
+                  />
+                  <BookmarkExportButton tabId={activeTabId} notify={notify} />
+                </>
+              )}
+            </div>
+            <div
+              ref={accountLayoutRef}
               className={`library-view-layout library-view-layout--accounts${
                 accountSubnavHidden ? ' is-account-subnav-hidden' : ''
               }`}
@@ -2549,11 +3887,19 @@ export function LibraryScreen({
                       }`}
                       onClick={chooseAllAccountsFromTree}
                       aria-expanded={accountGroupTreeExpanded}
-                      title={tr('全部账号', 'All accounts', '全部帳號')}
+                      title={
+                        view === 'bookmarks'
+                          ? tr('全部书签', 'All bookmarks', '全部書籤')
+                          : tr('全部账号', 'All accounts', '全部帳號')
+                      }
                     >
                       <KeyRound size={15} />
-                      <span>{tr('全部账号', 'All accounts', '全部帳號')}</span>
-                      <small>{accounts.length}</small>
+                      <span>
+                        {view === 'bookmarks'
+                          ? tr('全部书签', 'All bookmarks', '全部書籤')
+                          : tr('全部账号', 'All accounts', '全部帳號')}
+                      </span>
+                      {accounts.length > 0 && <small>{accounts.length}</small>}
                       <span className="account-subnav__tree-chevron" aria-hidden="true">
                         {accountGroupTreeExpanded ? (
                           <ChevronDown size={14} />
@@ -2632,7 +3978,7 @@ export function LibraryScreen({
                               >
                                 <Globe2 size={15} />
                                 <span>{group.name}</span>
-                                <small>{group.count}</small>
+                                {group.count > 0 && <small>{group.count}</small>}
                                 <span className="account-subnav__tree-spacer" aria-hidden="true" />
                               </button>
                             </div>
@@ -2712,7 +4058,7 @@ export function LibraryScreen({
                               >
                                 <Layers3 size={15} />
                                 <span>{group.name}</span>
-                                <small>{group.count}</small>
+                                {group.count > 0 && <small>{group.count}</small>}
                                 {hasChildren ? (
                                   <span
                                     className="account-subnav__tree-chevron"
@@ -2797,7 +4143,11 @@ export function LibraryScreen({
                     className="page-breadcrumb"
                     aria-label={tr('面包屑', 'Breadcrumb', '麵包屑')}
                   >
-                    <span>{tr('账号', 'Accounts', '帳號')}</span>
+                    <span>
+                      {view === 'bookmarks'
+                        ? tr('书签', 'Bookmarks', '書籤')
+                        : tr('账号', 'Accounts', '帳號')}
+                    </span>
                     {currentBreadcrumb.map((crumb, index) => {
                       const isLast = index === currentBreadcrumb.length - 1
                       return (
@@ -2822,11 +4172,11 @@ export function LibraryScreen({
                   </nav>
                 </div>
                 <div className="library-header__actions">
-                  {batchState && batchState.total > 0 && (
+                  {view === 'accounts' && batchState && batchState.total > 0 && (
                     <button
                       type="button"
                       className={`batch-status${batchState.active ? ' is-active' : ''}${
-                        batchState.failed > 0 ? ' has-failures' : ''
+                        batchState.failed > 0 || batchState.canceled > 0 ? ' has-failures' : ''
                       }`}
                       onClick={() => switchView('loginLogs')}
                       aria-label={tr('查看登录结果日志', 'View login result logs', '查看登入結果日誌')}
@@ -2842,7 +4192,26 @@ export function LibraryScreen({
                         {batchState.manual > 0
                           ? ` · ${tr('待人工', 'Manual', '待人工')} ${batchState.manual}`
                           : ''}
+                        {batchState.canceled > 0
+                          ? ` · ${tr('已中断', 'Canceled', '已中斷')} ${batchState.canceled}`
+                          : ''}
                       </span>
+                    </button>
+                  )}
+                  {view === 'accounts' && batchState?.active && (
+                    <button
+                      type="button"
+                      className="batch-cancel"
+                      onClick={() => void cancelActiveBatch()}
+                      disabled={batchCancelBusy}
+                      aria-label={tr('中断批量登录', 'Cancel batch sign-in', '中斷批次登入')}
+                      title={tr('中断批量登录', 'Cancel batch sign-in', '中斷批次登入')}
+                    >
+                      {batchCancelBusy ? (
+                        <LoaderCircle size={13} className="spin" />
+                      ) : (
+                        <Square size={11} fill="currentColor" />
+                      )}
                     </button>
                   )}
                 </div>
@@ -2875,9 +4244,15 @@ export function LibraryScreen({
                     value={search}
                     onChange={(event) => setSearch(event.target.value)}
                     placeholder={tr(
-                      '搜索站点、账号、用户名或分组',
-                      'Search sites, accounts, usernames or groups',
-                      '搜尋站點、帳號、使用者名稱或分組'
+                      view === 'bookmarks'
+                        ? '搜索书签、用户名或分组'
+                        : '搜索站点、账号、用户名或分组',
+                      view === 'bookmarks'
+                        ? 'Search bookmarks, usernames or groups'
+                        : 'Search sites, accounts, usernames or groups',
+                      view === 'bookmarks'
+                        ? '搜尋書籤、使用者名稱或分組'
+                        : '搜尋站點、帳號、使用者名稱或分組'
                     )}
                     aria-label={tr('搜索账号', 'Search accounts', '搜尋帳號')}
                     disabled={!searchExpanded}
@@ -2890,14 +4265,22 @@ export function LibraryScreen({
                   />
                   <kbd aria-hidden={!searchExpanded}>Ctrl K</kbd>
                 </div>
-                {view === 'accounts' && (
+                  {isAccountCollectionView && (
                   <div className="library-toolbar__actions">
                     <button
                       type="button"
                       className="account-add-button button button--primary button--small button--icon-only"
                       onClick={() => setDrawer({ mode: 'create' })}
-                      aria-label={tr('添加账号', 'Add account', '新增帳號')}
-                      title={tr('添加账号', 'Add account', '新增帳號')}
+                      aria-label={
+                        view === 'bookmarks'
+                          ? tr('添加书签', 'Add bookmark', '新增書籤')
+                          : tr('添加账号', 'Add account', '新增帳號')
+                      }
+                      title={
+                        view === 'bookmarks'
+                          ? tr('添加书签', 'Add bookmark', '新增書籤')
+                          : tr('添加账号', 'Add account', '新增帳號')
+                      }
                     >
                       <Plus size={14} />
                     </button>
@@ -2912,42 +4295,34 @@ export function LibraryScreen({
                     >
                       {manualRefreshing ? <LoadingSpinner size={14} /> : <RefreshCw size={14} />}
                     </button>
-                    <button
-                      type="button"
-                      className="button button--ghost button--small button--icon-only"
-                      onClick={() => {
-                        if (currentGroup) openMoveGroupDialog(currentGroup)
-                      }}
-                      disabled={
-                        !currentGroup?.actualName ||
-                        groupActionBusy ||
-                        selectedAccountCount > 0
-                      }
-                      aria-label={tr('移动分组', 'Move group', '移動分組')}
-                      title={tr('移动分组', 'Move group', '移動分組')}
-                    >
-                      <FolderInput size={14} />
-                    </button>
-                    <button
-                      type="button"
-                      className="button button--ghost button--small button--icon-only"
-                      onClick={openBatchStrategy}
-                      disabled={selectedAccountCount === 0 || Boolean(batchState?.active)}
-                      aria-label={tr('批量操作', 'Batch actions', '批次操作')}
-                      title={tr('批量操作', 'Batch actions', '批次操作')}
-                    >
-                      <SlidersHorizontal size={14} />
-                    </button>
-                    <button
-                      type="button"
-                      className="button button--ghost button--small button--icon-only"
-                      onClick={() => void openSelected()}
-                      disabled={selectedAccountCount === 0 || Boolean(batchState?.active)}
-                      aria-label={tr('批量登录', 'Batch sign in', '批次登入')}
-                      title={tr('批量登录', 'Batch sign in', '批次登入')}
-                    >
-                      <Layers3 size={14} />
-                    </button>
+                    {view === 'accounts' && (
+                      <>
+                        <button
+                          type="button"
+                          className="button button--ghost button--small button--icon-only"
+                          onClick={openBatchStrategy}
+                          disabled={
+                            selectedAccountCount === 0 || Boolean(batchState?.active)
+                          }
+                          aria-label={tr('批量操作', 'Batch actions', '批次操作')}
+                          title={tr('批量操作', 'Batch actions', '批次操作')}
+                        >
+                          <SlidersHorizontal size={14} />
+                        </button>
+                        <button
+                          type="button"
+                          className="button button--ghost button--small button--icon-only"
+                          onClick={() => void openSelected()}
+                          disabled={
+                            selectedAccountCount === 0 || Boolean(batchState?.active)
+                          }
+                          aria-label={tr('批量登录', 'Batch sign in', '批次登入')}
+                          title={tr('批量登录', 'Batch sign in', '批次登入')}
+                        >
+                          <Layers3 size={14} />
+                        </button>
+                      </>
+                    )}
                     <button
                       type="button"
                       className="button button--danger-ghost button--small button--icon-only"
@@ -2962,8 +4337,17 @@ export function LibraryScreen({
                 )}
               </div>
 
+              <div
+                ref={accountTableScrollRef}
+                className={`account-table-scroll${
+                  accountColumnSizing === 'content' ? ' is-fit-content' : ''
+                }`}
+              >
               <section
-                className="account-list"
+                ref={accountListRef}
+                className={`account-list${
+                  accountColumnSizing === 'content' ? ' is-fit-content' : ''
+                }`}
                 aria-live="polite"
                 style={accountGridStyle}
               >
@@ -2973,71 +4357,98 @@ export function LibraryScreen({
                   >
                     <SelectionCheckbox
                       ref={selectAllRef}
-                      checked={allVisibleSelected}
+                      checked={allPageSelected}
                       label={tr(
-                        '选择当前列表全部账号',
-                        'Select all visible accounts',
-                        '選擇目前列表全部帳號'
+                        '选择当前页全部账号',
+                        'Select all accounts on this page',
+                        '選擇目前頁全部帳號'
                       )}
                       onChange={toggleSelectAll}
-                      disabled={filteredAccounts.length === 0}
+                      disabled={pagedAccounts.length === 0}
                     />
-                    <span className="account-col--site" data-column-key="site">
+                    <span
+                      className="account-col--site"
+                      data-column-key="site"
+                      style={{ order: accountColumnOrderStyle(accountColumnOrder, 'site') }}
+                    >
                       {tr('站点', 'Site', '站點')}
                       {accountColumnResizer('site', tr('站点', 'site', '站點'))}
                     </span>
                     <span
                       className={`account-col--username${
-                        visibleAccountColumns.has('username')
+                        effectiveVisibleAccountColumns.has('username')
                           ? ''
                           : ' is-column-hidden'
                       }`}
                       data-column-key="username"
+                      style={{
+                        order: accountColumnOrderStyle(accountColumnOrder, 'username')
+                      }}
                     >
                       {tr('用户名', 'Username', '使用者名稱')}
                       {accountColumnResizer('username', tr('用户名', 'username', '使用者名稱'))}
                     </span>
                     <span
                       className={`account-col--group${
-                        visibleAccountColumns.has('group') ? '' : ' is-column-hidden'
+                        effectiveVisibleAccountColumns.has('group') ? '' : ' is-column-hidden'
                       }`}
                       data-column-key="group"
+                      style={{
+                        order: accountColumnOrderStyle(accountColumnOrder, 'group')
+                      }}
                     >
                       {tr('分组', 'Group', '分組')}
                       {accountColumnResizer('group', tr('分组', 'group', '分組'))}
                     </span>
                     <span
                       className={`account-col--updated${
-                        visibleAccountColumns.has('updated')
+                        effectiveVisibleAccountColumns.has('updated')
                           ? ''
                           : ' is-column-hidden'
                       }`}
                       data-column-key="updated"
+                      style={{
+                        order: accountColumnOrderStyle(accountColumnOrder, 'updated')
+                      }}
                     >
                       {tr('最后更新', 'Last updated', '最後更新')}
                       {accountColumnResizer('updated', tr('最后更新', 'updated', '最後更新'))}
                     </span>
-                    <span
-                      className={`account-col--status${
-                        visibleAccountColumns.has('status')
-                          ? ''
-                          : ' is-column-hidden'
-                      }`}
-                      data-column-key="status"
-                    >
-                      {tr('状态', 'Status', '狀態')}
-                      {accountColumnResizer('status', tr('状态', 'status', '狀態'))}
-                    </span>
+                    {view !== 'bookmarks' && (
+                      <span
+                        className={`account-col--status${
+                          effectiveVisibleAccountColumns.has('status')
+                            ? ''
+                            : ' is-column-hidden'
+                        }`}
+                        data-column-key="status"
+                        style={{
+                          order: accountColumnOrderStyle(accountColumnOrder, 'status')
+                        }}
+                      >
+                        {tr('状态', 'Status', '狀態')}
+                        {accountColumnResizer('status', tr('状态', 'status', '狀態'))}
+                      </span>
+                    )}
                     <span
                       className={`account-col--url${
-                        visibleAccountColumns.has('url') ? '' : ' is-column-hidden'
+                        effectiveVisibleAccountColumns.has('url') ? '' : ' is-column-hidden'
                       }`}
                       data-column-key="url"
+                      style={{
+                        order: accountColumnOrderStyle(accountColumnOrder, 'url')
+                      }}
                     >
                       {tr('站点 URL', 'Site URL', '站點 URL')}
                       {accountColumnResizer('url', tr('站点 URL', 'site URL', '站點 URL'))}
                     </span>
-                    <div className="account-col--actions" data-column-key="actions">
+                    <div
+                      className="account-col--actions"
+                      data-column-key="actions"
+                      style={{
+                        order: accountColumnOrderStyle(accountColumnOrder, 'actions')
+                      }}
+                    >
                       {accountColumnResizer('actions', tr('操作', 'actions', '操作'))}
                       {columnMenuOpen &&
                         createPortal(
@@ -3077,9 +4488,9 @@ export function LibraryScreen({
                             <button
                               type="button"
                               role="menuitemradio"
-                              aria-checked={accountColumnSizing === 'window'}
+                              aria-checked={accountColumnSizing !== 'content'}
                               className={
-                                accountColumnSizing === 'window'
+                                accountColumnSizing !== 'content'
                                   ? 'is-checked'
                                   : undefined
                               }
@@ -3097,29 +4508,56 @@ export function LibraryScreen({
                             <span className="account-column-menu__label">
                               {tr('显示列', 'Visible columns', '顯示欄位')}
                             </span>
-                            {(
-                              [
-                                ['username', tr('用户名', 'Username', '使用者名稱')],
-                                ['group', tr('分组', 'Group', '分組')],
-                                ['updated', tr('最后更新', 'Last updated', '最後更新')],
-                                ['status', tr('状态', 'Status', '狀態')],
-                                ['url', tr('站点 URL', 'Site URL', '站點 URL')]
-                              ] as const
-                            ).map(([key, label]) => {
-                              const checked = visibleAccountColumns.has(key)
+                            {accountColumnOrder
+                              .filter((key) =>
+                                availableAccountColumnKeys.includes(key)
+                              )
+                              .map((key) => {
+                              const checked = effectiveVisibleAccountColumns.has(key)
                               return (
                                 <button
                                   type="button"
                                   role="menuitemcheckbox"
                                   aria-checked={checked}
-                                  className={checked ? 'is-checked' : undefined}
+                                  className={`${checked ? 'is-checked' : ''}${
+                                    draggedColumnKey === key ? ' is-dragging' : ''
+                                  }`}
                                   key={key}
                                   onClick={() => toggleAccountColumn(key)}
+                                  draggable
+                                  onDragStart={(event) => {
+                                    event.dataTransfer.effectAllowed = 'move'
+                                    event.dataTransfer.setData('text/plain', key)
+                                    setDraggedColumnKey(key)
+                                  }}
+                                  onDragEnd={() => setDraggedColumnKey(null)}
+                                  onDragOver={(event) => {
+                                    event.preventDefault()
+                                    event.dataTransfer.dropEffect = 'move'
+                                  }}
+                                  onDrop={(event) => {
+                                    event.preventDefault()
+                                    if (draggedColumnKey) {
+                                      moveAccountColumn(draggedColumnKey, key)
+                                    }
+                                    setDraggedColumnKey(null)
+                                  }}
+                                  title={tr(
+                                    '拖拽调整列顺序',
+                                    'Drag to reorder columns',
+                                    '拖曳調整欄位順序'
+                                  )}
                                 >
+                                  <span
+                                    className="account-column-menu__drag"
+                                    aria-hidden="true"
+                                  >
+                                    <GripVertical size={12} />
+                                  </span>
                                   <span className="account-column-menu__check">
                                     {checked && <Check size={12} />}
                                   </span>
-                                  <span>{label}</span>
+                                  <span>{accountColumnLabel(key)}</span>
                                 </button>
                               )
                             })}
@@ -3129,36 +4567,79 @@ export function LibraryScreen({
                     </div>
                   </div>
 
-                  {filteredAccounts.map((account, index) => (
+                  {pagedAccounts.map((account, index) => (
                     <AccountListRow
                       key={account.id}
                       account={account}
+                      bookmark={view === 'bookmarks'}
                       checked={selectedIds.has(account.id)}
                       index={index}
                       tr={tr}
-                      visibleColumns={visibleAccountColumns}
+                      visibleColumns={effectiveVisibleAccountColumns}
+                      columnOrder={accountColumnOrder}
                       formatLastUsed={(value) => formatLastUsed(value, tr, formatDate)}
-                      onToggleSelection={() => toggleAccountSelection(account.id)}
+                      onToggleSelection={(shiftKey) =>
+                        toggleAccountSelection(account.id, shiftKey)
+                      }
+                      onShiftSelect={() => toggleAccountSelection(account.id, true)}
                       onEdit={() => setDrawer({ mode: 'edit', accountId: account.id })}
                       onContextMenu={(event) => openAccountMenu(event, account)}
                       onLogin={() => void openAccount(account)}
+                      dragged={draggedAccountIds.includes(account.id)}
+                      dropPosition={
+                        accountDropTarget?.accountId === account.id
+                          ? accountDropTarget.position
+                          : null
+                      }
+                      onDragStart={(event) => beginAccountDrag(event, account)}
+                      onDragEnd={endAccountDrag}
+                      onDragOver={(event) => hoverAccountDropTarget(event, account)}
+                      onDrop={(event) => void finishAccountDrop(event, account)}
                     />
                   ))}
 
                   {accounts.length === 0 && (
                     <EmptyState
-                      title={tr(
-                        '把第一个账号交给 AutoLogin',
-                        'Add your first account',
-                        '把第一個帳號交給 AutoLogin'
-                      )}
-                      description={tr(
-                        '添加站点和账号，之后只需一次点击即可在默认浏览器中完成登录。',
-                        'Add a site and account, then open it in your default browser with one click.',
-                        '新增站點和帳號，之後只需一次點擊即可在預設瀏覽器中完成登入。'
-                      )}
-                      actionLabel={tr('添加第一个账号', 'Add first account', '新增第一個帳號')}
-                      onAction={() => setDrawer({ mode: 'create' })}
+                      bookmark={view === 'bookmarks'}
+                      title={
+                        view === 'bookmarks'
+                          ? tr('导入第一份浏览器书签', 'Import your first bookmarks', '匯入第一份瀏覽器書籤')
+                          : tr(
+                              '把第一个账号交给 AutoLogin',
+                              'Add your first account',
+                              '把第一個帳號交給 AutoLogin'
+                            )
+                      }
+                      description={
+                        view === 'bookmarks'
+                          ? tr(
+                              '书签会独立保存在这里，可整理分组并通过系统默认浏览器访问。',
+                              'Bookmarks stay separate here, with groups and default-browser access.',
+                              '書籤會獨立保存在這裡，可整理分組並透過系統預設瀏覽器造訪。'
+                            )
+                          : tr(
+                              '添加站点和账号，之后只需一次点击即可在默认浏览器中完成登录。',
+                              'Add a site and account, then open it in your default browser with one click.',
+                              '新增站點和帳號，之後只需一次點擊即可在預設瀏覽器中完成登入。'
+                            )
+                      }
+                      action={
+                        view === 'bookmarks' ? (
+                          <BookmarkImportButton
+                            showLabel
+                            onImported={(result) => void handleDataImported(result.tabId)}
+                            notify={notify}
+                          />
+                        ) : (
+                          <button
+                            className="button button--primary"
+                            onClick={() => setDrawer({ mode: 'create' })}
+                          >
+                            <Plus size={17} />
+                            {tr('添加第一个账号', 'Add first account', '新增第一個帳號')}
+                          </button>
+                        )
+                      }
                     />
                   )}
 
@@ -3174,14 +4655,104 @@ export function LibraryScreen({
                   )}
               </section>
               </div>
+              {filteredAccounts.length > 0 && (
+                <footer className="account-pagination">
+                  <span aria-live="polite">
+                    {tr(
+                      view === 'bookmarks'
+                        ? '共 {count} 个书签，第 {page}/{pages} 页'
+                        : '共 {count} 个账号，第 {page}/{pages} 页',
+                      view === 'bookmarks'
+                        ? '{count} bookmarks, page {page} of {pages}'
+                        : '{count} accounts, page {page} of {pages}',
+                      view === 'bookmarks'
+                        ? '共 {count} 個書籤，第 {page}/{pages} 頁'
+                        : '共 {count} 個帳號，第 {page}/{pages} 頁',
+                      {
+                        count: filteredAccounts.length,
+                        page: currentAccountPage,
+                        pages: accountPageCount
+                      }
+                    )}
+                  </span>
+                  <div className="account-pagination__controls">
+                    <label className="account-pagination__size">
+                      <span>{tr('每页条数', 'Rows per page', '每頁筆數')}</span>
+                      <select
+                        aria-label={tr('账号每页条数', 'Accounts per page', '帳號每頁筆數')}
+                        value={accountPageSize}
+                        onChange={(event) =>
+                          setAccountPageSize(
+                            Number(event.target.value) as AccountPageSize
+                          )
+                        }
+                      >
+                        {ACCOUNT_PAGE_SIZES.map((size) => (
+                          <option key={size} value={size}>
+                            {tr(`${size} 条`, `${size} rows`, `${size} 筆`)}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                    <div className="account-pagination__nav">
+                      <button
+                        type="button"
+                        className="icon-button icon-button--small"
+                        onClick={() =>
+                          setAccountPage((value) => Math.max(1, value - 1))
+                        }
+                        disabled={currentAccountPage <= 1}
+                        aria-label={tr('上一页', 'Previous page', '上一頁')}
+                      >
+                        <ChevronLeft size={16} />
+                      </button>
+                      <button
+                        type="button"
+                        className="icon-button icon-button--small"
+                        onClick={() =>
+                          setAccountPage((value) =>
+                            Math.min(accountPageCount, value + 1)
+                          )
+                        }
+                        disabled={currentAccountPage >= accountPageCount}
+                        aria-label={tr('下一页', 'Next page', '下一頁')}
+                      >
+                        <ChevronRight size={16} />
+                      </button>
+                    </div>
+                  </div>
+                </footer>
+              )}
+              </div>
             </div>
+            </>
+          )}
+
+          {view === 'passwordGenerator' && (
+            <section className="page-section password-generator-page">
+              <header className="page-breadcrumb-bar">
+                <nav className="page-breadcrumb" aria-label={tr('面包屑', 'Breadcrumb', '麵包屑')}>
+                  <h1>{tr('密码生成器', 'Password generator', '密碼產生器')}</h1>
+                </nav>
+              </header>
+              <PasswordGenerator notify={notify} />
+            </section>
           )}
 
           {view === 'loginLogs' && (
             <LoginLogsPage
-              sites={sites}
-              accounts={accounts}
+              sites={allSites}
+              accounts={allAccounts}
               groups={groupDefinitions}
+              notify={notify}
+              onNavigate={chooseLogView}
+            />
+          )}
+
+          {view === 'accessLogs' && (
+            <AccessLogsPage
+              sites={bookmarkSites}
+              accounts={bookmarkAccounts}
               notify={notify}
               onNavigate={chooseLogView}
             />
@@ -3198,26 +4769,60 @@ export function LibraryScreen({
                   <h1>{tr('回收站', 'Recycle Bin', '回收站')}</h1>
                 </nav>
                 <div className="trash-page__actions">
-                  <label className="trash-retention-control">
+                  <div className="trash-retention-control" ref={trashRetentionRef}>
                     <span>{tr('保留天数', 'Keep for', '保留天數')}</span>
-                    <select
+                    <button
+                      type="button"
+                      className="trash-retention-trigger"
                       aria-label={tr('回收站保留天数', 'Recycle Bin retention', '回收站保留天數')}
-                      value={settings.trashRetentionDays}
+                      aria-haspopup="menu"
+                      aria-expanded={trashRetentionOpen}
                       disabled={trashRetentionSaving}
-                      onChange={(event) =>
-                        void updateTrashRetention(
-                          Number(event.target.value) as TrashRetentionDays
-                        )
-                      }
+                      onClick={() => setTrashRetentionOpen((open) => !open)}
                     >
-                      {TRASH_RETENTION_OPTIONS.map((days) => (
-                        <option key={days} value={days}>
-                          {tr(`${days} 天`, `${days} days`, `${days} 天`)}
-                        </option>
-                      ))}
-                    </select>
+                      <strong>
+                        {tr(
+                          `${settings.trashRetentionDays} 天`,
+                          `${settings.trashRetentionDays} days`,
+                          `${settings.trashRetentionDays} 天`
+                        )}
+                      </strong>
+                      <ChevronDown
+                        size={14}
+                        className={trashRetentionOpen ? 'is-open' : undefined}
+                      />
+                    </button>
+                    {trashRetentionOpen && (
+                      <div
+                        className="trash-retention-menu"
+                        role="menu"
+                        aria-label={tr('回收站保留天数选项', 'Retention options', '回收站保留天數選項')}
+                      >
+                        {TRASH_RETENTION_OPTIONS.map((days) => {
+                          const selected = settings.trashRetentionDays === days
+                          return (
+                            <button
+                              key={days}
+                              type="button"
+                              role="menuitemradio"
+                              aria-checked={selected}
+                              className={selected ? 'is-selected' : ''}
+                              onClick={() => {
+                                setTrashRetentionOpen(false)
+                                void updateTrashRetention(days)
+                              }}
+                            >
+                              <span>
+                                {tr(`${days} 天`, `${days} days`, `${days} 天`)}
+                              </span>
+                              {selected && <Check size={13} />}
+                            </button>
+                          )
+                        })}
+                      </div>
+                    )}
                     {trashRetentionSaving && <LoaderCircle size={14} className="spin" />}
-                  </label>
+                  </div>
                   <button
                     type="button"
                     className="button button--ghost button--small"
@@ -3230,39 +4835,173 @@ export function LibraryScreen({
                 </div>
               </header>
 
-              {deletedAccounts.length === 0 ? (
+              <nav
+                className="settings-tabs trash-tabs"
+                role="tablist"
+                aria-label={tr('回收站分类', 'Recycle Bin sections', '回收站分類')}
+              >
+                <button
+                  type="button"
+                  role="tab"
+                  aria-selected={trashSection === 'accounts'}
+                  className={trashSection === 'accounts' ? 'is-active' : ''}
+                  onClick={() => {
+                    setTrashSection('accounts')
+                    setTrashSelection(new Set())
+                    setTrashRetentionOpen(false)
+                  }}
+                >
+                  {tr('账号', 'Accounts', '帳號')}
+                </button>
+                <button
+                  type="button"
+                  role="tab"
+                  aria-selected={trashSection === 'bookmarks'}
+                  className={trashSection === 'bookmarks' ? 'is-active' : ''}
+                  onClick={() => {
+                    setTrashSection('bookmarks')
+                    setTrashSelection(new Set())
+                    setTrashRetentionOpen(false)
+                  }}
+                >
+                  {tr('书签', 'Bookmarks', '書籤')}
+                </button>
+              </nav>
+
+              {visibleDeletedAccounts.length > 0 && (
+                <div className="trash-bulk-bar">
+                  <span>
+                    {trashSelection.size > 0
+                      ? tr(
+                          `已选择 ${trashSelection.size} 个${
+                            trashSection === 'bookmarks' ? '书签' : '账号'
+                          }`,
+                          `${trashSelection.size} ${
+                            trashSection === 'bookmarks' ? 'bookmark' : 'account'
+                          }${trashSelection.size === 1 ? '' : 's'} selected`,
+                          `已選取 ${trashSelection.size} 個${
+                            trashSection === 'bookmarks' ? '書籤' : '帳號'
+                          }`
+                        )
+                      : tr(
+                          `勾选${
+                            trashSection === 'bookmarks' ? '书签' : '账号'
+                          }后可批量恢复或永久删除`,
+                          `Select ${
+                            trashSection === 'bookmarks' ? 'bookmarks' : 'accounts'
+                          } to restore or delete permanently`,
+                          `勾選${
+                            trashSection === 'bookmarks' ? '書籤' : '帳號'
+                          }後可批次恢復或永久刪除`
+                        )}
+                  </span>
+                  <div>
+                    <button
+                      type="button"
+                      className="button button--ghost button--small"
+                      onClick={() => void restoreSelectedAccounts()}
+                      disabled={trashSelection.size === 0 || trashActionBusy}
+                    >
+                      {trashActionBusy ? (
+                        <LoaderCircle size={14} className="spin" />
+                      ) : (
+                        <Undo2 size={14} />
+                      )}
+                      {tr('批量恢复', 'Restore selected', '批次恢復')}
+                    </button>
+                    <button
+                      type="button"
+                      className="button button--danger-ghost button--small"
+                      onClick={() => setPurgeTargets([...trashSelection])}
+                      disabled={trashSelection.size === 0 || trashActionBusy}
+                    >
+                      <Trash2 size={14} />
+                      {tr('批量删除', 'Delete selected', '批次刪除')}
+                    </button>
+                  </div>
+                </div>
+              )}
+
+              {visibleDeletedAccounts.length === 0 ? (
                 <CompactEmptyState
                   title={tr('回收站是空的', 'Recycle Bin is empty', '回收站是空的')}
                   description={tr(
-                    `删除的账号会在这里保留 ${settings.trashRetentionDays} 天，可随时恢复。`,
-                    `Deleted accounts are kept here for ${settings.trashRetentionDays} days and can be restored at any time.`,
-                    `刪除的帳號會在這裡保留 ${settings.trashRetentionDays} 天，可隨時恢復。`
+                    `删除的${
+                      trashSection === 'bookmarks' ? '书签' : '账号'
+                    }会在这里保留 ${settings.trashRetentionDays} 天，可随时恢复。`,
+                    `Deleted ${
+                      trashSection === 'bookmarks' ? 'bookmarks' : 'accounts'
+                    } are kept here for ${settings.trashRetentionDays} days and can be restored at any time.`,
+                    `刪除的${
+                      trashSection === 'bookmarks' ? '書籤' : '帳號'
+                    }會在這裡保留 ${settings.trashRetentionDays} 天，可隨時恢復。`
                   )}
                 />
               ) : (
-                <div className="trash-list" role="table" aria-label={tr('已删除账号', 'Deleted accounts', '已刪除帳號')}>
+                <div
+                  className={`trash-list${
+                    trashSection === 'bookmarks' ? ' trash-list--bookmarks' : ''
+                  }`}
+                  role="table"
+                  aria-label={
+                    trashSection === 'bookmarks'
+                      ? tr('已删除书签', 'Deleted bookmarks', '已刪除書籤')
+                      : tr('已删除账号', 'Deleted accounts', '已刪除帳號')
+                  }
+                >
                   <div className="trash-list__header" role="row">
+                    <SelectionCheckbox
+                      ref={trashSelectAllRef}
+                      checked={
+                        visibleDeletedAccounts.length > 0 &&
+                        trashSelection.size === visibleDeletedAccounts.length
+                      }
+                      label={
+                        trashSection === 'bookmarks'
+                          ? tr('选择回收站全部书签', 'Select all deleted bookmarks', '選取回收站全部書籤')
+                          : tr('选择回收站全部账号', 'Select all deleted accounts', '選取回收站全部帳號')
+                      }
+                      onChange={toggleAllTrashSelection}
+                    />
                     <span>{tr('站点', 'Site', '站點')}</span>
-                    <span>{tr('用户名', 'Username', '使用者名稱')}</span>
+                    {trashSection === 'accounts' && (
+                      <span>{tr('用户名', 'Username', '使用者名稱')}</span>
+                    )}
                     <span>{tr('分组', 'Group', '分組')}</span>
+                    <span>{tr('标签', 'Tab', '標籤')}</span>
                     <span>{tr('删除时间', 'Deleted', '刪除時間')}</span>
                     <span>{tr('操作', 'Actions', '操作')}</span>
                   </div>
-                  {deletedAccounts.map((account) => (
+                  {visibleDeletedAccounts.map((account) => (
                     <div className="trash-row" role="row" key={account.id}>
+                      <SelectionCheckbox
+                        checked={trashSelection.has(account.id)}
+                        label={tr(
+                          `选择 ${account.site.name}`,
+                          `Select ${account.site.name}`,
+                          `選取 ${account.site.name}`
+                        )}
+                        onChange={() => toggleTrashSelection(account.id)}
+                      />
                       <div className="account-identity">
                         <SiteMark site={account.site} />
                         <div>
                           <strong>{account.site.name}</strong>
                         </div>
                       </div>
-                      <div className="account-username">
-                        <UserRound size={14} />
-                        <strong>{account.username}</strong>
-                      </div>
+                      {trashSection === 'accounts' && (
+                        <div className="account-username">
+                          <UserRound size={14} />
+                          <strong>{account.username}</strong>
+                        </div>
+                      )}
                       <div className="account-group-cell">
                         <Layers3 size={13} />
                         <span>{displayGroup(account, tr)}</span>
+                      </div>
+                      <div className="trash-tab-cell">
+                        <Database size={13} />
+                        <span title={account.tabName}>{account.tabName}</span>
                       </div>
                       <time className="account-updated" dateTime={account.deletedAt}>
                         {formatDate(account.deletedAt, {
@@ -3273,19 +5012,48 @@ export function LibraryScreen({
                           minute: '2-digit'
                         })}
                       </time>
-                      <button
-                        type="button"
-                        className="button button--ghost button--small trash-restore-button"
-                        onClick={() => void restoreAccount(account.id)}
-                        disabled={restoringAccountId === account.id}
-                      >
-                        {restoringAccountId === account.id ? (
-                          <LoaderCircle size={14} className="spin" />
-                        ) : (
-                          <Undo2 size={14} />
-                        )}
-                        {tr('恢复', 'Restore', '恢復')}
-                      </button>
+                      <div className="trash-row__actions">
+                        <button
+                          type="button"
+                          className="button button--ghost button--small button--icon-only"
+                          onClick={() => void restoreAccount(account.id)}
+                          disabled={restoringAccountId === account.id || trashActionBusy}
+                          aria-label={
+                            trashSection === 'bookmarks'
+                              ? tr('恢复书签', 'Restore bookmark', '恢復書籤')
+                              : tr('恢复账号', 'Restore account', '恢復帳號')
+                          }
+                          title={
+                            trashSection === 'bookmarks'
+                              ? tr('恢复书签', 'Restore bookmark', '恢復書籤')
+                              : tr('恢复账号', 'Restore account', '恢復帳號')
+                          }
+                        >
+                          {restoringAccountId === account.id ? (
+                            <LoaderCircle size={14} className="spin" />
+                          ) : (
+                            <Undo2 size={14} />
+                          )}
+                        </button>
+                        <button
+                          type="button"
+                          className="button button--danger-ghost button--small button--icon-only"
+                          onClick={() => setPurgeTargets([account.id])}
+                          disabled={trashActionBusy}
+                          aria-label={
+                            trashSection === 'bookmarks'
+                              ? tr('永久删除书签', 'Delete bookmark permanently', '永久刪除書籤')
+                              : tr('永久删除账号', 'Delete account permanently', '永久刪除帳號')
+                          }
+                          title={
+                            trashSection === 'bookmarks'
+                              ? tr('永久删除书签', 'Delete bookmark permanently', '永久刪除書籤')
+                              : tr('永久删除账号', 'Delete account permanently', '永久刪除帳號')
+                          }
+                        >
+                          <Trash2 size={14} />
+                        </button>
+                      </div>
                     </div>
                   ))}
                 </div>
@@ -3320,36 +5088,66 @@ export function LibraryScreen({
 }
 function AccountListRow({
   account,
+  bookmark,
   checked,
   index,
   tr,
   visibleColumns,
+  columnOrder,
   formatLastUsed,
   onToggleSelection,
+  onShiftSelect,
   onEdit,
   onContextMenu,
-  onLogin
+  onLogin,
+  dragged,
+  dropPosition,
+  onDragStart,
+  onDragEnd,
+  onDragOver,
+  onDrop
 }: {
   account: AccountWithSite
+  bookmark: boolean
   checked: boolean
   index: number
   tr: Translate
   visibleColumns: Set<AccountColumnKey>
+  columnOrder: AccountColumnKey[]
   formatLastUsed: (value?: string) => string
-  onToggleSelection?: () => void
+  onToggleSelection?: (shiftKey: boolean) => void
+  onShiftSelect?: () => void
   onEdit: () => void
   onContextMenu: (event: React.MouseEvent<HTMLElement>) => void
   onLogin: () => void
+  dragged: boolean
+  dropPosition: 'before' | 'after' | null
+  onDragStart: (event: React.DragEvent<HTMLElement>) => void
+  onDragEnd: () => void
+  onDragOver: (event: React.DragEvent<HTMLElement>) => void
+  onDrop: (event: React.DragEvent<HTMLElement>) => void
 }): React.JSX.Element {
   const recorded = (account.recipes?.length ?? 0) > 0 || Boolean(account.site.recipe)
-  const statusLabel = recorded
-    ? tr('已录制', 'Recorded', '已錄製')
-    : tr('自动识别', 'Auto detect', '自動識別')
+  const statusLabel = bookmark
+    ? tr('书签', 'Bookmark', '書籤')
+    : recorded
+      ? tr('已录制', 'Recorded', '已錄製')
+      : tr('自动识别', 'Auto detect', '自動識別')
+  const actionLabel = bookmark
+    ? tr('访问', 'Visit', '造訪')
+    : tr('登录', 'Sign in', '登入')
 
   return (
     <article
-      className={`account-row${checked ? ' is-selected' : ''}`}
+      className={`account-row${checked ? ' is-selected' : ''}${
+        dragged ? ' is-dragging' : ''
+      }${dropPosition ? ` is-drop-${dropPosition}` : ''}`}
       style={{ '--row-index': index } as React.CSSProperties}
+      draggable
+      onDragStart={onDragStart}
+      onDragEnd={onDragEnd}
+      onDragOver={onDragOver}
+      onDrop={onDrop}
       title={tr(
         '双击编辑，右键查看更多操作',
         'Double-click to edit, right-click for more actions',
@@ -3361,6 +5159,16 @@ function AccountListRow({
         }
         onEdit()
       }}
+      onClick={(event) => {
+        if (
+          !event.shiftKey ||
+          (event.target instanceof Element && event.target.closest('button, input, label'))
+        ) {
+          return
+        }
+        event.preventDefault()
+        onShiftSelect?.()
+      }}
       onContextMenu={onContextMenu}
     >
       <SelectionCheckbox
@@ -3370,9 +5178,16 @@ function AccountListRow({
           `Select ${account.site.name}`,
           `選擇站點 ${account.site.name}`
         )}
-        onChange={() => onToggleSelection?.()}
+        onChange={(shiftKey) => onToggleSelection?.(shiftKey)}
       />
-      <div className="account-identity">
+      <div
+        className="account-identity"
+        data-column-key="site"
+        style={{ order: accountColumnOrderStyle(columnOrder, 'site') }}
+      >
+        <span className="account-row-drag-handle" aria-hidden="true">
+          <GripVertical size={12} />
+        </span>
         <SiteMark site={account.site} />
         <div>
           <div className="account-name-line">
@@ -3384,6 +5199,8 @@ function AccountListRow({
         className={`account-username${
           visibleColumns.has('username') ? '' : ' is-column-hidden'
         }`}
+        data-column-key="username"
+        style={{ order: accountColumnOrderStyle(columnOrder, 'username') }}
       >
         <UserRound size={14} />
         <strong>{account.username}</strong>
@@ -3392,6 +5209,8 @@ function AccountListRow({
         className={`account-group-cell${
           visibleColumns.has('group') ? '' : ' is-column-hidden'
         }`}
+        data-column-key="group"
+        style={{ order: accountColumnOrderStyle(columnOrder, 'group') }}
       >
         <Layers3 size={13} />
         <span>{displayGroup(account, tr)}</span>
@@ -3400,42 +5219,54 @@ function AccountListRow({
         className={`account-updated${
           visibleColumns.has('updated') ? '' : ' is-column-hidden'
         }`}
+        data-column-key="updated"
+        style={{ order: accountColumnOrderStyle(columnOrder, 'updated') }}
         dateTime={account.updatedAt}
       >
         {formatLastUsed(account.updatedAt)}
       </time>
-      <div
-        className={`account-status-cell${
-          visibleColumns.has('status') ? '' : ' is-column-hidden'
-        }`}
-      >
-        <span
-          className={`recipe-badge${recorded ? ' is-recorded' : ''}`}
-          title={statusLabel}
+      {!bookmark && (
+        <div
+          className={`account-status-cell${
+            visibleColumns.has('status') ? '' : ' is-column-hidden'
+          }`}
+          data-column-key="status"
+          style={{ order: accountColumnOrderStyle(columnOrder, 'status') }}
         >
-          <span />
-          {statusLabel}
-        </span>
-      </div>
+          <span
+            className={`recipe-badge${recorded ? ' is-recorded' : ''}`}
+            title={statusLabel}
+          >
+            <span />
+            {statusLabel}
+          </span>
+        </div>
+      )}
       <div
         className={`account-site-url${
           visibleColumns.has('url') ? '' : ' is-column-hidden'
         }`}
+        data-column-key="url"
+        style={{ order: accountColumnOrderStyle(columnOrder, 'url') }}
         title={account.site.startUrl}
       >
         {account.site.startUrl}
       </div>
-      <div className="account-actions">
+      <div
+        className="account-actions"
+        data-column-key="actions"
+        style={{ order: accountColumnOrderStyle(columnOrder, 'actions') }}
+      >
         <button
           className="row-login-button row-action-button--icon"
           onClick={(event) => {
             event.stopPropagation()
             onLogin()
           }}
-          aria-label={tr('登录', 'Sign in', '登入')}
-          title={tr('登录', 'Sign in', '登入')}
+          aria-label={actionLabel}
+          title={actionLabel}
         >
-          <LogIn size={15} />
+          {bookmark ? <Globe2 size={15} /> : <LogIn size={15} />}
         </button>
       </div>
     </article>
@@ -3447,7 +5278,7 @@ const SelectionCheckbox = forwardRef<
   {
     checked: boolean
     label: string
-    onChange: () => void
+    onChange: (shiftKey: boolean) => void
     disabled?: boolean
   }
 >(function SelectionCheckbox({ checked, label, onChange, disabled }, ref): React.JSX.Element {
@@ -3461,7 +5292,9 @@ const SelectionCheckbox = forwardRef<
         type="checkbox"
         checked={checked}
         disabled={disabled}
-        onChange={onChange}
+        onChange={(event) =>
+          onChange(Boolean((event.nativeEvent as MouseEvent).shiftKey))
+        }
         aria-label={label}
       />
       <span aria-hidden="true">
@@ -3474,13 +5307,13 @@ const SelectionCheckbox = forwardRef<
 function EmptyState({
   title,
   description,
-  actionLabel,
-  onAction
+  action,
+  bookmark = false
 }: {
   title: string
   description: string
-  actionLabel: string
-  onAction: () => void
+  action: React.ReactNode
+  bookmark?: boolean
 }): React.JSX.Element {
   return (
     <div className="empty-state">
@@ -3488,16 +5321,19 @@ function EmptyState({
         <span />
         <span />
         <span>
-          <KeyRound size={27} strokeWidth={1.6} />
+          {bookmark ? (
+            <Bookmark size={27} strokeWidth={1.6} />
+          ) : (
+            <KeyRound size={27} strokeWidth={1.6} />
+          )}
         </span>
       </div>
-      <span className="eyebrow">YOUR FIRST LOGIN</span>
+      <span className="eyebrow">
+        {bookmark ? 'IMPORT YOUR BOOKMARKS' : 'YOUR FIRST LOGIN'}
+      </span>
       <h2>{title}</h2>
       <p>{description}</p>
-      <button className="button button--primary" onClick={onAction}>
-        <Plus size={17} />
-        {actionLabel}
-      </button>
+      {action}
     </div>
   )
 }
@@ -3519,6 +5355,13 @@ function CompactEmptyState({
 }
 
 function compareAccounts(left: AccountWithSite, right: AccountWithSite): number {
+  const leftOrder = left.sortOrder
+  const rightOrder = right.sortOrder
+  if (typeof leftOrder === 'number' && typeof rightOrder === 'number') {
+    return leftOrder - rightOrder
+  }
+  if (typeof leftOrder === 'number') return -1
+  if (typeof rightOrder === 'number') return 1
   return (
     new Date(right.lastUsedAt ?? right.updatedAt).getTime() -
     new Date(left.lastUsedAt ?? left.updatedAt).getTime()
@@ -3531,6 +5374,13 @@ function groupKeyFor(account: AccountWithSite): string {
 
 function displayGroup(account: AccountWithSite, tr: Translate): string {
   return account.site.group?.trim() || tr('未分组', 'Ungrouped', '未分組')
+}
+
+function accountTabSourceLabel(source: AccountTabSource, tr: Translate): string {
+  if (source === 'csv') return 'CSV'
+  if (source === 'kdbx') return 'KDBX'
+  if (source === 'bookmarks') return tr('浏览器书签', 'Bookmarks', '瀏覽器書籤')
+  return tr('本地', 'Local', '本機')
 }
 
 function groupParentPath(path: string): string | null {
@@ -3593,6 +5443,18 @@ function flattenGroupTree(
   })
   result.splice(insertIndex < 0 ? result.length : insertIndex, 0, ...ungrouped)
   return result
+}
+
+function readFileAsDataUrl(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader()
+    reader.onload = () =>
+      typeof reader.result === 'string'
+        ? resolve(reader.result)
+        : reject(new Error('无法读取图片'))
+    reader.onerror = () => reject(reader.error ?? new Error('无法读取图片'))
+    reader.readAsDataURL(file)
+  })
 }
 
 function formatLastUsed(

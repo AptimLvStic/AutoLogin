@@ -6,18 +6,16 @@ import {
   Database,
   Download,
   ExternalLink,
-  FileDown,
-  FileSpreadsheet,
   FolderOpen,
-  Import,
   Info,
+  Keyboard,
   KeyRound,
   Languages,
   LoaderCircle,
   LockKeyhole,
+  Monitor,
   Moon,
   Network,
-  Palette,
   RefreshCw,
   RotateCcw,
   ShieldCheck,
@@ -25,8 +23,7 @@ import {
   Sun,
   Trash2,
   TriangleAlert,
-  Type,
-  Upload
+  Type
 } from 'lucide-react'
 import {
   AUTO_LOCK_OPTIONS,
@@ -44,30 +41,24 @@ import {
   type AutoLockMinutes,
   type BackupRecord,
   type ColorMode,
-  type DataImportResult,
   type DataLocationInfo,
-  type KdbxSelection,
   type ProxySettings,
   type ProxyTestResult,
-  type ThemeColors,
-  type ThemePreset,
   type UpdateCheckResult
 } from '@shared/types'
+import { DEFAULT_APP_SETTINGS } from '@shared/theme'
 import {
-  DEFAULT_APP_SETTINGS,
-  DEFAULT_THEME_COLORS,
-  THEME_PRESETS,
-  resolveThemeColors
-} from '@shared/theme'
+  displayKeyboardShortcut,
+  shortcutFromKeyboardEvent
+} from '@shared/shortcuts'
 import { translate, useI18n } from '../i18n'
-import { ConfirmDialog, Modal } from './Modal'
+import { ConfirmDialog } from './Modal'
 import { PasswordStrength } from './PasswordStrength'
 import { UpdateProgress } from './UpdateDialog'
 import { LoadingSpinner } from './LoadingSpinner'
 
 export type SettingsModule =
   | 'general'
-  | 'appearance'
   | 'network'
   | 'security'
   | 'data'
@@ -116,7 +107,6 @@ export function SettingsPage({
   const [downloadUpdateBusy, setDownloadUpdateBusy] = useState(false)
   const [cancelUpdateBusy, setCancelUpdateBusy] = useState(false)
   const [installUpdateBusy, setInstallUpdateBusy] = useState(false)
-  const [customTheme, setCustomTheme] = useState<ThemeColors>(settings.customTheme)
   const [interfaceScale, setInterfaceScale] = useState(settings.interfaceScale)
   const [fontSizeScale, setFontSizeScale] = useState(settings.fontSizeScale)
   const [proxy, setProxy] = useState<ProxySettings>(settings.proxy)
@@ -127,12 +117,6 @@ export function SettingsPage({
   const [backupsLoading, setBackupsLoading] = useState(false)
   const [confirmBackup, setConfirmBackup] = useState<BackupRecord | null>(null)
   const [restoringBackup, setRestoringBackup] = useState(false)
-  const [importBusy, setImportBusy] = useState(false)
-  const [importResult, setImportResult] = useState<DataImportResult | null>(null)
-  const [kdbxSelection, setKdbxSelection] = useState<KdbxSelection | null>(null)
-  const [kdbxPassword, setKdbxPassword] = useState('')
-  const [kdbxError, setKdbxError] = useState('')
-  const [kdbxBusy, setKdbxBusy] = useState(false)
   const scaleSaveTimer = useRef<number | null>(null)
 
   useEffect(() => {
@@ -140,11 +124,10 @@ export function SettingsPage({
   }, [settings.autoLockMinutes])
 
   useEffect(() => {
-    setCustomTheme(settings.customTheme)
     setInterfaceScale(settings.interfaceScale)
     setFontSizeScale(settings.fontSizeScale)
     setProxy(settings.proxy)
-  }, [settings.customTheme, settings.fontSizeScale, settings.interfaceScale, settings.proxy])
+  }, [settings.fontSizeScale, settings.interfaceScale, settings.proxy])
 
   useEffect(() => {
     return () => {
@@ -260,25 +243,6 @@ export function SettingsPage({
     }
   }
 
-  function updateCustomColor(key: keyof ThemeColors, value: string): void {
-    setCustomTheme((current) => ({ ...current, [key]: value.toUpperCase() }))
-  }
-
-  async function applyCustomTheme(): Promise<void> {
-    await saveAppearance(
-      { themePreset: 'custom', customTheme },
-      tr('自定义主题已应用', 'Custom theme applied.', '自訂主題已套用')
-    )
-  }
-
-  async function resetTheme(): Promise<void> {
-    setCustomTheme(DEFAULT_THEME_COLORS)
-    await saveAppearance(
-      { themePreset: 'magpie', customTheme: DEFAULT_THEME_COLORS },
-      tr('主题配色已恢复默认', 'Theme reset to default.', '主題配色已恢復預設')
-    )
-  }
-
   async function resetScale(): Promise<void> {
     if (scaleSaveTimer.current) {
       window.clearTimeout(scaleSaveTimer.current)
@@ -295,13 +259,68 @@ export function SettingsPage({
     await changeFontSize(100)
   }
 
+  async function updateCopyShortcut(enabled: boolean): Promise<void> {
+    try {
+      await onSettingsChange({ accountCopyShortcutEnabled: enabled })
+      notify(
+        'success',
+        enabled
+          ? tr('账号复制快捷键已启用', 'Account copy shortcut enabled.', '帳號複製快捷鍵已啟用')
+          : tr('账号复制快捷键已关闭', 'Account copy shortcut disabled.', '帳號複製快捷鍵已關閉')
+      )
+    } catch (error) {
+      notify(
+        'error',
+        error instanceof Error
+          ? error.message
+          : tr('快捷键设置保存失败', 'Could not save shortcut.', '快捷鍵設定儲存失敗')
+      )
+    }
+  }
+
+  async function captureCopyShortcut(
+    event: React.KeyboardEvent<HTMLInputElement>
+  ): Promise<void> {
+    if (['Alt', 'Control', 'Meta', 'Shift'].includes(event.key)) return
+    event.preventDefault()
+    const shortcut = shortcutFromKeyboardEvent(event.nativeEvent)
+    if (!shortcut) {
+      notify(
+        'error',
+        tr(
+          '请使用 Ctrl、Alt 或 Shift 组合键',
+          'Use a Ctrl, Alt or Shift key combination.',
+          '請使用 Ctrl、Alt 或 Shift 組合鍵'
+        )
+      )
+      return
+    }
+    try {
+      await onSettingsChange({ accountCopyShortcut: shortcut })
+      notify(
+        'success',
+        tr(
+          `账号复制快捷键已设为 ${displayKeyboardShortcut(shortcut)}`,
+          `Account copy shortcut set to ${displayKeyboardShortcut(shortcut)}.`,
+          `帳號複製快捷鍵已設為 ${displayKeyboardShortcut(shortcut)}`
+        )
+      )
+    } catch (error) {
+      notify(
+        'error',
+        error instanceof Error
+          ? error.message
+          : tr('快捷键设置保存失败', 'Could not save shortcut.', '快捷鍵設定儲存失敗')
+      )
+    }
+  }
+
   async function resetAllSettings(): Promise<void> {
     if (scaleSaveTimer.current) {
       window.clearTimeout(scaleSaveTimer.current)
       scaleSaveTimer.current = null
     }
     setAutoLock(DEFAULT_APP_SETTINGS.autoLockMinutes)
-    setCustomTheme(DEFAULT_APP_SETTINGS.customTheme)
     setInterfaceScale(DEFAULT_APP_SETTINGS.interfaceScale)
     setFontSizeScale(DEFAULT_APP_SETTINGS.fontSizeScale)
     setProxy(DEFAULT_APP_SETTINGS.proxy)
@@ -315,6 +334,8 @@ export function SettingsPage({
         customTheme: DEFAULT_APP_SETTINGS.customTheme,
         interfaceScale: DEFAULT_APP_SETTINGS.interfaceScale,
         fontSizeScale: DEFAULT_APP_SETTINGS.fontSizeScale,
+        accountCopyShortcutEnabled: DEFAULT_APP_SETTINGS.accountCopyShortcutEnabled,
+        accountCopyShortcut: DEFAULT_APP_SETTINGS.accountCopyShortcut,
         proxy: DEFAULT_APP_SETTINGS.proxy,
         groupOrder: []
       },
@@ -469,9 +490,21 @@ export function SettingsPage({
     await saveAppearance(
       { colorMode },
       tr(
-        colorMode === 'dark' ? '已切换为暗色模式' : '已切换为亮色模式',
-        colorMode === 'dark' ? 'Dark mode enabled.' : 'Light mode enabled.',
-        colorMode === 'dark' ? '已切換為暗色模式' : '已切換為亮色模式'
+        colorMode === 'system'
+          ? '外观已跟随系统'
+          : colorMode === 'dark'
+            ? '已切换为暗色外观'
+            : '已切换为亮色外观',
+        colorMode === 'system'
+          ? 'Appearance now follows the system.'
+          : colorMode === 'dark'
+            ? 'Dark appearance enabled.'
+            : 'Light appearance enabled.',
+        colorMode === 'system'
+          ? '外觀已跟隨系統'
+          : colorMode === 'dark'
+            ? '已切換為暗色外觀'
+            : '已切換為亮色外觀'
       )
     )
   }
@@ -499,7 +532,14 @@ export function SettingsPage({
   }
 
   function updateProxy<K extends keyof ProxySettings>(key: K, value: ProxySettings[K]): void {
-    setProxy((current) => ({ ...current, [key]: value }))
+    setProxy((current) => {
+      if (key !== 'mode') return { ...current, [key]: value }
+      return {
+        ...current,
+        mode: value as ProxySettings['mode'],
+        enabled: value === 'custom'
+      }
+    })
     setProxyResult(null)
   }
 
@@ -560,132 +600,6 @@ export function SettingsPage({
     }
   }
 
-  async function exportVault(): Promise<void> {
-    try {
-      const result = await window.autologin.data.exportVault()
-      if (!result.canceled) {
-        notify(
-          'success',
-          tr(
-            `已导出加密配置：${result.fileName ?? ''}`,
-            `Encrypted configuration exported: ${result.fileName ?? ''}`,
-            `已匯出加密設定：${result.fileName ?? ''}`
-          )
-        )
-      }
-    } catch (error) {
-      notify(
-        'error',
-        error instanceof Error
-          ? error.message
-          : tr('导出配置失败', 'Could not export configuration.', '匯出設定失敗')
-      )
-    }
-  }
-
-  async function exportCsvTemplate(): Promise<void> {
-    try {
-      const result = await window.autologin.data.exportCsvTemplate()
-      if (!result.canceled) {
-        notify(
-          'success',
-          tr(
-            `CSV 模板已保存：${result.fileName ?? ''}`,
-            `CSV template saved: ${result.fileName ?? ''}`,
-            `CSV 範本已儲存：${result.fileName ?? ''}`
-          )
-        )
-      }
-    } catch (error) {
-      notify(
-        'error',
-        error instanceof Error
-          ? error.message
-          : tr('保存 CSV 模板失败', 'Could not save CSV template.', '儲存 CSV 範本失敗')
-      )
-    }
-  }
-
-  async function importCsv(): Promise<void> {
-    setImportBusy(true)
-    try {
-      const result = await window.autologin.data.importCsv()
-      if (result) {
-        applyImportResult(result)
-      }
-    } catch (error) {
-      notify(
-        'error',
-        error instanceof Error
-          ? error.message
-          : tr('导入 CSV 失败', 'Could not import CSV.', '匯入 CSV 失敗')
-      )
-    } finally {
-      setImportBusy(false)
-    }
-  }
-
-  async function chooseKdbx(): Promise<void> {
-    setImportBusy(true)
-    try {
-      const selection = await window.autologin.data.chooseKdbx()
-      if (selection) {
-        setKdbxSelection(selection)
-        setKdbxPassword('')
-        setKdbxError('')
-      }
-    } catch (error) {
-      notify(
-        'error',
-        error instanceof Error
-          ? error.message
-          : tr('选择 KDBX 文件失败', 'Could not select KDBX file.', '選擇 KDBX 檔案失敗')
-      )
-    } finally {
-      setImportBusy(false)
-    }
-  }
-
-  async function importKdbx(event: React.FormEvent): Promise<void> {
-    event.preventDefault()
-    if (!kdbxSelection || !kdbxPassword) {
-      setKdbxError(tr('请输入数据库主密码', 'Enter the database master password.', '請輸入資料庫主密碼'))
-      return
-    }
-    setKdbxBusy(true)
-    setKdbxError('')
-    try {
-      const result = await window.autologin.data.importKdbx({
-        token: kdbxSelection.token,
-        password: kdbxPassword
-      })
-      setKdbxSelection(null)
-      setKdbxPassword('')
-      applyImportResult(result)
-    } catch (error) {
-      setKdbxError(
-        error instanceof Error
-          ? error.message
-          : tr('导入 KeePassXC 数据库失败', 'Could not import the KeePassXC database.', '匯入 KeePassXC 資料庫失敗')
-      )
-    } finally {
-      setKdbxBusy(false)
-    }
-  }
-
-  function applyImportResult(result: DataImportResult): void {
-    setImportResult(result)
-    void onRefresh()
-    notify(
-      'success',
-      tr(
-        `已新增 ${result.sitesCreated} 个站点、${result.accountsCreated} 个账号`,
-        `${result.sitesCreated} sites and ${result.accountsCreated} accounts imported.`,
-        `已新增 ${result.sitesCreated} 個站點、${result.accountsCreated} 個帳號`
-      )
-    )
-  }
-
   async function restoreBackup(): Promise<void> {
     if (!confirmBackup) return
     setRestoringBackup(true)
@@ -715,7 +629,6 @@ export function SettingsPage({
   const title = settingsModuleTitle(module, tr)
   const settingsModules: Array<[SettingsModule, string]> = [
     ['general', tr('通用配置', 'General', '一般設定')],
-    ['appearance', tr('外观主题', 'Appearance', '外觀主題')],
     ['network', tr('网络代理', 'Network proxy', '網路代理')],
     ['security', tr('安全与隐私', 'Security & privacy', '安全性與隱私')],
     ['data', tr('数据与备份', 'Data & backups', '資料與備份')],
@@ -724,32 +637,34 @@ export function SettingsPage({
   return (
     <>
       <section className="page-section settings-page settings-page--controlled">
-        <header className="settings-page__header">
-          <nav className="page-breadcrumb" aria-label={tr('面包屑', 'Breadcrumb', '麵包屑')}>
-            <span>{tr('设置', 'Settings', '設定')}</span>
-            <ChevronRight size={12} />
-            <h2>{title}</h2>
-          </nav>
-        </header>
+        <div className="settings-page__sticky">
+          <header className="settings-page__header">
+            <nav className="page-breadcrumb" aria-label={tr('面包屑', 'Breadcrumb', '麵包屑')}>
+              <span>{tr('设置', 'Settings', '設定')}</span>
+              <ChevronRight size={12} />
+              <h2>{title}</h2>
+            </nav>
+          </header>
 
-        <nav
-          className="settings-tabs"
-          role="tablist"
-          aria-label={tr('设置分类', 'Settings sections', '設定分類')}
-        >
-          {settingsModules.map(([nextModule, label]) => (
-            <button
-              type="button"
-              role="tab"
-              key={nextModule}
-              aria-selected={module === nextModule}
-              className={module === nextModule ? 'is-active' : ''}
-              onClick={() => onModuleChange(nextModule)}
-            >
-              {label}
-            </button>
-          ))}
-        </nav>
+          <nav
+            className="settings-tabs"
+            role="tablist"
+            aria-label={tr('设置分类', 'Settings sections', '設定分類')}
+          >
+            {settingsModules.map(([nextModule, label]) => (
+              <button
+                type="button"
+                role="tab"
+                key={nextModule}
+                aria-selected={module === nextModule}
+                className={module === nextModule ? 'is-active' : ''}
+                onClick={() => onModuleChange(nextModule)}
+              >
+                {label}
+              </button>
+            ))}
+          </nav>
+        </div>
 
         {module === 'general' && (
           <SettingsPanel
@@ -782,6 +697,71 @@ export function SettingsPage({
                     {tr(`${minutes} 分钟`, `${minutes} min`, `${minutes} 分鐘`)}
                   </button>
                 ))}
+              </div>
+            </div>
+
+            <div className="settings-card">
+              <div className="settings-control-row">
+                <span className="settings-control-row__label">
+                  {tr('外观', 'Appearance', '外觀')}
+                </span>
+                <div
+                  className="segmented-control"
+                  role="group"
+                  aria-label={tr('外观', 'Appearance', '外觀')}
+                >
+                  <button
+                    type="button"
+                    className={settings.colorMode === 'light' ? 'is-active' : ''}
+                    onClick={() => void changeColorMode('light')}
+                  >
+                    <Sun size={14} />
+                    {tr('亮色', 'Light', '亮色')}
+                  </button>
+                  <button
+                    type="button"
+                    className={settings.colorMode === 'dark' ? 'is-active' : ''}
+                    onClick={() => void changeColorMode('dark')}
+                  >
+                    <Moon size={14} />
+                    {tr('暗色', 'Dark', '暗色')}
+                  </button>
+                  <button
+                    type="button"
+                    className={settings.colorMode === 'system' ? 'is-active' : ''}
+                    onClick={() => void changeColorMode('system')}
+                  >
+                    <Monitor size={14} />
+                    {tr('跟随系统', 'Follow system', '跟隨系統')}
+                  </button>
+                </div>
+              </div>
+              <div className="settings-control-row">
+                <span className="settings-control-row__label">
+                  <Languages size={14} /> {tr('界面语言', 'Language', '介面語言')}
+                </span>
+                <div
+                  className="segmented-control segmented-control--language"
+                  role="group"
+                  aria-label={tr('界面语言', 'Language', '介面語言')}
+                >
+                  {(
+                    [
+                      ['zh-CN', '简体中文'],
+                      ['en', 'English'],
+                      ['zh-TW', '繁體中文']
+                    ] as Array<[AppLanguage, string]>
+                  ).map(([value, label]) => (
+                    <button
+                      key={value}
+                      type="button"
+                      className={settings.language === value ? 'is-active' : ''}
+                      onClick={() => void changeLanguage(value)}
+                    >
+                      {label}
+                    </button>
+                  ))}
+                </div>
               </div>
             </div>
 
@@ -864,6 +844,60 @@ export function SettingsPage({
               </div>
             </div>
 
+            <div className="settings-card settings-card--shortcut">
+              <SettingsCardHeading
+                icon={<Keyboard size={17} />}
+                title={tr('快捷键', 'Keyboard shortcuts', '快捷鍵')}
+                description={tr(
+                  '集中管理 AutoLogin 内部快捷键。默认不占用系统按键，后续快捷操作也会在这里统一配置。',
+                  'Manage AutoLogin shortcuts in one place. System keys remain available by default, and future actions will use the same settings area.',
+                  '集中管理 AutoLogin 內部快捷鍵。預設不佔用系統按鍵，後續快捷操作也會在這裡統一設定。'
+                )}
+              />
+              <label className="switch-row shortcut-enable-row">
+                <span>
+                  <strong>{tr('启用 AutoLogin 内部快捷键', 'Enable AutoLogin shortcuts', '啟用 AutoLogin 內部快捷鍵')}</strong>
+                  <small>
+                    {tr(
+                      '默认关闭；开启后可统一配置各快捷操作，当前可用功能为复制账号',
+                      'Disabled by default. Enable it to manage shortcut actions here; account copy is currently available.',
+                      '預設關閉；開啟後可統一設定各快捷操作，目前可用功能為複製帳號'
+                    )}
+                  </small>
+                </span>
+                <input
+                  type="checkbox"
+                  checked={settings.accountCopyShortcutEnabled}
+                  onChange={(event) => void updateCopyShortcut(event.target.checked)}
+                />
+                <span className="switch" aria-hidden="true" />
+              </label>
+              <label className="shortcut-capture-row">
+                <span>{tr('复制账号', 'Copy accounts', '複製帳號')}</span>
+                <input
+                  className="shortcut-capture-input"
+                  value={displayKeyboardShortcut(settings.accountCopyShortcut)}
+                  readOnly
+                  disabled={!settings.accountCopyShortcutEnabled}
+                  onKeyDown={(event) => void captureCopyShortcut(event)}
+                  onFocus={(event) => event.currentTarget.select()}
+                  aria-label={tr('账号复制快捷键', 'Account copy shortcut', '帳號複製快捷鍵')}
+                  title={tr(
+                    '点击后按下新的组合键',
+                    'Click and press a new key combination',
+                    '點擊後按下新的組合鍵'
+                  )}
+                />
+              </label>
+              <p className="settings-hint">
+                {tr(
+                  '复制后按 Ctrl+V 粘贴账号副本。该功能与普通文本复制相互独立。',
+                  'After copying, press Ctrl+V to paste account copies. This is separate from normal text copying.',
+                  '複製後按 Ctrl+V 貼上帳號副本。此功能與一般文字複製相互獨立。'
+                )}
+              </p>
+            </div>
+
             <div className="settings-card settings-card--split">
               <div>
                 <h4>{tr('重置默认配置', 'Reset defaults', '重設預設設定')}</h4>
@@ -879,186 +913,6 @@ export function SettingsPage({
                 <RotateCcw size={15} />
                 {tr('恢复默认设置', 'Restore defaults', '恢復預設設定')}
               </button>
-            </div>
-          </SettingsPanel>
-        )}
-
-        {module === 'appearance' && (
-          <SettingsPanel
-            icon={<Palette size={18} />}
-            title={tr('显示与配色', 'Display and colors', '顯示與配色')}
-            description={tr(
-              '切换亮暗模式、界面语言、主题预设和自定义配色。',
-              'Switch color mode, language, theme presets and custom colors.',
-              '切換亮暗模式、介面語言、主題預設和自訂配色。'
-            )}
-          >
-            <div className="settings-card">
-              <div className="settings-control-row">
-                <span className="settings-control-row__label">
-                  {tr('颜色模式', 'Color mode', '色彩模式')}
-                </span>
-                <div
-                  className="segmented-control"
-                  role="group"
-                  aria-label={tr('颜色模式', 'Color mode', '色彩模式')}
-                >
-                  <button
-                    type="button"
-                    className={settings.colorMode === 'light' ? 'is-active' : ''}
-                    onClick={() => void changeColorMode('light')}
-                  >
-                    <Sun size={14} />
-                    {tr('亮色', 'Light', '亮色')}
-                  </button>
-                  <button
-                    type="button"
-                    className={settings.colorMode === 'dark' ? 'is-active' : ''}
-                    onClick={() => void changeColorMode('dark')}
-                  >
-                    <Moon size={14} />
-                    {tr('暗色', 'Dark', '暗色')}
-                  </button>
-                </div>
-              </div>
-              <div className="settings-control-row">
-                <span className="settings-control-row__label">
-                  <Languages size={14} /> {tr('界面语言', 'Language', '介面語言')}
-                </span>
-                <div
-                  className="segmented-control segmented-control--language"
-                  role="group"
-                  aria-label={tr('界面语言', 'Language', '介面語言')}
-                >
-                  {(
-                    [
-                      ['zh-CN', '简体中文'],
-                      ['en', 'English'],
-                      ['zh-TW', '繁體中文']
-                    ] as Array<[AppLanguage, string]>
-                  ).map(([value, label]) => (
-                    <button
-                      key={value}
-                      type="button"
-                      className={settings.language === value ? 'is-active' : ''}
-                      onClick={() => void changeLanguage(value)}
-                    >
-                      {label}
-                    </button>
-                  ))}
-                </div>
-              </div>
-            </div>
-
-            <div className="settings-card">
-              <SettingsCardHeading
-                icon={<Palette size={17} />}
-                title={tr('主题预设', 'Theme presets', '主題預設')}
-                description={tr(
-                  'defalut 是默认的高留白主题，也可以选择其他预设或自定义配色。',
-                  'defalut is the default spacious theme. You can also choose another preset or custom colors.',
-                  'defalut 是預設的高留白主題，也可以選擇其他預設或自訂配色。'
-                )}
-              />
-              <div
-                className="theme-preset-grid"
-                role="group"
-                aria-label={tr('主题预设', 'Theme presets', '主題預設')}
-              >
-                {(
-                  Object.entries(THEME_PRESETS) as Array<
-                    [
-                      keyof typeof THEME_PRESETS,
-                      (typeof THEME_PRESETS)[keyof typeof THEME_PRESETS]
-                    ]
-                  >
-                ).map(([key, preset]) => {
-                  const colors = resolveThemeColors(
-                    key,
-                    settings.colorMode,
-                    settings.customTheme
-                  )
-                  return (
-                    <button
-                      key={key}
-                      type="button"
-                      className={`theme-swatch${settings.themePreset === key ? ' is-active' : ''}`}
-                      onClick={() =>
-                        void saveAppearance(
-                          { themePreset: key },
-                          tr(
-                            `已切换为${preset.label}主题`,
-                            `Theme switched to ${themePresetName(key, 'en')}.`,
-                            `已切換為${themePresetName(key, 'zh-TW')}主題`
-                          )
-                        )
-                      }
-                    >
-                      <span
-                        className="theme-swatch__preview"
-                        style={{
-                          background: colors.background,
-                          color: colors.text,
-                          borderColor: colors.accent
-                        }}
-                      >
-                        <i style={{ background: colors.accent }} />
-                        <b />
-                        <em />
-                      </span>
-                      <span>{themePresetName(key, settings.language)}</span>
-                      {settings.themePreset === key && <Check size={14} />}
-                    </button>
-                  )
-                })}
-              </div>
-
-              <div
-                className={`custom-theme-editor${settings.themePreset === 'custom' ? ' is-active' : ''}`}
-              >
-                {(
-                  [
-                    ['background', tr('背景', 'Background', '背景')],
-                    ['surface', tr('面板', 'Surface', '面板')],
-                    ['text', tr('文字', 'Text', '文字')],
-                    ['accent', tr('强调色', 'Accent', '強調色')]
-                  ] as Array<[keyof ThemeColors, string]>
-                ).map(([key, label]) => (
-                  <label className="theme-color-field" key={key}>
-                    <span>{label}</span>
-                    <span className="theme-color-field__control">
-                      <input
-                        type="color"
-                        value={customTheme[key]}
-                        onChange={(event) => updateCustomColor(key, event.target.value)}
-                        aria-label={label}
-                      />
-                      <code>{customTheme[key]}</code>
-                    </span>
-                  </label>
-                ))}
-                <button
-                  type="button"
-                  className="button button--soft custom-theme-editor__apply"
-                  onClick={() => void applyCustomTheme()}
-                >
-                  {tr('应用自定义配色', 'Apply custom theme', '套用自訂配色')}
-                </button>
-              </div>
-
-              <div className="settings-inline-actions">
-                <span className="settings-hint">
-                  {tr(
-                    '自定义颜色仅保存在本地保险库中',
-                    'Custom colors stay in the local vault.',
-                    '自訂顏色僅儲存在本機保險庫中'
-                  )}
-                </span>
-                <button className="text-button" onClick={() => void resetTheme()}>
-                  <RotateCcw size={14} />
-                  {tr('恢复默认主题', 'Reset theme', '恢復預設主題')}
-                </button>
-              </div>
             </div>
           </SettingsPanel>
         )}
@@ -1112,24 +966,6 @@ export function SettingsPage({
                 </label>
               </div>
 
-              <label className={`switch-row proxy-switch-row${proxy.mode === 'system' ? ' is-disabled' : ''}`}>
-                <span>
-                  <strong>{tr('启用自定义代理', 'Enable custom proxy', '啟用自訂代理')}</strong>
-                  <small>
-                    {proxy.mode === 'system'
-                      ? tr('跟随系统模式无需单独启用', 'System mode does not need a separate switch', '跟隨系統模式無需另外啟用')
-                      : tr('关闭后 AutoLogin 将直接连接网络', 'When disabled, AutoLogin connects directly', '關閉後 AutoLogin 將直接連線網路')}
-                  </small>
-                </span>
-                <input
-                  type="checkbox"
-                  checked={proxy.mode === 'custom' && proxy.enabled}
-                  disabled={proxy.mode === 'system'}
-                  onChange={(event) => updateProxy('enabled', event.target.checked)}
-                />
-                <span className="switch" aria-hidden="true" />
-              </label>
-
               <div className={`proxy-fields${proxy.mode === 'system' ? ' is-disabled' : ''}`}>
                 <label className="field">
                   <span className="field__label">{tr('协议', 'Protocol', '協定')}</span>
@@ -1142,7 +978,7 @@ export function SettingsPage({
                         event.target.value as ProxySettings['protocol']
                       )
                     }
-                    disabled={proxy.mode === 'system' || !proxy.enabled}
+                    disabled={proxy.mode === 'system'}
                   >
                     {PROXY_PROTOCOLS.map((protocol) => (
                       <option key={protocol} value={protocol}>
@@ -1158,7 +994,7 @@ export function SettingsPage({
                     value={proxy.host}
                     onChange={(event) => updateProxy('host', event.target.value)}
                     placeholder="127.0.0.1"
-                    disabled={proxy.mode === 'system' || !proxy.enabled}
+                    disabled={proxy.mode === 'system'}
                     spellCheck={false}
                   />
                 </label>
@@ -1171,7 +1007,7 @@ export function SettingsPage({
                     max={65535}
                     value={proxy.port}
                     onChange={(event) => updateProxy('port', Number(event.target.value))}
-                    disabled={proxy.mode === 'system' || !proxy.enabled}
+                    disabled={proxy.mode === 'system'}
                   />
                 </label>
                 <label className="field proxy-fields__wide">
@@ -1181,7 +1017,7 @@ export function SettingsPage({
                     value={proxy.bypassList}
                     onChange={(event) => updateProxy('bypassList', event.target.value)}
                     placeholder="localhost, 127.0.0.1, ::1"
-                    disabled={proxy.mode === 'system' || !proxy.enabled}
+                    disabled={proxy.mode === 'system'}
                     spellCheck={false}
                   />
                 </label>
@@ -1384,11 +1220,11 @@ export function SettingsPage({
         {module === 'data' && (
           <SettingsPanel
             icon={<Database size={18} />}
-            title={tr('导入、导出与备份', 'Import, export and backups', '匯入、匯出與備份')}
+            title={tr('数据与备份', 'Data and backups', '資料與備份')}
             description={tr(
-              '管理数据目录、加密配置导出、账号导入和启动备份。',
-              'Manage data location, encrypted export, account import and startup backups.',
-              '管理資料目錄、加密設定匯出、帳號匯入和啟動備份。'
+              '管理本地数据目录和启动时的自动备份。账号导入与配置导出已移至账号标签栏。',
+              'Manage the local data directory and startup backups. Account import and configuration export are available from the account tab bar.',
+              '管理本機資料目錄和啟動時的自動備份。帳號匯入與設定匯出已移至帳號標籤列。'
             )}
           >
             <div className="settings-card">
@@ -1449,120 +1285,6 @@ export function SettingsPage({
                   {tr('打开目录', 'Open folder', '開啟目錄')}
                 </button>
               </div>
-            </div>
-
-            <div className="settings-card">
-              <SettingsCardHeading
-                icon={<Download size={17} />}
-                title={tr('配置导出', 'Configuration export', '設定匯出')}
-                description={tr(
-                  '导出的 .autologin 文件是当前保险库的 AES-256-GCM 加密快照，需使用导出时的主密码解密，不会写出明文密码。',
-                  'The exported .autologin file is an AES-256-GCM encrypted vault snapshot. It requires the master password used at export time and never writes plaintext passwords.',
-                  '匯出的 .autologin 檔案是目前保險庫的 AES-256-GCM 加密快照，需使用匯出時的主密碼解密，不會寫出明文密碼。'
-                )}
-              />
-              <div className="settings-inline-actions">
-                <button className="button button--primary" onClick={() => void exportVault()}>
-                  <Download size={15} />
-                  {tr('导出加密配置', 'Export encrypted configuration', '匯出加密設定')}
-                </button>
-                <button className="button button--ghost" onClick={() => void exportCsvTemplate()}>
-                  <FileDown size={15} />
-                  {tr('下载 CSV 模板', 'Download CSV template', '下載 CSV 範本')}
-                </button>
-              </div>
-            </div>
-
-            <div className="settings-card">
-              <SettingsCardHeading
-                icon={<Upload size={17} />}
-                title={tr('账号导入', 'Account import', '帳號匯入')}
-                description={tr(
-                  '导入会合并到当前保险库；同名站点且登录地址一致的记录会复用已有站点。',
-                  'Imports merge into the current vault. Existing sites are reused when both name and sign-in URL match.',
-                  '匯入會合併到目前保險庫；同名站點且登入網址一致的記錄會重複使用現有站點。'
-                )}
-              />
-              <div className="data-import-actions">
-                <button
-                  className="button button--soft"
-                  onClick={() => void importCsv()}
-                  disabled={importBusy}
-                >
-                  {importBusy ? (
-                    <LoaderCircle size={15} className="spin" />
-                  ) : (
-                    <FileSpreadsheet size={15} />
-                  )}
-                  {tr('导入标准 CSV', 'Import standard CSV', '匯入標準 CSV')}
-                </button>
-                <button
-                  className="button button--soft"
-                  onClick={() => void chooseKdbx()}
-                  disabled={importBusy}
-                >
-                  {importBusy ? (
-                    <LoaderCircle size={15} className="spin" />
-                  ) : (
-                    <Import size={15} />
-                  )}
-                  {tr('导入 KeePassXC (.kdbx)', 'Import KeePassXC (.kdbx)', '匯入 KeePassXC (.kdbx)')}
-                </button>
-              </div>
-              <div className="data-mapping">
-                <div>
-                  <strong>{tr('CSV 字段映射', 'CSV field mapping', 'CSV 欄位對應')}</strong>
-                  <code>
-                    siteName,startUrl,siteGroup,username,password,autoSubmit,favorite
-                  </code>
-                  <small>
-                    {tr(
-                      '必填：siteName、startUrl、username、password。布尔值支持 true/false、1/0、yes/no。',
-                      'Required: siteName, startUrl, username, password. Booleans accept true/false, 1/0 and yes/no.',
-                      '必填：siteName、startUrl、username、password。布林值支援 true/false、1/0、yes/no。'
-                    )}
-                  </small>
-                </div>
-                <div>
-                  <strong>{tr('KeePassXC 字段映射', 'KeePassXC field mapping', 'KeePassXC 欄位對應')}</strong>
-                  <code>Title → siteName · URL → startUrl · UserName · Password · Group</code>
-                  <small>
-                    {tr(
-                      '仅导入包含有效 http/https URL、用户名和密码的登录记录，不读取附件或密钥文件。',
-                      'Only login entries with a valid http/https URL, username and password are imported. Attachments and key files are not read.',
-                      '僅匯入包含有效 http/https URL、使用者名稱和密碼的登入記錄，不讀取附件或金鑰檔案。'
-                    )}
-                  </small>
-                </div>
-              </div>
-              {importResult && (
-                <div className="data-import-result">
-                  <Check size={16} />
-                  <div>
-                    <strong>
-                      {tr(
-                        `已新增 ${importResult.sitesCreated} 个站点和 ${importResult.accountsCreated} 个账号`,
-                        `${importResult.sitesCreated} sites and ${importResult.accountsCreated} accounts imported`,
-                        `已新增 ${importResult.sitesCreated} 個站點和 ${importResult.accountsCreated} 個帳號`
-                      )}
-                    </strong>
-                    <small>
-                      {tr(
-                        `跳过 ${importResult.skipped} 条记录`,
-                        `${importResult.skipped} records skipped`,
-                        `略過 ${importResult.skipped} 筆記錄`
-                      )}
-                    </small>
-                    {importResult.warnings.length > 0 && (
-                      <ul>
-                        {importResult.warnings.map((warning, index) => (
-                          <li key={`${warning}-${index}`}>{warning}</li>
-                        ))}
-                      </ul>
-                    )}
-                  </div>
-                </div>
-              )}
             </div>
 
             <div className="settings-card backup-card">
@@ -1803,26 +1525,6 @@ export function SettingsPage({
                           {tr('重启并安装', 'Restart and install', '重新啟動並安裝')}
                         </button>
                       )}
-                      {updateState.phase === 'error' && (
-                        <button
-                          type="button"
-                          className="button button--ghost button--small"
-                          onClick={() => void checkUpdates()}
-                          disabled={
-                            checkingUpdates ||
-                            downloadUpdateBusy ||
-                            cancelUpdateBusy ||
-                            installUpdateBusy
-                          }
-                        >
-                          {checkingUpdates ? (
-                            <LoaderCircle size={13} className="spin" />
-                          ) : (
-                            <RefreshCw size={13} />
-                          )}
-                          {tr('重新检查', 'Check again', '重新檢查')}
-                        </button>
-                      )}
                     </div>
                     {(updateState.phase === 'downloading' ||
                       updateState.phase === 'downloaded') && (
@@ -1876,72 +1578,6 @@ export function SettingsPage({
         />
       )}
 
-      {kdbxSelection && (
-        <Modal
-          title={tr('输入 KeePassXC 主密码', 'Enter KeePassXC master password', '輸入 KeePassXC 主密碼')}
-          eyebrow={tr('KDBX 解密导入', 'KDBX ENCRYPTED IMPORT', 'KDBX 解密匯入')}
-          onClose={() => {
-            if (kdbxBusy) return
-            setKdbxSelection(null)
-            setKdbxPassword('')
-            setKdbxError('')
-          }}
-          width="520px"
-        >
-          <form className="kdbx-password-form" onSubmit={importKdbx}>
-            <div className="kdbx-file-summary">
-              <span className="kdbx-file-summary__icon">
-                <KeyRound size={15} />
-              </span>
-              <code title={kdbxSelection.fileName}>{kdbxSelection.fileName}</code>
-              <span className="settings-location__badge">{formatBytes(kdbxSelection.size)}</span>
-            </div>
-            <p className="modal-description">
-              {tr(
-                '主密码只在主进程内存中用于解密此文件，不会写入日志或保存到磁盘。',
-                'The master password is used only in main-process memory to decrypt this file. It is never logged or written to disk.',
-                '主密碼只在主程序記憶體中用於解密此檔案，不會寫入日誌或儲存到磁碟。'
-              )}
-            </p>
-            <label className="field">
-              <span className="field__label">
-                {tr('数据库主密码', 'Database master password', '資料庫主密碼')}
-              </span>
-              <span className="input-shell">
-                <KeyRound size={16} />
-                <input
-                  type="password"
-                  value={kdbxPassword}
-                  onChange={(event) => setKdbxPassword(event.target.value)}
-                  data-autofocus
-                  autoComplete="current-password"
-                />
-              </span>
-            </label>
-            {kdbxError && <p className="form-error">{kdbxError}</p>}
-            <div className="modal-actions">
-              <button
-                type="button"
-                className="button button--ghost"
-                onClick={() => setKdbxSelection(null)}
-                disabled={kdbxBusy}
-              >
-                {tr('取消', 'Cancel', '取消')}
-              </button>
-              <button type="submit" className="button button--primary" disabled={kdbxBusy}>
-                {kdbxBusy ? (
-                  <LoaderCircle size={15} className="spin" />
-                ) : (
-                  <Import size={15} />
-                )}
-                {kdbxBusy
-                  ? tr('正在解密…', 'Decrypting…', '正在解密…')
-                  : tr('解密并导入', 'Decrypt and import', '解密並匯入')}
-              </button>
-            </div>
-          </form>
-        </Modal>
-      )}
     </>
   )
 }
@@ -1987,7 +1623,6 @@ function settingsModuleTitle(
 ): string {
   const titles: Record<SettingsModule, string> = {
     general: tr('通用配置', 'General', '一般設定'),
-    appearance: tr('外观主题', 'Appearance', '外觀主題'),
     network: tr('网络代理', 'Network proxy', '網路代理'),
     security: tr('安全与隐私', 'Security & privacy', '安全性與隱私'),
     data: tr('数据与备份', 'Data & backups', '資料與備份'),
@@ -2008,22 +1643,6 @@ async function waitForLoadingFeedback(startedAt: number): Promise<void> {
   if (remaining > 0) {
     await new Promise((resolve) => window.setTimeout(resolve, remaining))
   }
-}
-
-function themePresetName(preset: ThemePreset, language: string): string {
-  const names: Record<ThemePreset, [string, string, string]> = {
-    magpie: ['defalut', 'defalut', 'defalut'],
-    warm: ['暖砂', 'Warm Sand', '暖砂'],
-    sage: ['鼠尾草', 'Sage', '鼠尾草'],
-    ocean: ['海盐', 'Sea Salt', '海鹽'],
-    rose: ['陶粉', 'Clay Rose', '陶粉'],
-    custom: ['自定义', 'Custom', '自訂']
-  }
-  return language === 'en'
-    ? names[preset][1]
-    : language === 'zh-TW'
-      ? names[preset][2]
-      : names[preset][0]
 }
 
 function formatBytes(value: number): string {

@@ -18,6 +18,7 @@ function addDemoAccount(manager: VaultManager): void {
   const now = new Date().toISOString()
   data.sites.push({
     id: 'site-1',
+    tabId: 'local',
     name: 'Fixture',
     startUrl: 'https://example.test/login',
     allowedOrigins: ['https://example.test'],
@@ -27,6 +28,7 @@ function addDemoAccount(manager: VaultManager): void {
   })
   data.accounts.push({
     id: 'account-1',
+    tabId: 'local',
     siteId: 'site-1',
     label: 'Main',
     username: 'tester@example.test',
@@ -122,6 +124,34 @@ describe('VaultManager', () => {
     )
   })
 
+  it('migrates a pre-tab vault into the default local tab on unlock', async () => {
+    const { manager } = createManager()
+    await manager.create('correct horse battery staple')
+    addDemoAccount(manager)
+    const legacy = manager.requireData() as unknown as {
+      tabs?: unknown
+      sites: Array<{ tabId?: string }>
+      accounts: Array<{ tabId?: string; sortOrder?: number }>
+      groupDefinitions: Array<{ tabId?: string }>
+      deletedAccounts: Array<{ tabId?: string }>
+    }
+    delete legacy.tabs
+    delete legacy.sites[0]?.tabId
+    delete legacy.accounts[0]?.tabId
+    delete legacy.accounts[0]?.sortOrder
+    manager.save()
+    manager.lock()
+
+    await manager.unlock('correct horse battery staple')
+    expect(manager.requireData().tabs).toEqual([
+      expect.objectContaining({ id: 'local', name: '本地账号', source: 'local' })
+    ])
+    expect(manager.requireData().accounts[0]).toMatchObject({
+      tabId: 'local',
+      sortOrder: 0
+    })
+  })
+
   it('merges theme and scale updates without overwriting unrelated settings', async () => {
     const { manager } = createManager()
     await manager.create('correct horse battery staple')
@@ -151,6 +181,8 @@ describe('VaultManager', () => {
       themePreset: 'custom',
       interfaceScale: 115,
       fontSizeScale: 125,
+      accountCopyShortcutEnabled: false,
+      accountCopyShortcut: 'Ctrl+C',
       customTheme: {
         background: '#EEF2F3',
         surface: '#F8FAFA',
@@ -159,14 +191,15 @@ describe('VaultManager', () => {
       },
       proxy: {
         mode: 'custom',
-        enabled: false,
+        enabled: true,
         protocol: 'http',
         host: '',
         port: 8080,
         bypassList: 'localhost, 127.0.0.1, ::1',
         testUrl: 'https://www.google.com/'
       },
-      groupOrder: []
+      groupOrder: [],
+      groupOrders: {}
     })
   })
 

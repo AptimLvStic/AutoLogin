@@ -19,6 +19,7 @@ const MANAGED_DATA_ENTRIES = [
   'session-index.json',
   'BrowserProfiles',
   'Partitions',
+  'tabs',
   'logs'
 ] as const
 

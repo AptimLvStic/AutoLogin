@@ -7,6 +7,7 @@ import {
   Fingerprint,
   Globe2,
   KeyRound,
+  Layers3,
   LockKeyhole,
   ShieldCheck
 } from 'lucide-react'
@@ -25,17 +26,17 @@ function AuthShell({
     <main className={`auth-shell auth-shell--${mode}`}>
       <section className="auth-story">
         <div className="auth-story__content">
-          <span className="eyebrow eyebrow--light">PRIVATE BY DEFAULT</span>
+          <span className="eyebrow eyebrow--light">LOCAL WORKSPACE</span>
           <h1>
             {tr('一次解锁，', 'One unlock.', '一次解鎖，')}
             <br />
-            {tr('回到每个账号。', 'Every account.', '回到每個帳號。')}
+            {tr('连接每个入口。', 'Every destination.', '連接每個入口。')}
           </h1>
           <p>
             {tr(
-              '把分散在浏览器里的登录入口收进一个安静的本地工作台。账号加密保存，验证码始终由你掌控。',
-              'Keep every browser login in one calm local workspace. Credentials stay encrypted and verification always stays in your hands.',
-              '把分散在瀏覽器裡的登入入口收進一個安靜的本機工作台。帳號加密保存，驗證碼始終由你掌控。'
+              '在一个本地加密工作台中管理账号、书签、分组与访问记录；通过默认浏览器自动填充，复用已登录会话，备份、导入导出与日志都只留在本机。',
+              'Manage accounts, bookmarks, groups and access history in one encrypted local workspace. Auto-fill through your default browser, reuse signed-in sessions, and keep backups, imports, exports and logs on this device.',
+              '在一個本機加密工作台中管理帳號、書籤、分組與存取記錄；透過預設瀏覽器自動填入，重用已登入工作階段，備份、匯入匯出與日誌都只留在本機。'
             )}
           </p>
         </div>
@@ -50,7 +51,15 @@ function AuthShell({
           </span>
           <span>
             <Globe2 size={16} />
-            {tr('会话复用', 'Session reuse', '工作階段重用')}
+            {tr('默认浏览器', 'Default browser', '預設瀏覽器')}
+          </span>
+          <span>
+            <Layers3 size={16} />
+            {tr('自动填充', 'Auto-fill', '自動填入')}
+          </span>
+          <span>
+            <Fingerprint size={16} />
+            {tr('会话与日志', 'Sessions & logs', '工作階段與日誌')}
           </span>
         </div>
         <div className="auth-orbit" aria-hidden="true">
@@ -66,7 +75,6 @@ function AuthShell({
       </section>
       <section className="auth-panel">
         <div className="auth-panel__inner">{children}</div>
-        <p className="auth-panel__footnote">AutoLogin · Windows local-first login workspace</p>
       </section>
     </main>
   )
@@ -238,7 +246,13 @@ export function UnlockScreen({
       <div className="auth-form-heading auth-form-heading--center">
         <span className="eyebrow">WELCOME BACK</span>
         <h2>{tr('保险库已锁定', 'Vault locked', '保險庫已鎖定')}</h2>
-        <p>{tr('输入主密码，继续访问你的登录工作台。', 'Enter your master password to continue.', '輸入主密碼，繼續存取你的登入工作台。')}</p>
+        <p>
+          {tr(
+            '输入主密码，继续访问你的工作台。',
+            'Enter your master password to continue to your workspace.',
+            '輸入主密碼，繼續存取你的工作台。'
+          )}
+        </p>
       </div>
       <form className="auth-form auth-form--unlock" onSubmit={submit}>
         <label className="field">

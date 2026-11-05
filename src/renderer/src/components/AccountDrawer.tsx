@@ -1,6 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import {
-  ArrowRight,
   Check,
   ChevronDown,
   CirclePlay,
@@ -15,6 +14,7 @@ import {
   ListChecks,
   LoaderCircle,
   RefreshCw,
+  Search,
   SlidersHorizontal,
   Trash2,
   UserRound,
@@ -32,10 +32,13 @@ import type {
 } from '@shared/types'
 import { useI18n } from '../i18n'
 import { ConfirmDialog, Modal } from './Modal'
+import { PasswordGeneratorPopover } from './PasswordGenerator'
 import { SiteMark } from './SiteMark'
 
 interface AccountDrawerProps {
+  tabId: string
   mode: 'create' | 'edit'
+  bookmarkMode?: boolean
   account?: AccountWithSite
   sites: Site[]
   groups: GroupDefinition[]
@@ -49,7 +52,9 @@ interface AccountDrawerProps {
 }
 
 export function AccountDrawer({
+  tabId,
   mode,
+  bookmarkMode = false,
   account,
   sites,
   groups,
@@ -62,6 +67,7 @@ export function AccountDrawer({
   notify
 }: AccountDrawerProps): React.JSX.Element {
   const { tr } = useI18n()
+  const isBookmark = bookmarkMode
   const initialSite = sites.find((site) => site.id === (initialSiteId ?? account?.siteId))
   const [siteMode, setSiteMode] = useState<'existing' | 'new'>(
     account || initialSite || sites.length > 0 ? 'existing' : 'new'
@@ -101,6 +107,8 @@ export function AccountDrawer({
   const [selectorTesting, setSelectorTesting] = useState<SelectorTestField | null>(null)
   const [sitePickerOpen, setSitePickerOpen] = useState(false)
   const [groupPickerOpen, setGroupPickerOpen] = useState(false)
+  const [sitePickerQuery, setSitePickerQuery] = useState('')
+  const [groupPickerQuery, setGroupPickerQuery] = useState('')
   const [recipeDetails, setRecipeDetails] = useState<AccountRecipe | null>(null)
   const [confirmRecipeDelete, setConfirmRecipeDelete] = useState<AccountRecipe | null>(null)
   const [recipeBusy, setRecipeBusy] = useState(false)
@@ -118,6 +126,23 @@ export function AccountDrawer({
     () => [...groups].sort((left, right) => left.path.localeCompare(right.path)),
     [groups]
   )
+  const filteredSiteOptions = useMemo(() => {
+    const query = sitePickerQuery.trim().toLocaleLowerCase()
+    if (!query) return sites
+    return sites.filter((site) =>
+      [site.name, site.startUrl, safeHostname(site.startUrl), site.group ?? '']
+        .join(' ')
+        .toLocaleLowerCase()
+        .includes(query)
+    )
+  }, [sitePickerQuery, sites])
+  const filteredGroupOptions = useMemo(() => {
+    const query = groupPickerQuery.trim().toLocaleLowerCase()
+    if (!query) return groupOptions
+    return groupOptions.filter((group) =>
+      group.path.toLocaleLowerCase().includes(query)
+    )
+  }, [groupOptions, groupPickerQuery])
 
   useEffect(() => {
     return () => {
@@ -280,11 +305,19 @@ export function AccountDrawer({
   async function submit(event: React.FormEvent): Promise<void> {
     event.preventDefault()
     setError('')
-    if (!siteName.trim() || !username.trim()) {
-      setError(tr('请填写站点名称和用户名', 'Enter a site name and username.', '請填寫站點名稱和使用者名稱'))
+    if (!siteName.trim() || (!isBookmark && !username.trim())) {
+      setError(
+        isBookmark
+          ? tr('请填写站点名称', 'Enter a site name.', '請填寫站點名稱')
+          : tr(
+              '请填写站点名称和用户名',
+              'Enter a site name and username.',
+              '請填寫站點名稱和使用者名稱'
+            )
+      )
       return
     }
-    if (mode === 'create' && !password) {
+    if (!isBookmark && mode === 'create' && !password) {
       setError(tr('请填写登录密码', 'Enter the login password.', '請填寫登入密碼'))
       return
     }
@@ -297,6 +330,7 @@ export function AccountDrawer({
       return
     }
     if (
+      !isBookmark &&
       loginStrategy === 'manual' &&
       (!manualSelectors.username?.trim() || !manualSelectors.password?.trim())
     ) {
@@ -315,6 +349,7 @@ export function AccountDrawer({
       let site: Site
       if (siteMode === 'new') {
         site = await window.autologin.sites.save({
+          tabId,
           name: siteName.trim(),
           startUrl: startUrl.trim(),
           autoSubmit,
@@ -335,6 +370,7 @@ export function AccountDrawer({
             ? selectedSite
             : await window.autologin.sites.save({
                 id: selectedSite.id,
+                tabId: selectedSite.tabId,
                 name: siteName.trim(),
                 startUrl: startUrl.trim(),
                 allowedOrigins: selectedSite.allowedOrigins,
@@ -348,22 +384,36 @@ export function AccountDrawer({
       if (mode === 'edit' && account) {
         saved = await window.autologin.accounts.update(account.id, {
           label: site.name,
-          username: username.trim(),
-          loginStrategy,
-          manualSelectors,
-          ...(password ? { password } : {})
+          ...(isBookmark
+            ? {}
+            : {
+                username: username.trim(),
+                loginStrategy,
+                manualSelectors,
+                ...(password ? { password } : {})
+              })
         })
-        onSaved(saved, tr('账号信息已更新', 'Account updated.', '帳號資料已更新'))
+        onSaved(
+          saved,
+          isBookmark
+            ? tr('书签信息已更新', 'Bookmark updated.', '書籤資料已更新')
+            : tr('账号信息已更新', 'Account updated.', '帳號資料已更新')
+        )
       } else {
         saved = await window.autologin.accounts.create({
           siteId: site.id,
           label: site.name,
-          username: username.trim(),
-          password,
-          loginStrategy,
-          manualSelectors
+          username: isBookmark ? '' : username.trim(),
+          password: isBookmark ? '' : password,
+          loginStrategy: isBookmark ? 'auto' : loginStrategy,
+          manualSelectors: isBookmark ? {} : manualSelectors
         })
-        onSaved(saved, tr('账号已加入保险库', 'Account added to the vault.', '帳號已加入保險庫'))
+        onSaved(
+          saved,
+          isBookmark
+            ? tr('书签已加入保险库', 'Bookmark added to the vault.', '書籤已加入保險庫')
+            : tr('账号已加入保险库', 'Account added to the vault.', '帳號已加入保險庫')
+        )
       }
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : tr('保存失败', 'Could not save.', '儲存失敗'))
@@ -575,12 +625,20 @@ export function AccountDrawer({
               />
               <div>
                 <span className="eyebrow">
-                  {mode === 'edit' ? 'SITE DETAILS' : 'NEW CREDENTIAL'}
+                  {isBookmark
+                    ? mode === 'edit'
+                      ? 'BOOKMARK DETAILS'
+                      : 'NEW BOOKMARK'
+                    : mode === 'edit'
+                      ? 'SITE DETAILS'
+                      : 'NEW CREDENTIAL'}
                 </span>
                 <h2 id="account-drawer-title">
                   {mode === 'edit'
                     ? siteName || account?.site.name
-                    : tr('添加登录账号', 'Add account', '新增登入帳號')}
+                    : isBookmark
+                      ? tr('添加书签', 'Add bookmark', '新增書籤')
+                      : tr('添加登录账号', 'Add account', '新增登入帳號')}
                 </h2>
                 <span className="domain-label">
                   <Globe2 size={12} />
@@ -641,7 +699,10 @@ export function AccountDrawer({
                       aria-label={tr('选择站点', 'Select site', '選擇站點')}
                       aria-haspopup="listbox"
                       aria-expanded={sitePickerOpen}
-                      onClick={() => setSitePickerOpen((current) => !current)}
+                      onClick={() => {
+                        if (!sitePickerOpen) setSitePickerQuery('')
+                        setSitePickerOpen((current) => !current)
+                      }}
                     >
                       <Globe2 size={17} />
                       <span>
@@ -666,7 +727,30 @@ export function AccountDrawer({
                         role="listbox"
                         aria-label={tr('已有站点列表', 'Saved sites', '現有站點清單')}
                       >
-                      {sites.map((site) => (
+                        <label className="site-picker__search">
+                          <Search size={14} />
+                          <input
+                            value={sitePickerQuery}
+                            onChange={(event) => setSitePickerQuery(event.target.value)}
+                            onKeyDown={(event) => {
+                              if (event.key === 'Enter') event.preventDefault()
+                            }}
+                            placeholder={tr('搜索站点名称或地址', 'Search site name or URL', '搜尋站點名稱或網址')}
+                            aria-label={tr('搜索已有站点', 'Search saved sites', '搜尋現有站點')}
+                            autoFocus
+                          />
+                          {sitePickerQuery && (
+                            <button
+                              type="button"
+                              onClick={() => setSitePickerQuery('')}
+                              aria-label={tr('清空搜索', 'Clear search', '清除搜尋')}
+                            >
+                              <X size={13} />
+                            </button>
+                          )}
+                        </label>
+                        <div className="site-picker__results">
+                        {filteredSiteOptions.map((site) => (
                           <button
                             type="button"
                             role="option"
@@ -682,7 +766,13 @@ export function AccountDrawer({
                             </span>
                             {site.id === selectedSiteId && <Check size={14} />}
                           </button>
-                      ))}
+                        ))}
+                        {filteredSiteOptions.length === 0 && (
+                          <span className="site-picker__empty">
+                            {tr('没有匹配的站点', 'No matching sites', '沒有符合的站點')}
+                          </span>
+                        )}
+                        </div>
                       </div>
                     )}
                   </div>
@@ -771,7 +861,10 @@ export function AccountDrawer({
                         aria-busy={iconBusy}
                       >
                         {iconBusy ? (
-                          <LoaderCircle size={14} className="spin" />
+                          <LoaderCircle
+                            size={14}
+                            className="spin site-icon-fetch-spin"
+                          />
                         ) : (
                           <Download size={14} />
                         )}
@@ -804,7 +897,10 @@ export function AccountDrawer({
                     aria-label={tr('站点分组', 'Site group', '站點分組')}
                     aria-haspopup="listbox"
                     aria-expanded={groupPickerOpen}
-                    onClick={() => setGroupPickerOpen((current) => !current)}
+                    onClick={() => {
+                      if (!groupPickerOpen) setGroupPickerQuery('')
+                      setGroupPickerOpen((current) => !current)
+                    }}
                   >
                     <Layers3 size={17} />
                     <span>
@@ -826,6 +922,29 @@ export function AccountDrawer({
                       role="listbox"
                       aria-label={tr('站点分组列表', 'Site groups', '站點分組清單')}
                     >
+                      <label className="site-picker__search">
+                        <Search size={14} />
+                        <input
+                          value={groupPickerQuery}
+                          onChange={(event) => setGroupPickerQuery(event.target.value)}
+                          onKeyDown={(event) => {
+                            if (event.key === 'Enter') event.preventDefault()
+                          }}
+                          placeholder={tr('搜索分组', 'Search groups', '搜尋分組')}
+                          aria-label={tr('搜索站点分组', 'Search site groups', '搜尋站點分組')}
+                          autoFocus
+                        />
+                        {groupPickerQuery && (
+                          <button
+                            type="button"
+                            onClick={() => setGroupPickerQuery('')}
+                            aria-label={tr('清空搜索', 'Clear search', '清除搜尋')}
+                          >
+                            <X size={13} />
+                          </button>
+                        )}
+                      </label>
+                      <div className="site-picker__results">
                       <button
                         type="button"
                         role="option"
@@ -843,7 +962,7 @@ export function AccountDrawer({
                         </span>
                         {siteGroup === '' && <Check size={14} />}
                       </button>
-                      {groupOptions.map((group) => (
+                      {filteredGroupOptions.map((group) => (
                         <button
                           type="button"
                           role="option"
@@ -863,87 +982,108 @@ export function AccountDrawer({
                           {group.path === siteGroup && <Check size={14} />}
                         </button>
                       ))}
+                      {filteredGroupOptions.length === 0 && (
+                        <span className="site-picker__empty">
+                          {tr('没有匹配的分组', 'No matching groups', '沒有符合的分組')}
+                        </span>
+                      )}
+                      </div>
                     </div>
                   )}
                 </div>
               </div>
 
-              <label className="field">
-                <span className="field__label">{tr('用户名', 'Username', '使用者名稱')}</span>
-                <span className="input-shell">
-                  <UserRound size={17} />
-                  <input
-                    value={username}
-                    onChange={(event) => setUsername(event.target.value)}
-                    placeholder={tr('邮箱或账号', 'Email or username', '電子郵件或帳號')}
-                    autoComplete="off"
-                  />
-                  {account && (
-                    <button
-                      type="button"
-                      className="input-action"
-                      onClick={() => void copyUsername()}
-                      aria-label={tr('复制用户名', 'Copy username', '複製使用者名稱')}
-                    >
-                      <Copy size={15} />
-                    </button>
-                  )}
-                </span>
-              </label>
-
-              <label className="field">
-                <span className="field__label">
-                  {tr('登录密码', 'Login password', '登入密碼')}
-                  {mode === 'edit' && (
-                    <small>{tr('留空则保持不变', 'Leave blank to keep current', '留空則保持不變')}</small>
-                  )}
-                </span>
-                <span className="input-shell">
-                  <KeyRound size={17} />
-                  <input
-                    type={showPassword ? 'text' : 'password'}
-                    value={password}
-                    onChange={(event) => setPassword(event.target.value)}
-                    placeholder={
-                      mode === 'edit'
-                        ? tr('输入新密码以替换', 'Enter a new password to replace', '輸入新密碼以取代')
-                        : tr('输入登录密码', 'Enter login password', '輸入登入密碼')
-                    }
-                    autoComplete="new-password"
-                  />
-                  <button
-                    type="button"
-                    className="input-action"
-                    onClick={() => setShowPassword((value) => !value)}
-                    aria-label={showPassword ? tr('隐藏密码', 'Hide password', '隱藏密碼') : tr('显示密码', 'Show password', '顯示密碼')}
-                  >
-                    {showPassword ? <EyeOff size={17} /> : <Eye size={17} />}
-                  </button>
-                </span>
-              </label>
-
-              <div className="form-options account-form__span-2">
-                <label className="account-editor-check-row">
-                  <input
-                    type="checkbox"
-                    checked={autoSubmit}
-                    onChange={(event) => setAutoSubmit(event.target.checked)}
-                  />
-                  <span>
-                    <strong>{tr('自动提交', 'Auto submit', '自動提交')}</strong>
-                    <small>
-                      {tr(
-                        '检测到验证码时会自动暂停',
-                        'Pauses when a challenge is detected',
-                        '偵測到驗證碼時會自動暫停'
+              {!isBookmark && (
+                <>
+                  <label className="field">
+                    <span className="field__label">{tr('用户名', 'Username', '使用者名稱')}</span>
+                    <span className="input-shell">
+                      <UserRound size={17} />
+                      <input
+                        value={username}
+                        onChange={(event) => setUsername(event.target.value)}
+                        placeholder={tr('邮箱或账号', 'Email or username', '電子郵件或帳號')}
+                        autoComplete="off"
+                      />
+                      {account && (
+                        <button
+                          type="button"
+                          className="input-action"
+                          onClick={() => void copyUsername()}
+                          aria-label={tr('复制用户名', 'Copy username', '複製使用者名稱')}
+                        >
+                          <Copy size={15} />
+                        </button>
                       )}
-                    </small>
-                  </span>
-                </label>
-              </div>
+                    </span>
+                  </label>
+
+                  <label className="field">
+                    <span className="field__label">
+                      {tr('登录密码', 'Login password', '登入密碼')}
+                      {mode === 'edit' && (
+                        <small>{tr('留空则保持不变', 'Leave blank to keep current', '留空則保持不變')}</small>
+                      )}
+                    </span>
+                    <span className="input-shell">
+                      <KeyRound size={17} />
+                      <input
+                        type={showPassword ? 'text' : 'password'}
+                        value={password}
+                        onChange={(event) => setPassword(event.target.value)}
+                        placeholder={
+                          mode === 'edit'
+                            ? tr('输入新密码以替换', 'Enter a new password to replace', '輸入新密碼以取代')
+                            : tr('输入登录密码', 'Enter login password', '輸入登入密碼')
+                        }
+                        autoComplete="new-password"
+                      />
+                      <PasswordGeneratorPopover
+                        notify={notify}
+                        onApply={(value) => {
+                          setPassword(value)
+                          setShowPassword(true)
+                          notify(
+                            'success',
+                            tr('已填入新密码', 'Generated password applied', '已填入新密碼')
+                          )
+                        }}
+                      />
+                      <button
+                        type="button"
+                        className="input-action"
+                        onClick={() => setShowPassword((value) => !value)}
+                        aria-label={showPassword ? tr('隐藏密码', 'Hide password', '隱藏密碼') : tr('显示密码', 'Show password', '顯示密碼')}
+                      >
+                        {showPassword ? <EyeOff size={17} /> : <Eye size={17} />}
+                      </button>
+                    </span>
+                  </label>
+
+                  <div className="form-options account-form__span-2">
+                    <label className="account-editor-check-row">
+                      <input
+                        type="checkbox"
+                        checked={autoSubmit}
+                        onChange={(event) => setAutoSubmit(event.target.checked)}
+                      />
+                      <span>
+                        <strong>{tr('自动提交', 'Auto submit', '自動提交')}</strong>
+                        <small>
+                          {tr(
+                            '检测到验证码时会自动暂停',
+                            'Pauses when a challenge is detected',
+                            '偵測到驗證碼時會自動暫停'
+                          )}
+                        </small>
+                      </span>
+                    </label>
+                  </div>
+                </>
+              )}
             </div>
 
-            {account && (
+            {!isBookmark && account && (
               <div className="drawer-saved-password">
                 <span>
                   <KeyRound size={14} />
@@ -973,7 +1113,7 @@ export function AccountDrawer({
 
             {error && <p className="form-error">{error}</p>}
 
-            {(
+            {!isBookmark && (
               <>
                 <section
                   className="account-login-strategy account-editor-choice-section"
@@ -1189,23 +1329,32 @@ export function AccountDrawer({
               <div className="account-drawer__management">
                 {account && (
                   <>
-                    <button type="button" className="text-button" onClick={() => setConfirmClear(true)}>
-                      <RefreshCw size={14} />
-                      {tr('清除会话', 'Clear session', '清除工作階段')}
-                    </button>
+                    {!isBookmark && (
+                      <button type="button" className="text-button" onClick={() => setConfirmClear(true)}>
+                        <RefreshCw size={14} />
+                        {tr('清除会话', 'Clear session', '清除工作階段')}
+                      </button>
+                    )}
                     <button
                       type="button"
                       className="text-button text-button--danger"
                       onClick={() => setConfirmDelete(true)}
                     >
                       <Trash2 size={14} />
-                      {tr('删除账号', 'Delete account', '刪除帳號')}
+                      {isBookmark
+                        ? tr('删除站点', 'Delete site', '刪除站點')
+                        : tr('删除账号', 'Delete account', '刪除帳號')}
                     </button>
                   </>
                 )}
               </div>
               <div className="account-drawer__actions">
-                <button type="button" className="button button--ghost" onClick={onClose}>
+                <button
+                  type="button"
+                  className="button button--ghost"
+                  onClick={onClose}
+                  disabled={busy}
+                >
                   {tr('取消', 'Cancel', '取消')}
                 </button>
                 <button type="submit" className="button button--primary" disabled={busy}>
@@ -1213,8 +1362,9 @@ export function AccountDrawer({
                     ? tr('正在保存…', 'Saving…', '正在儲存…')
                     : mode === 'edit'
                       ? tr('保存修改', 'Save changes', '儲存變更')
-                      : tr('添加账号', 'Add account', '新增帳號')}
-                  {!busy && <ArrowRight size={16} />}
+                      : isBookmark
+                        ? tr('添加书签', 'Add bookmark', '新增書籤')
+                        : tr('添加账号', 'Add account', '新增帳號')}
                 </button>
               </div>
             </div>
@@ -1223,13 +1373,29 @@ export function AccountDrawer({
 
       {confirmDelete && (
         <ConfirmDialog
-          title={tr('删除这个账号？', 'Delete this account?', '刪除這個帳號？')}
-          description={tr(
-            '账号会移入回收站，独立网站会话将被清除；之后可从主菜单的回收站恢复。',
-            'The account will move to Recycle Bin and its website session will be cleared. You can restore it later from the main menu.',
-            '帳號會移至回收站，獨立網站工作階段將被清除；之後可從主選單的回收站恢復。'
-          )}
-          confirmLabel={tr('删除账号', 'Delete account', '刪除帳號')}
+          title={
+            isBookmark
+              ? tr('删除这个站点？', 'Delete this site?', '刪除這個站點？')
+              : tr('删除这个账号？', 'Delete this account?', '刪除這個帳號？')
+          }
+          description={
+            isBookmark
+              ? tr(
+                  '站点会移入回收站，书签记录可稍后从主菜单的回收站恢复。',
+                  'The site will move to Recycle Bin and can be restored later from the main menu.',
+                  '站點會移至回收站，書籤記錄可稍後從主選單的回收站恢復。'
+                )
+              : tr(
+                  '账号会移入回收站，独立网站会话将被清除；之后可从主菜单的回收站恢复。',
+                  'The account will move to Recycle Bin and its website session will be cleared. You can restore it later from the main menu.',
+                  '帳號會移至回收站，獨立網站工作階段將被清除；之後可從主選單的回收站恢復。'
+                )
+          }
+          confirmLabel={
+            isBookmark
+              ? tr('删除站点', 'Delete site', '刪除站點')
+              : tr('删除账号', 'Delete account', '刪除帳號')
+          }
           danger
           busy={destructiveBusy}
           onConfirm={() => void deleteAccount()}

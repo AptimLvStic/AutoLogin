@@ -16,7 +16,7 @@ export const DEFAULT_THEME_COLORS: ThemeColors = {
 
 export const DEFAULT_PROXY_SETTINGS: ProxySettings = {
   mode: 'custom',
-  enabled: false,
+  enabled: true,
   protocol: 'http',
   host: '',
   port: 8080,
@@ -33,8 +33,11 @@ export const DEFAULT_APP_SETTINGS: AppSettings = {
   customTheme: DEFAULT_THEME_COLORS,
   interfaceScale: 100,
   fontSizeScale: 100,
+  accountCopyShortcutEnabled: false,
+  accountCopyShortcut: 'Ctrl+C',
   proxy: DEFAULT_PROXY_SETTINGS,
-  groupOrder: []
+  groupOrder: [],
+  groupOrders: {}
 }
 
 interface ThemePresetDefinition {

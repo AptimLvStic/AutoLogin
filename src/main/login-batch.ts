@@ -98,6 +98,7 @@ export class LoginBatchManager {
       success: 0,
       failed: 0,
       manual: 0,
+      canceled: 0,
       startedAt,
       items: accounts.map(({ account, site }) => ({
         accountId: account.id,
@@ -111,6 +112,38 @@ export class LoginBatchManager {
     }
     this.publish()
     this.pump()
+    return this.getState()!
+  }
+
+  async cancel(): Promise<LoginBatchState> {
+    if (!this.state) {
+      throw new Error('没有可中断的批量登录任务')
+    }
+    if (!this.state.active) {
+      return this.getState()!
+    }
+
+    const canceledAt = new Date().toISOString()
+    this.state = {
+      ...this.state,
+      active: false,
+      pending: 0,
+      canceled: this.state.items.filter((item) => isPendingStatus(item.status)).length + this.state.canceled,
+      finishedAt: canceledAt,
+      items: this.state.items.map((item) =>
+        isPendingStatus(item.status)
+          ? {
+              ...item,
+              status: 'canceled',
+              message: '已手动中断',
+              completedAt: canceledAt
+            }
+          : item
+      )
+    }
+    this.queue = []
+    await this.closeRuntime()
+    this.publish()
     return this.getState()!
   }
 
@@ -162,7 +195,12 @@ export class LoginBatchManager {
 
   private async runAccount(accountId: string): Promise<void> {
     const item = this.findItem(accountId)
-    if (!item || item.status === 'success' || item.status === 'failed') {
+    if (
+      !item ||
+      item.status === 'success' ||
+      item.status === 'failed' ||
+      item.status === 'canceled'
+    ) {
       return
     }
 
@@ -200,7 +238,12 @@ export class LoginBatchManager {
 
   private handleLoginState(accountId: string, state: LoginViewState): void {
     const item = this.findItem(accountId)
-    if (!item || item.status === 'success' || item.status === 'failed') {
+    if (
+      !item ||
+      item.status === 'success' ||
+      item.status === 'failed' ||
+      item.status === 'canceled'
+    ) {
       return
     }
 
@@ -239,7 +282,12 @@ export class LoginBatchManager {
     this.clearTimer(accountId)
     const timer = setTimeout(() => {
       const item = this.findItem(accountId)
-      if (!item || item.status === 'success' || item.status === 'failed') {
+      if (
+        !item ||
+        item.status === 'success' ||
+        item.status === 'failed' ||
+        item.status === 'canceled'
+      ) {
         return
       }
       this.markFailed(accountId, '登录状态在 30 秒内未确认，请检查默认浏览器')
@@ -258,7 +306,12 @@ export class LoginBatchManager {
 
   private markFailed(accountId: string, reason: string): void {
     const item = this.findItem(accountId)
-    if (!item || item.status === 'success' || item.status === 'failed') {
+    if (
+      !item ||
+      item.status === 'success' ||
+      item.status === 'failed' ||
+      item.status === 'canceled'
+    ) {
       return
     }
     this.clearTimer(accountId)
@@ -274,7 +327,12 @@ export class LoginBatchManager {
 
   private markManual(accountId: string, reason: string): void {
     const item = this.findItem(accountId)
-    if (!item || item.status === 'success' || item.status === 'failed') {
+    if (
+      !item ||
+      item.status === 'success' ||
+      item.status === 'failed' ||
+      item.status === 'canceled'
+    ) {
       return
     }
     this.clearTimer(accountId)
@@ -343,6 +401,7 @@ export class LoginBatchManager {
       (item) => item.status === 'failed' || item.status === 'manual'
     ).length
     const manual = this.state.items.filter((item) => item.status === 'manual').length
+    const canceled = this.state.items.filter((item) => item.status === 'canceled').length
     const active = pending > 0
     this.state = {
       ...this.state,
@@ -351,6 +410,7 @@ export class LoginBatchManager {
       success,
       failed,
       manual,
+      canceled,
       finishedAt:
         !active && !this.state.finishedAt ? new Date().toISOString() : this.state.finishedAt
     }

@@ -371,6 +371,49 @@ p {
   color: var(--accent);
 }
 
+.reset-setting-button {
+  display: inline-flex;
+  min-height: 30px;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  margin-left: auto;
+  padding: 0 9px;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--muted);
+  font-size: calc(11px * var(--font-scale, 1));
+  font-weight: 600;
+  white-space: nowrap;
+  transition:
+    background-color 160ms ease,
+    color 160ms ease;
+}
+
+.reset-setting-button:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--ink) 5%, transparent);
+  color: var(--ink);
+}
+
+.reset-setting-button:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--accent) 58%, transparent);
+  outline-offset: 2px;
+}
+
+.reset-setting-button:disabled {
+  cursor: not-allowed;
+  opacity: 0.42;
+}
+
+.settings-location-actions {
+  width: 100%;
+}
+
+.settings-location-actions .reset-setting-button {
+  margin-left: auto;
+}
+
 .text-button--inline {
   padding: 8px 0;
   white-space: nowrap;
@@ -14155,7 +14198,31 @@ body.is-dragging-password-generator * {
 }
 
 .account-tabs__scroll {
+  align-items: flex-end;
+  gap: 3px;
   padding-bottom: 0;
+}
+
+.account-tabs {
+  border-bottom: 0;
+  background: var(--card);
+  box-shadow: none;
+}
+
+.account-tab {
+  border: 0;
+  border-radius: 10px 10px 0 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+.account-tab:not(.is-active) {
+  background: transparent;
+  box-shadow: none;
+}
+
+.account-tab:not(.is-active):hover {
+  background: color-mix(in srgb, var(--ink) 3.5%, transparent);
 }
 
 .account-tab.is-active {

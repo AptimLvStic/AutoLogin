@@ -57,6 +57,15 @@ const groupPathSchema = z.string().trim().min(1).max(80)
 const tabIdSchema = idSchema.default(DEFAULT_ACCOUNT_TAB_ID)
 const tabNameSchema = z.string().trim().min(1, '标签页名称不能为空').max(40)
 const tabColorSchema = z.string().regex(/^#[0-9a-fA-F]{6}$/, '标签页颜色无效')
+const tabDatabaseFileNameSchema = z
+  .string()
+  .trim()
+  .min(5)
+  .max(180)
+  .regex(
+    /^[^<>:"/\\|?*\u0000-\u001f]+\.(autologin|kdbx|csv|html?)$/i,
+    '数据库文件名无效'
+  )
 
 const defaultLocalTab = {
   id: DEFAULT_ACCOUNT_TAB_ID,
@@ -73,6 +82,7 @@ export const accountTabSchema = z.object({
   name: tabNameSchema,
   color: tabColorSchema,
   source: z.enum(ACCOUNT_TAB_SOURCES),
+  databaseFileName: tabDatabaseFileNameSchema.optional(),
   hidden: z.boolean().default(false),
   createdAt: z.string(),
   updatedAt: z.string()
@@ -563,5 +573,12 @@ export const dataExportInputSchema = z
   .object({
     tabId: idSchema,
     password: masterPasswordSchema.optional()
+  })
+  .strict()
+
+export const csvImportInputSchema = z
+  .object({
+    mode: z.enum(['current', 'new']),
+    tabId: idSchema
   })
   .strict()

@@ -117,6 +117,7 @@ const api: AutologinApi = {
     openReleases: () => invoke('app:open-releases'),
     getDataLocation: () => invoke('app:get-data-location'),
     chooseDataLocation: () => invoke('app:choose-data-location'),
+    restoreDefaultDataLocation: () => invoke('app:restore-default-data-location'),
     openDataLocation: () => invoke('app:open-data-location'),
     openFailureLog: () => invoke('app:open-failure-log'),
     listLoginLogs: (query) => invoke('app:list-login-logs', query),
@@ -138,7 +139,7 @@ const api: AutologinApi = {
   data: {
     exportTab: (input) => invoke('data:export-vault', input),
     exportCsvTemplate: () => invoke('data:export-csv-template'),
-    importCsv: () => invoke('data:import-csv'),
+    importCsv: (input) => invoke('data:import-csv', input),
     chooseKdbx: () => invoke('data:choose-kdbx'),
     importKdbx: (input) => invoke('data:import-kdbx', input),
     chooseAutologin: () => invoke('data:choose-autologin'),

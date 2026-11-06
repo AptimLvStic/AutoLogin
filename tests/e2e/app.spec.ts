@@ -1052,7 +1052,7 @@ test('resizes, hides and restores the account subnav, and creates three group le
   await expect(childRow.locator('.account-subnav__tree-spacer')).toHaveCount(1)
   await childRow.getByRole('button', { name: '在“Child”下新增子分组' }).click()
   await groupPopover.getByLabel('分组名称').fill('Grand')
-  await groupPopover.getByRole('button', { name: '创建' }).click()
+  await groupPopover.getByLabel('分组名称').press('Enter')
   const grandRow = page.locator('.account-subnav__group-row').filter({ hasText: 'Grand' })
   await expect(grandRow).toBeVisible()
   await expect(grandRow.getByRole('button', { name: /新增子分组/ })).toHaveCount(0)
@@ -1212,6 +1212,7 @@ test('resizes, hides and restores the account subnav, and creates three group le
       )
     )
     .toBe('window')
+  await page.waitForTimeout(180)
   const siteHeaderCell = tableHeaders.locator('[data-column-key="site"]')
   const siteResizer = siteHeaderCell.locator('.account-column-resizer')
   const siteWidthBefore = await siteHeaderCell.evaluate(
@@ -1237,9 +1238,11 @@ test('resizes, hides and restores the account subnav, and creates three group le
       )
     )
     .toBe('manual')
-  expect(
-    await siteHeaderCell.evaluate((element) => element.getBoundingClientRect().width)
-  ).toBeGreaterThan(siteWidthBefore + 20)
+  await expect
+    .poll(() =>
+      siteHeaderCell.evaluate((element) => element.getBoundingClientRect().width)
+    )
+    .toBeGreaterThan(siteWidthBefore + 20)
   await expect
     .poll(() =>
       page.evaluate(() => {
@@ -1713,8 +1716,12 @@ test('keeps the account context menu at the pointer after scrolling', async () =
   const rows = page.locator('.account-row')
   await expect(rows).toHaveCount(20, { timeout: 15000 })
 
-  const target = rows.last()
-  await target.scrollIntoViewIfNeeded()
+  const tableScroller = page.locator('.account-table-scroll')
+  await tableScroller.evaluate((element) => {
+    element.scrollTop = element.scrollHeight
+  })
+  await page.waitForTimeout(250)
+  const target = rows.nth(19)
   const rowBox = await target.boundingBox()
   expect(rowBox).not.toBeNull()
   const pointerX = rowBox!.x + rowBox!.width * 0.4
@@ -1920,6 +1927,7 @@ test('closes a tab without deleting its encrypted AutoLogin snapshot', async () 
 
   await page.getByRole('button', { name: '新增标签页或打开数据库' }).click()
   await page.getByRole('menuitem', { name: '新增本地数据库' }).click()
+  await expect(page.locator('.toast')).toContainText('数据库已创建')
   await expect
     .poll(() => page.evaluate(() => window.autologin.tabs.list().then((tabs) => tabs.length)))
     .toBe(initialTabs.length + 1)
@@ -1929,6 +1937,7 @@ test('closes a tab without deleting its encrypted AutoLogin snapshot', async () 
     return tabs.find((tab) => !knownIds.includes(tab.id))
   }, initialTabs.map((tab) => tab.id))
   expect(createdTab).toBeDefined()
+  expect(createdTab!.name).toBe('本地数据库 1')
   const visibleAccountTabs = page.locator('.account-tab')
   await expect(visibleAccountTabs).toHaveCount(initialTabs.length + 1)
   const firstTab = visibleAccountTabs.first()
@@ -1937,9 +1946,29 @@ test('closes a tab without deleting its encrypted AutoLogin snapshot', async () 
   const snapshotPath = join(
     userDataDirectory,
     'tabs',
-    `tab-${createdTab!.id}.autologin`
+    createdTab!.databaseFileName ?? `tab-${createdTab!.id}.autologin`
   )
   await expect.poll(() => existsSync(snapshotPath)).toBe(true)
+
+  const nextLocalDatabase = await page.evaluate(() =>
+    window.autologin.tabs.create({ source: 'local' })
+  )
+  expect(nextLocalDatabase.name).toBe('本地数据库 2')
+
+  const renamedTab = await page.evaluate(
+    (tabId) =>
+      window.autologin.tabs.update(tabId, {
+        name: '重命名数据库测试'
+      }),
+    createdTab!.id
+  )
+  const renamedSnapshotPath = join(
+    userDataDirectory,
+    'tabs',
+    renamedTab.databaseFileName ?? ''
+  )
+  await expect.poll(() => existsSync(renamedSnapshotPath)).toBe(true)
+  expect(existsSync(snapshotPath)).toBe(false)
 
   await page
     .getByRole('button', { name: `关闭“${createdTab!.name}”数据库` })
@@ -1957,7 +1986,7 @@ test('closes a tab without deleting its encrypted AutoLogin snapshot', async () 
       )
     )
     .toBe(true)
-  expect(existsSync(snapshotPath)).toBe(true)
+  expect(existsSync(renamedSnapshotPath)).toBe(true)
 })
 
 test('defers an available update prompt until the vault is unlocked', async () => {
@@ -1965,7 +1994,7 @@ test('defers an available update prompt until the vault is unlocked', async () =
   await application.evaluate(({ BrowserWindow }) => {
     BrowserWindow.getAllWindows()[0]?.webContents.send('app:update-state', {
       phase: 'available',
-      currentVersion: '0.9.5',
+      currentVersion: '0.9.6',
       latestVersion: '99.0.1',
       releaseName: 'AutoLogin v99.0.1',
       releaseNotes: '## 更新内容\n\n- 解锁后显示更新提示',
@@ -1996,7 +2025,12 @@ test('persists appearance, language and interface scale with separate resets', a
   await expect(page.getByRole('button', { name: '导出加密配置' })).toBeVisible()
   await page.getByRole('button', { name: '导入账号' }).click()
   const importMenu = page.locator('.account-import-menu')
-  await expect(importMenu.getByRole('menuitem', { name: '导入标准 CSV' })).toBeVisible()
+  await expect(
+    importMenu.getByRole('menuitem', { name: '当前数据库导入标准CSV' })
+  ).toBeVisible()
+  await expect(
+    importMenu.getByRole('menuitem', { name: '新数据库导入标准CSV' })
+  ).toBeVisible()
   await expect(importMenu.getByRole('menuitem', { name: '导入 KDBX 数据库' })).toHaveCount(0)
   await expect(importMenu.getByRole('menuitem', { name: '导入浏览器书签' })).toHaveCount(0)
   await expect(importMenu.getByRole('menuitem', { name: '下载 CSV 模板' })).toBeVisible()
@@ -2045,6 +2079,29 @@ test('persists appearance, language and interface scale with separate resets', a
 
   const settings = page.locator('.settings-page')
   await expect(page.locator('.page-breadcrumb')).toBeVisible()
+  const resetScaleButton = settings.getByRole('button', { name: '恢复默认比例' })
+  const resetFontButton = settings.getByRole('button', { name: '恢复默认字体大小' })
+  const resetAllButton = settings.getByRole('button', { name: '恢复默认设置' })
+  for (const button of [resetScaleButton, resetFontButton, resetAllButton]) {
+    await expect(button).toHaveCSS('border-top-width', '0px')
+    await expect(button).toHaveCSS('background-color', 'rgba(0, 0, 0, 0)')
+  }
+  for (const button of [resetScaleButton, resetFontButton, resetAllButton]) {
+    const alignment = await button.evaluate((element) => {
+      const card = element.closest<HTMLElement>('.settings-card')
+      if (!card) return null
+      const cardBox = card.getBoundingClientRect()
+      const buttonBox = element.getBoundingClientRect()
+      const paddingRight = Number.parseFloat(getComputedStyle(card).paddingRight)
+      return {
+        rightGap: cardBox.right - paddingRight - buttonBox.right,
+        leftGap: buttonBox.left - cardBox.left
+      }
+    })
+    expect(alignment).not.toBeNull()
+    expect(Math.abs(alignment!.rightGap)).toBeLessThan(2)
+    expect(alignment!.leftGap).toBeGreaterThan(80)
+  }
   await expect(settings.locator('.page-breadcrumb > span').first()).toHaveText('设置')
   await expect(settings.locator('.settings-footer')).toHaveCount(0)
   await expect(settings.getByRole('tab')).toHaveCount(5)
@@ -2198,7 +2255,23 @@ test('persists appearance, language and interface scale with separate resets', a
   await expect(settings.getByRole('heading', { name: '数据保存位置' })).toBeVisible()
   await expect(settings.getByRole('heading', { name: '自动备份' })).toBeVisible()
   await expect(settings.getByRole('button', { name: '导出加密配置' })).toHaveCount(0)
-  await expect(settings.getByRole('button', { name: '导入标准 CSV' })).toHaveCount(0)
+  await expect(
+    settings.getByRole('button', { name: '当前数据库导入标准CSV' })
+  ).toHaveCount(0)
+  const restoreLocationButton = settings.getByRole('button', { name: '恢复默认位置' })
+  await expect(restoreLocationButton).toBeVisible()
+  await expect(restoreLocationButton).toBeDisabled()
+  await expect(restoreLocationButton).toHaveCSS('background-color', 'rgba(0, 0, 0, 0)')
+  const restoreLocationAlignment = await restoreLocationButton.evaluate((element) => {
+    const card = element.closest<HTMLElement>('.settings-card')
+    if (!card) return null
+    const cardBox = card.getBoundingClientRect()
+    const buttonBox = element.getBoundingClientRect()
+    const paddingRight = Number.parseFloat(getComputedStyle(card).paddingRight)
+    return cardBox.right - paddingRight - buttonBox.right
+  })
+  expect(restoreLocationAlignment).not.toBeNull()
+  expect(Math.abs(restoreLocationAlignment!)).toBeLessThan(2)
   const runtimeVersion = await application.evaluate(({ app }) => app.getVersion())
   await expect(settings.locator('.settings-location code')).toContainText(userDataDirectory)
   await settings.getByRole('tab', { name: '关于与更新' }).click()

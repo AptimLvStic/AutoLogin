@@ -102,6 +102,7 @@ export function SettingsPage({
   const [about, setAbout] = useState<AboutInfo | null>(null)
   const [dataLocation, setDataLocation] = useState<DataLocationInfo | null>(null)
   const [locationBusy, setLocationBusy] = useState(false)
+  const [restoreLocationOpen, setRestoreLocationOpen] = useState(false)
   const [updateResult, setUpdateResult] = useState<UpdateCheckResult | null>(null)
   const [checkingUpdates, setCheckingUpdates] = useState(false)
   const [downloadUpdateBusy, setDownloadUpdateBusy] = useState(false)
@@ -412,6 +413,37 @@ export function SettingsPage({
         error instanceof Error
           ? error.message
           : tr('数据目录迁移失败', 'Could not move data location.', '資料目錄遷移失敗')
+      )
+    } finally {
+      setLocationBusy(false)
+    }
+  }
+
+  async function restoreDefaultLocation(): Promise<void> {
+    if (!dataLocation || dataLocation.isDefault || locationBusy) return
+    setLocationBusy(true)
+    try {
+      const next = await window.autologin.app.restoreDefaultDataLocation()
+      setDataLocation(next)
+      setRestoreLocationOpen(false)
+      notify(
+        'success',
+        tr(
+          '数据已迁移回默认目录，重启 AutoLogin 后继续使用',
+          'Data moved back to the default location. Restart AutoLogin to continue.',
+          '資料已遷移回預設目錄，重新啟動 AutoLogin 後繼續使用'
+        )
+      )
+    } catch (error) {
+      notify(
+        'error',
+        error instanceof Error
+          ? error.message
+          : tr(
+              '恢复默认数据目录失败',
+              'Could not restore the default data location.',
+              '恢復預設資料目錄失敗'
+            )
       )
     } finally {
       setLocationBusy(false)
@@ -796,7 +828,11 @@ export function SettingsPage({
                     '可在 80% 至 125% 之間調整'
                   )}
                 </span>
-                <button className="text-button" onClick={() => void resetScale()}>
+                <button
+                  type="button"
+                  className="reset-setting-button"
+                  onClick={() => void resetScale()}
+                >
                   <RotateCcw size={14} />
                   {tr('恢复默认比例', 'Reset scale', '恢復預設比例')}
                 </button>
@@ -838,7 +874,11 @@ export function SettingsPage({
                     '可在 90% 至 120% 之間調整'
                   )}
                 </span>
-                <button className="text-button" onClick={() => void resetFontSize()}>
+                <button
+                  type="button"
+                  className="reset-setting-button"
+                  onClick={() => void resetFontSize()}
+                >
                   <RotateCcw size={14} />
                   {tr('恢复默认字体大小', 'Reset font size', '恢復預設字體大小')}
                 </button>
@@ -910,7 +950,11 @@ export function SettingsPage({
                   )}
                 </p>
               </div>
-              <button className="button button--soft" onClick={() => void resetAllSettings()}>
+              <button
+                type="button"
+                className="reset-setting-button"
+                onClick={() => void resetAllSettings()}
+              >
                 <RotateCcw size={15} />
                 {tr('恢复默认设置', 'Restore defaults', '恢復預設設定')}
               </button>
@@ -1264,7 +1308,7 @@ export function SettingsPage({
                   </button>
                 </div>
               )}
-              <div className="settings-inline-actions">
+              <div className="settings-inline-actions settings-location-actions">
                 <button
                   className="button button--soft"
                   onClick={() => void chooseLocation()}
@@ -1284,6 +1328,15 @@ export function SettingsPage({
                   onClick={() => void window.autologin.app.openDataLocation()}
                 >
                   {tr('打开目录', 'Open folder', '開啟目錄')}
+                </button>
+                <button
+                  type="button"
+                  className="reset-setting-button"
+                  onClick={() => setRestoreLocationOpen(true)}
+                  disabled={locationBusy || !dataLocation || dataLocation.isDefault}
+                >
+                  <RotateCcw size={14} />
+                  {tr('恢复默认位置', 'Restore default location', '恢復預設位置')}
                 </button>
               </div>
             </div>
@@ -1577,6 +1630,27 @@ export function SettingsPage({
           busy={restoringBackup}
           onConfirm={() => void restoreBackup()}
           onClose={() => setConfirmBackup(null)}
+        />
+      )}
+
+      {restoreLocationOpen && (
+        <ConfirmDialog
+          title={tr(
+            '恢复默认数据目录？',
+            'Restore the default data location?',
+            '恢復預設資料目錄？'
+          )}
+          description={tr(
+            '是否将现有数据迁移回默认目录？迁移完成后需要重启 AutoLogin 才能继续使用新位置。',
+            'Move the existing data back to the default directory? Restart AutoLogin after the migration to use the new location.',
+            '是否將現有資料遷移回預設目錄？遷移完成後需要重新啟動 AutoLogin 才能繼續使用新位置。'
+          )}
+          confirmLabel={tr('迁移并恢复', 'Move and restore', '遷移並恢復')}
+          busy={locationBusy}
+          onConfirm={() => void restoreDefaultLocation()}
+          onClose={() => {
+            if (!locationBusy) setRestoreLocationOpen(false)
+          }}
         />
       )}
 

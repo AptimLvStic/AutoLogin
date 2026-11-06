@@ -1,6 +1,6 @@
 import { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, net, session, shell } from 'electron'
-import { existsSync, mkdirSync, rmSync, statSync, writeFileSync } from 'node:fs'
-import { basename, dirname, join, resolve } from 'node:path'
+import { existsSync, mkdirSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs'
+import { basename, dirname, extname, join, resolve } from 'node:path'
 import { randomUUID } from 'node:crypto'
 import type { IpcMainEvent, IpcMainInvokeEvent } from 'electron'
 import { autoUpdater } from 'electron-updater'
@@ -25,6 +25,7 @@ import {
   appSettingsPatchSchema,
   autologinSelectionImportSchema,
   changePasswordSchema,
+  csvImportInputSchema,
   dataExportInputSchema,
   favoriteGroupInputSchema,
   groupCreateInputSchema,
@@ -212,7 +213,10 @@ app.whenReady().then(() => {
     dirname(app.getPath('exe')),
     dataLocationPointerDirectory
   )
-  writeDataDirectory(configDirectory, dataDirectory)
+  writeDataDirectory(dataLocationPointerDirectory, dataDirectory)
+  if (dataLocationPointerDirectory !== configDirectory) {
+    writeDataDirectory(configDirectory, dataDirectory)
+  }
   initializeDataStores()
   appendAppLog(dataDirectory, {
     level: 'info',
@@ -415,7 +419,7 @@ function syncTabSnapshotFiles(data: VaultData): void {
         }
       }
       vault.writeEncryptedSnapshot(
-        join(tabsDirectory, `tab-${tab.id}.autologin`),
+        tabDatabasePath(tab),
         snapshot
       )
     } catch (error) {
@@ -427,6 +431,81 @@ function syncTabSnapshotFiles(data: VaultData): void {
       })
     }
   }
+}
+
+function tabDatabasePath(tab: AccountTab): string {
+  return join(
+    dataDirectory,
+    'tabs',
+    tab.databaseFileName ?? `tab-${tab.id}.autologin`
+  )
+}
+
+function nextLocalDatabaseName(data: VaultData): string {
+  let highest = 0
+  for (const tab of data.tabs) {
+    const match = /^本地数据库\s*(\d+)$/.exec(tab.name.trim())
+    if (!match) continue
+    highest = Math.max(highest, Number(match[1]) || 0)
+  }
+  return `本地数据库 ${highest + 1}`
+}
+
+function databaseExtensionForTab(tab: AccountTab): string {
+  const existingExtension = tab.databaseFileName
+    ? extname(tab.databaseFileName).toLocaleLowerCase()
+    : ''
+  return existingExtension || databaseExtensionForSource(tab.source)
+}
+
+function databaseExtensionForSource(
+  source: AccountTab['source'],
+  originalFileName?: string
+): string {
+  const originalExtension = extname(originalFileName ?? '').toLocaleLowerCase()
+  if (source === 'kdbx' && originalExtension === '.kdbx') return '.kdbx'
+  if (source === 'csv' && originalExtension === '.csv') return '.csv'
+  if (source === 'bookmarks' && (originalExtension === '.html' || originalExtension === '.htm')) {
+    return originalExtension
+  }
+  if (source === 'autologin' && originalExtension === '.autologin') return '.autologin'
+  if (source === 'kdbx') return '.kdbx'
+  if (source === 'csv') return '.csv'
+  if (source === 'bookmarks') return '.html'
+  return '.autologin'
+}
+
+function uniqueDatabaseFileName(
+  data: VaultData,
+  tabId: string,
+  requestedName: string,
+  extension: string
+): string {
+  const tabsDirectory = join(dataDirectory, 'tabs')
+  const usedNames = new Set(
+    data.tabs
+      .filter((tab) => tab.id !== tabId)
+      .map((tab) =>
+        (tab.databaseFileName ?? `tab-${tab.id}.autologin`).toLocaleLowerCase()
+      )
+  )
+  const safeBase =
+    requestedName
+      .normalize('NFKC')
+      .replace(/[<>:"/\\|?*\u0000-\u001f]/g, '-')
+      .replace(/[. ]+$/g, '')
+      .trim()
+      .slice(0, 80) || 'database'
+  let sequence = 1
+  let candidate = `${safeBase}${extension}`
+  while (
+    usedNames.has(candidate.toLocaleLowerCase()) ||
+    existsSync(join(tabsDirectory, candidate))
+  ) {
+    sequence += 1
+    candidate = `${safeBase} ${sequence}${extension}`
+  }
+  return candidate
 }
 
 function ensureLoginManagers(): void {
@@ -565,11 +644,12 @@ function registerIpc(): void {
   ipcMain.handle('tabs:reveal', async (event, tabId: unknown) => {
     assertTrustedSender(event)
     const id = requireId(tabId)
-    if (!vault.requireData().tabs.some((tab) => tab.id === id)) {
+    const tab = vault.requireData().tabs.find((entry) => entry.id === id)
+    if (!tab) {
       throw new Error('标签页不存在')
     }
     const tabsDirectory = join(dataDirectory, 'tabs')
-    const databasePath = join(tabsDirectory, `tab-${id}.autologin`)
+    const databasePath = tabDatabasePath(tab)
     if (existsSync(databasePath)) {
       shell.showItemInFolder(databasePath)
       return
@@ -1319,8 +1399,12 @@ function registerIpc(): void {
     })
     return { canceled: false, fileName: basename(selection.filePath) }
   })
-  ipcMain.handle('data:import-csv', async (event): Promise<DataImportResult | null> => {
+  ipcMain.handle('data:import-csv', async (event, payload: unknown): Promise<DataImportResult | null> => {
     assertTrustedSender(event)
+    const parsedInput = csvImportInputSchema.safeParse(payload)
+    if (!parsedInput.success) {
+      throw new Error(firstIssue(parsedInput.error))
+    }
     if (!mainWindow) return null
     const selection = await dialog.showOpenDialog(mainWindow, {
       title: '导入标准 CSV 账号',
@@ -1333,7 +1417,13 @@ function registerIpc(): void {
       return null
     }
     const parsed = await parseCsvImport(path)
-    const result = applyDataImport(parsed, 'csv', basename(path))
+    const result = applyDataImport(
+      parsed,
+      'csv',
+      basename(path),
+      parsedInput.data.mode,
+      parsedInput.data.tabId
+    )
     appendImportLog(result, basename(path))
     return result
   })
@@ -1536,6 +1626,10 @@ function registerIpc(): void {
   ipcMain.handle('app:choose-data-location', async (event): Promise<DataLocationInfo | null> => {
     assertTrustedSender(event)
     return chooseDataLocation()
+  })
+  ipcMain.handle('app:restore-default-data-location', async (event): Promise<DataLocationInfo> => {
+    assertTrustedSender(event)
+    return restoreDefaultDataLocation()
   })
   ipcMain.handle('app:open-data-location', async (event) => {
     assertTrustedSender(event)
@@ -2840,7 +2934,7 @@ function createAccountTab(input?: {
   const source = input?.source ?? 'local'
   const tab = buildAccountTab(
     data,
-    input?.name ?? (source === 'bookmarks' ? '新书签标签' : '新标签'),
+    input?.name ?? (source === 'bookmarks' ? '新书签标签' : nextLocalDatabaseName(data)),
     source,
     input?.color ??
       ACCOUNT_TAB_COLORS[
@@ -2862,6 +2956,10 @@ function updateAccountTab(tabId: string, input: AccountTabUpdateInput): AccountT
   const data = vault.requireData()
   const tab = data.tabs.find((entry) => entry.id === tabId)
   if (!tab) throw new Error('标签页不存在')
+  const previousName = tab.name
+  const previousDatabaseFileName = tab.databaseFileName
+  let renamedFrom: string | null = null
+  let renamedTo: string | null = null
   if (input.name !== undefined) {
     const name = input.name.trim()
     if (
@@ -2871,13 +2969,47 @@ function updateAccountTab(tabId: string, input: AccountTabUpdateInput): AccountT
           entry.name.toLocaleLowerCase() === name.toLocaleLowerCase()
       )
     ) {
-      throw new Error('标签页名称已存在')
+      throw new Error('名称已存在')
     }
-    tab.name = name
+    if (name !== tab.name) {
+      const oldPath = tabDatabasePath(tab)
+      const nextFileName = uniqueDatabaseFileName(
+        data,
+        tab.id,
+        name,
+        databaseExtensionForTab(tab)
+      )
+      const nextPath = join(dataDirectory, 'tabs', nextFileName)
+      if (existsSync(oldPath) && oldPath !== nextPath) {
+        mkdirSync(dirname(nextPath), { recursive: true })
+        renameSync(oldPath, nextPath)
+        renamedFrom = oldPath
+        renamedTo = nextPath
+      }
+      tab.databaseFileName = nextFileName
+      tab.name = name
+    }
   }
   if (input.color !== undefined) tab.color = input.color
   tab.updatedAt = new Date().toISOString()
-  vault.save()
+  try {
+    vault.save()
+  } catch (error) {
+    tab.name = previousName
+    if (previousDatabaseFileName === undefined) {
+      delete tab.databaseFileName
+    } else {
+      tab.databaseFileName = previousDatabaseFileName
+    }
+    if (renamedFrom && renamedTo && existsSync(renamedTo)) {
+      try {
+        renameSync(renamedTo, renamedFrom)
+      } catch {
+        // Preserve the original save error; the next sync repairs the file.
+      }
+    }
+    throw error
+  }
   appendAppLog(dataDirectory, {
     level: 'info',
     category: 'data',
@@ -2904,7 +3036,8 @@ function buildAccountTab(
   data: VaultData,
   requestedName: string,
   source: AccountTab['source'],
-  color: string
+  color: string,
+  originalFileName?: string
 ): AccountTab {
   const baseName = requestedName.trim().slice(0, 40) || '新标签'
   const taken = new Set(data.tabs.map((tab) => tab.name.toLocaleLowerCase()))
@@ -2915,12 +3048,14 @@ function buildAccountTab(
     name = `${baseName.slice(0, 40 - suffix.length).trimEnd()}${suffix}`
     sequence += 1
   }
+  const id = randomUUID()
   const now = new Date().toISOString()
   return {
-    id: randomUUID(),
+    id,
     name,
     color,
     source,
+    databaseFileName: `tab-${id}${databaseExtensionForSource(source, originalFileName)}`,
     hidden: false,
     createdAt: now,
     updatedAt: now
@@ -2930,7 +3065,9 @@ function buildAccountTab(
 function applyDataImport(
   parsed: ParsedImport,
   source: 'csv' | 'kdbx' | 'bookmarks',
-  fileName: string
+  fileName: string,
+  mode: 'current' | 'new' = 'new',
+  currentTabId?: string
 ): DataImportResult {
   const data = vault.requireData()
   const sourceColors: Record<typeof source, string> = {
@@ -2939,15 +3076,24 @@ function applyDataImport(
     bookmarks: '#D97706'
   }
   const fileNameWithoutExtension = fileName.replace(/\.(csv|kdbx|html?|htm)$/i, '')
-  const tab = buildAccountTab(
-    data,
-    fileNameWithoutExtension,
-    source,
-    sourceColors[source]
-  )
   const staged = structuredClone(data)
-  staged.tabs.push(tab)
-  const merged = mergeImportedLogins(staged, source, parsed, tab.id)
+  const targetTab =
+    mode === 'current'
+      ? staged.tabs.find(
+          (tab) => tab.id === (currentTabId ?? DEFAULT_ACCOUNT_TAB_ID) && !tab.hidden
+        )
+      : buildAccountTab(
+          staged,
+          source === 'csv' ? nextLocalDatabaseName(staged) : fileNameWithoutExtension,
+          source,
+          sourceColors[source],
+          fileName
+        )
+  if (!targetTab) {
+    throw new Error('当前数据库不存在，无法导入 CSV')
+  }
+  if (mode === 'new') staged.tabs.push(targetTab)
+  const merged = mergeImportedLogins(staged, source, parsed, targetTab.id)
   data.tabs = merged.data.tabs
   data.sites = merged.data.sites
   data.accounts = merged.data.accounts
@@ -3087,6 +3233,35 @@ async function chooseDataLocation(): Promise<DataLocationInfo | null> {
   } catch (error) {
     // A failed migration may still have committed the location pointer. Reload
     // from the pointer so the running app never keeps using a removed source.
+    dataDirectory = readDataDirectory(
+      dataLocationPointerDirectory,
+      [configDirectory],
+      configDirectory
+    )
+    initializeDataStores()
+    ensureLoginManagers()
+    sendToRenderer('vault:locked')
+    throw error
+  }
+}
+
+async function restoreDefaultDataLocation(): Promise<DataLocationInfo> {
+  const target = resolve(configDirectory)
+  if (sameDirectory(target, dataDirectory)) {
+    return dataLocationInfo()
+  }
+
+  await closeLoginManagers()
+  vault.lock()
+  try {
+    migrateDataDirectory(dataLocationPointerDirectory, dataDirectory, target)
+    writeDataDirectory(configDirectory, target)
+    dataDirectory = target
+    initializeDataStores()
+    ensureLoginManagers()
+    sendToRenderer('vault:locked')
+    return dataLocationInfo(true)
+  } catch (error) {
     dataDirectory = readDataDirectory(
       dataLocationPointerDirectory,
       [configDirectory],

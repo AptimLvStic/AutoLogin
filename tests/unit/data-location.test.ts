@@ -3,6 +3,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 import {
+  migrateDataDirectory,
   pathIsInside,
   readDataDirectory,
   recoverDataDirectoryFromInstall,
@@ -81,6 +82,23 @@ describe('data location recovery', () => {
     writeFileSync(join(stablePointerDirectory, 'data-location.json'), '{damaged')
 
     expect(readDataDirectory(stablePointerDirectory, [userData], userData)).toBe(customData)
+  })
+
+  it('moves custom data back to the default directory and keeps the location durable', () => {
+    const stablePointerDirectory = createDirectory()
+    const userData = createDirectory()
+    const customData = createDirectory()
+    const defaultData = join(userData, 'Data')
+    mkdirSync(defaultData, { recursive: true })
+    writeFileSync(join(customData, 'vault.enc'), 'custom-vault')
+    writeDataDirectory(stablePointerDirectory, customData)
+
+    migrateDataDirectory(stablePointerDirectory, customData, defaultData)
+    writeDataDirectory(userData, defaultData)
+
+    expect(readFileSync(join(defaultData, 'vault.enc'), 'utf8')).toBe('custom-vault')
+    expect(existsSync(join(customData, 'vault.enc'))).toBe(false)
+    expect(readDataDirectory(stablePointerDirectory, [userData], userData)).toBe(defaultData)
   })
 
   it('detects installation and nested paths', () => {

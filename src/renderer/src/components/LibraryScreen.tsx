@@ -1510,13 +1510,14 @@ export function LibraryScreen({
     if (tabBusy) return
     setTabBusy(true)
     try {
-      const tab = await window.autologin.tabs.create({
-        name:
-          source === 'bookmarks'
-            ? tr('新书签标签', 'New bookmark tab', '新書籤標籤')
-            : tr('新标签', 'New tab', '新標籤'),
-        source
-      })
+      const tab = await window.autologin.tabs.create(
+        source === 'bookmarks'
+          ? {
+              name: tr('新书签标签', 'New bookmark tab', '新書籤標籤'),
+              source
+            }
+          : { source }
+      )
       setTabs((current) => [...current, tab])
       if (source === 'bookmarks') {
         setBookmarkTabId(tab.id)
@@ -1529,14 +1530,16 @@ export function LibraryScreen({
         'success',
         source === 'bookmarks'
           ? tr('书签标签页已创建', 'Bookmark tab created.', '書籤標籤頁已建立')
-          : tr('标签页已创建', 'Tab created.', '標籤頁已建立')
+          : tr('数据库已创建', 'Database created.', '資料庫已建立')
       )
     } catch (error) {
       notify(
         'error',
         error instanceof Error
           ? error.message
-          : tr('创建标签页失败', 'Could not create tab.', '建立標籤頁失敗')
+          : source === 'bookmarks'
+            ? tr('创建书签标签页失败', 'Could not create bookmark tab.', '建立書籤標籤頁失敗')
+            : tr('创建数据库失败', 'Could not create database.', '建立資料庫失敗')
       )
     } finally {
       setTabBusy(false)
@@ -1579,13 +1582,20 @@ export function LibraryScreen({
         current.map((tab) => (tab.id === updated.id ? updated : tab))
       )
       setRenameTabTarget(null)
-      notify('success', tr('标签页名称已保存', 'Tab renamed.', '標籤頁已重新命名'))
+      notify(
+        'success',
+        renameTabTarget.source === 'bookmarks'
+          ? tr('标签页名称已保存', 'Tab renamed.', '標籤頁已重新命名')
+          : tr('数据库名称已保存', 'Database renamed.', '資料庫已重新命名')
+      )
     } catch (error) {
       notify(
         'error',
         error instanceof Error
           ? error.message
-          : tr('重命名标签页失败', 'Could not rename tab.', '重新命名標籤頁失敗')
+          : renameTabTarget?.source === 'bookmarks'
+            ? tr('重命名标签页失败', 'Could not rename tab.', '重新命名標籤頁失敗')
+            : tr('重命名数据库失败', 'Could not rename database.', '重新命名資料庫失敗')
       )
     } finally {
       setTabBusy(false)
@@ -3202,7 +3212,9 @@ export function LibraryScreen({
             onClick={() => beginRenameTab(tabMenu.tab)}
           >
             <Pencil size={14} />
-            {tr('重命名标签页', 'Rename tab', '重新命名標籤頁')}
+            {tabMenu.tab.source === 'bookmarks'
+              ? tr('重命名标签页', 'Rename tab', '重新命名標籤頁')
+              : tr('重命名数据库', 'Rename database', '重新命名資料庫')}
           </button>
           <div className="account-tab-menu__colors">
             <span>{tr('标签颜色', 'Tab color', '標籤顏色')}</span>
@@ -3706,8 +3718,12 @@ export function LibraryScreen({
 
       {renameTabTarget && (
         <Modal
-          title={tr('重命名标签页', 'Rename tab', '重新命名標籤頁')}
-          eyebrow="ACCOUNT TAB"
+          title={
+            renameTabTarget.source === 'bookmarks'
+              ? tr('重命名标签页', 'Rename tab', '重新命名標籤頁')
+              : tr('重命名数据库', 'Rename database', '重新命名資料庫')
+          }
+          eyebrow={renameTabTarget.source === 'bookmarks' ? 'BOOKMARK TAB' : 'DATABASE'}
           onClose={() => {
             if (!tabBusy) setRenameTabTarget(null)
           }}
@@ -3715,7 +3731,11 @@ export function LibraryScreen({
         >
           <form className="group-rename-form" onSubmit={(event) => void saveTabName(event)}>
             <label className="field">
-              <span className="field__label">{tr('标签页名称', 'Tab name', '標籤頁名稱')}</span>
+              <span className="field__label">
+                {renameTabTarget.source === 'bookmarks'
+                  ? tr('标签页名称', 'Tab name', '標籤頁名稱')
+                  : tr('数据库名称', 'Database name', '資料庫名稱')}
+              </span>
               <span className="input-shell">
                 <Layers3 size={16} />
                 <input

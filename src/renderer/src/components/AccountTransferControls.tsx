@@ -14,6 +14,7 @@ import {
 import type {
   AccountTabSource,
   AutologinSelection,
+  CsvImportMode,
   DataImportResult,
   FileOperationResult,
   KdbxSelection
@@ -109,12 +110,12 @@ export function AccountTransferControls({
     )
   }
 
-  async function importCsv(): Promise<void> {
+  async function importCsv(mode: CsvImportMode): Promise<void> {
     if (importBusy) return
     setMenuOpen(false)
     setImportBusy(true)
     try {
-      const result = await window.autologin.data.importCsv()
+      const result = await window.autologin.data.importCsv({ mode, tabId })
       if (result) acceptImport(result)
     } catch (error) {
       notify(
@@ -427,9 +428,25 @@ export function AccountTransferControls({
         </button>
         {menuOpen && (
           <div className="account-import-menu" role="menu">
-            <button type="button" role="menuitem" onClick={() => void importCsv()}>
+            <button type="button" role="menuitem" onClick={() => void importCsv('current')}>
               <FileSpreadsheet size={15} />
-              <span>{tr('导入标准 CSV', 'Import standard CSV', '匯入標準 CSV')}</span>
+              <span>
+                {tr(
+                  '当前数据库导入标准CSV',
+                  'Import standard CSV into current database',
+                  '目前資料庫匯入標準CSV'
+                )}
+              </span>
+            </button>
+            <button type="button" role="menuitem" onClick={() => void importCsv('new')}>
+              <FileSpreadsheet size={15} />
+              <span>
+                {tr(
+                  '新数据库导入标准CSV',
+                  'Import standard CSV into new database',
+                  '新資料庫匯入標準CSV'
+                )}
+              </span>
             </button>
             <span className="account-import-menu__divider" aria-hidden="true" />
             <button type="button" role="menuitem" onClick={() => void exportCsvTemplate()}>

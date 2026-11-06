@@ -54,6 +54,7 @@ export interface AccountTab {
   name: string
   color: string
   source: AccountTabSource
+  databaseFileName?: string
   hidden: boolean
   createdAt: string
   updatedAt: string
@@ -571,6 +572,13 @@ export interface DataImportResult {
   warnings: string[]
 }
 
+export type CsvImportMode = 'current' | 'new'
+
+export interface CsvImportInput {
+  mode: CsvImportMode
+  tabId: string
+}
+
 export interface BackupRecord {
   id: string
   fileName: string
@@ -705,6 +713,7 @@ export interface AutologinApi {
     openReleases: () => Promise<void>
     getDataLocation: () => Promise<DataLocationInfo>
     chooseDataLocation: () => Promise<DataLocationInfo | null>
+    restoreDefaultDataLocation: () => Promise<DataLocationInfo>
     openDataLocation: () => Promise<void>
     openFailureLog: () => Promise<void>
     listLoginLogs: (query?: LoginLogQuery) => Promise<LoginLogEntry[]>
@@ -726,7 +735,7 @@ export interface AutologinApi {
   data: {
     exportTab: (input: DataExportInput) => Promise<FileOperationResult>
     exportCsvTemplate: () => Promise<FileOperationResult>
-    importCsv: () => Promise<DataImportResult | null>
+    importCsv: (input: CsvImportInput) => Promise<DataImportResult | null>
     chooseKdbx: () => Promise<KdbxSelection | null>
     importKdbx: (input: KdbxImportInput) => Promise<DataImportResult>
     chooseAutologin: () => Promise<AutologinSelection | null>

@@ -119,11 +119,19 @@ export function AccountDrawer({
   const [confirmRecipeDelete, setConfirmRecipeDelete] = useState<AccountRecipe | null>(null)
   const [recipeBusy, setRecipeBusy] = useState(false)
   const [draggedRecipeStepId, setDraggedRecipeStepId] = useState<string | null>(null)
+  const [recipeStepTests, setRecipeStepTests] = useState<
+    Record<string, SelectorTestResult>
+  >({})
+  const [recipeStepTesting, setRecipeStepTesting] = useState<string | null>(null)
   const [iconBusy, setIconBusy] = useState(false)
   const revealTimer = useRef<number | null>(null)
   const sitePickerRef = useRef<HTMLDivElement>(null)
   const groupPickerRef = useRef<HTMLDivElement>(null)
   const iconFileRef = useRef<HTMLInputElement>(null)
+  const recipeDetailsVersionRef = useRef(0)
+  const latestRecipeDetailsRef = useRef<AccountRecipe | null>(null)
+  const recipeSaveCountRef = useRef(0)
+  const recipeSaveQueueRef = useRef<Promise<void>>(Promise.resolve())
 
   const selectedSite = useMemo(
     () => sites.find((site) => site.id === selectedSiteId),
@@ -548,39 +556,166 @@ export function AccountDrawer({
     }
   }
 
-  async function persistRecipeSteps(
+  function openRecipeDetails(recipe: AccountRecipe): void {
+    const next = structuredClone(recipe)
+    recipeDetailsVersionRef.current += 1
+    latestRecipeDetailsRef.current = next
+    setRecipeDetails(next)
+    setRecipeStepTests({})
+    setRecipeStepTesting(null)
+    setDraggedRecipeStepId(null)
+  }
+
+  function closeRecipeDetails(): void {
+    persistCurrentRecipeDetails(false)
+    latestRecipeDetailsRef.current = null
+    setRecipeDetails(null)
+    setRecipeStepTests({})
+    setRecipeStepTesting(null)
+  }
+
+  function applyRecipeDetails(recipe: AccountRecipe): void {
+    recipeDetailsVersionRef.current += 1
+    latestRecipeDetailsRef.current = recipe
+    setRecipeDetails(recipe)
+  }
+
+  function persistCurrentRecipeDetails(notifySuccess = false): void {
+    const current = latestRecipeDetailsRef.current
+    if (!current) return
+    void persistRecipeSteps(current, current.recipe.steps, { notifySuccess })
+  }
+
+  function persistRecipeSteps(
     recipe: AccountRecipe,
-    steps: RecipeStep[]
+    steps: RecipeStep[],
+    options: { notifySuccess?: boolean } = {}
   ): Promise<void> {
-    if (!account || recipeBusy) return
-    setRecipeBusy(true)
-    try {
-      const saved = await window.autologin.accounts.updateRecipe({
-        accountId: account.id,
-        recipeId: recipe.id,
-        steps
-      })
-      const updatedRecipes = saved.recipes ?? []
-      const updatedRecipe =
-        updatedRecipes.find((entry) => entry.id === recipe.id) ?? null
-      setRecipes(updatedRecipes)
-      setActiveRecipeId(saved.activeRecipeId)
-      setRecipeDetails(updatedRecipe)
-      await onChanged()
-      notify(
-        'success',
-        tr('录制流程已更新', 'Recorded flow updated.', '錄製流程已更新')
-      )
-    } catch (reason) {
-      notify(
-        'error',
-        reason instanceof Error
-          ? reason.message
-          : tr('更新录制流程失败', 'Could not update recorded flow.', '更新錄製流程失敗')
-      )
-    } finally {
-      setRecipeBusy(false)
+    if (!account) return Promise.resolve()
+    const normalizedSteps = normalizeRecipeStepsForSave(steps)
+    if (!recipeStepsCanBeSaved(normalizedSteps)) return Promise.resolve()
+    const version = recipeDetailsVersionRef.current
+    const save = async (): Promise<void> => {
+      recipeSaveCountRef.current += 1
+      setRecipeBusy(true)
+      try {
+        const saved = await window.autologin.accounts.updateRecipe({
+          accountId: account.id,
+          recipeId: recipe.id,
+          steps: normalizedSteps
+        })
+        const updatedRecipes = saved.recipes ?? []
+        const updatedRecipe =
+          updatedRecipes.find((entry) => entry.id === recipe.id) ?? null
+        setRecipes(updatedRecipes)
+        setActiveRecipeId(saved.activeRecipeId)
+        if (
+          updatedRecipe &&
+          recipeDetailsVersionRef.current === version &&
+          latestRecipeDetailsRef.current?.id === recipe.id
+        ) {
+          latestRecipeDetailsRef.current = updatedRecipe
+          setRecipeDetails(updatedRecipe)
+        }
+        await onChanged()
+        if (options.notifySuccess !== false) {
+          notify(
+            'success',
+            tr('录制流程已更新', 'Recorded flow updated.', '錄製流程已更新')
+          )
+        }
+      } catch (reason) {
+        notify(
+          'error',
+          reason instanceof Error
+            ? reason.message
+            : tr('更新录制流程失败', 'Could not update recorded flow.', '更新錄製流程失敗')
+        )
+      } finally {
+        recipeSaveCountRef.current = Math.max(0, recipeSaveCountRef.current - 1)
+        if (recipeSaveCountRef.current === 0) {
+          setRecipeBusy(false)
+        }
+      }
     }
+    const queued = recipeSaveQueueRef.current.then(save, save)
+    recipeSaveQueueRef.current = queued.then(
+      () => undefined,
+      () => undefined
+    )
+    return queued
+  }
+
+  function updateRecipeStep(
+    stepId: string,
+    updater: (step: RecipeStep) => RecipeStep
+  ): AccountRecipe | null {
+    if (!recipeDetails) return null
+    if (!recipeDetails.recipe.steps.some((step) => step.id === stepId)) return null
+    const steps = recipeDetails.recipe.steps.map((step) =>
+      step.id === stepId ? updater(step) : step
+    )
+    const updated = {
+      ...recipeDetails,
+      recipe: { ...recipeDetails.recipe, steps }
+    }
+    applyRecipeDetails(updated)
+    setRecipeStepTests((current) => {
+      if (!current[stepId]) return current
+      const next = { ...current }
+      delete next[stepId]
+      return next
+    })
+    return updated
+  }
+
+  function changeRecipeStepType(
+    stepId: string,
+    action: ManualStepAction
+  ): void {
+    const updated = updateRecipeStep(stepId, (step) =>
+      changeManualStepType(step, action)
+    )
+    if (updated) {
+      void persistRecipeSteps(updated, updated.recipe.steps)
+    }
+  }
+
+  function updateRecipeStepSelector(stepId: string, value: string): void {
+    updateRecipeStep(stepId, (step) => updateManualStepSelector(step, value))
+  }
+
+  function updateRecipeStepKey(stepId: string, value: string): void {
+    updateRecipeStep(stepId, (step) =>
+      step.type === 'press' ? { ...step, key: value } : step
+    )
+  }
+
+  function addRecipeStep(): void {
+    if (!recipeDetails) return
+    if (recipeDetails.recipe.steps.length >= 30) {
+      notify(
+        'info',
+        tr(
+          '单个录制流程最多包含 30 个步骤',
+          'A recorded flow can contain up to 30 steps.',
+          '單個錄製流程最多包含 30 個步驟'
+        )
+      )
+      return
+    }
+    const step = createManualStep(
+      nextManualStepType(recipeDetails.recipe.steps)
+    )
+    const updated = {
+      ...recipeDetails,
+      recipe: {
+        ...recipeDetails.recipe,
+        steps: [...recipeDetails.recipe.steps, step]
+      }
+    }
+    applyRecipeDetails(updated)
+    void persistRecipeSteps(updated, updated.recipe.steps)
   }
 
   function removeRecipeStep(stepId: string): void {
@@ -590,7 +725,12 @@ export function AccountDrawer({
       ...recipeDetails,
       recipe: { ...recipeDetails.recipe, steps: next }
     }
-    setRecipeDetails(updated)
+    applyRecipeDetails(updated)
+    setRecipeStepTests((current) => {
+      const updatedTests = { ...current }
+      delete updatedTests[stepId]
+      return updatedTests
+    })
     void persistRecipeSteps(updated, next)
   }
 
@@ -607,7 +747,7 @@ export function AccountDrawer({
       ...recipeDetails,
       recipe: { ...recipeDetails.recipe, steps }
     }
-    setRecipeDetails(updated)
+    applyRecipeDetails(updated)
     void persistRecipeSteps(updated, steps)
   }
 
@@ -712,6 +852,41 @@ export function AccountDrawer({
       notify('error', message)
     } finally {
       setSelectorTesting(null)
+    }
+  }
+
+  async function testRecipeStep(step: RecipeStep): Promise<void> {
+    if (!account || !recipeDetails) return
+    const selector = manualStepSelector(step).trim()
+    if (!selector) {
+      notify(
+        'info',
+        tr('请先填写定位器', 'Enter a selector first.', '請先填寫定位器')
+      )
+      return
+    }
+    setRecipeStepTesting(step.id)
+    try {
+      const result = await window.autologin.login.testSelector({
+        accountId: account.id,
+        field: selectorTestFieldForAction(step.type),
+        selector,
+        url: recipeDetails.recipe.startUrl || startUrl.trim() || undefined
+      })
+      setRecipeStepTests((current) => ({ ...current, [step.id]: result }))
+      notify(result.found ? 'success' : 'error', result.message)
+    } catch (reason) {
+      const message =
+        reason instanceof Error
+          ? reason.message
+          : tr('定位器测试失败', 'Element test failed.', '定位器測試失敗')
+      setRecipeStepTests((current) => ({
+        ...current,
+        [step.id]: { found: false, visible: false, count: 0, message }
+      }))
+      notify('error', message)
+    } finally {
+      setRecipeStepTesting(null)
     }
   }
 
@@ -1326,9 +1501,9 @@ export function AccountDrawer({
                               <button
                                 type="button"
                                 className="text-button"
-                                onClick={() => setRecipeDetails(recipe)}
+                                onClick={() => openRecipeDetails(recipe)}
                               >
-                                {tr('查看', 'View', '查看')}
+                                {tr('编辑', 'Edit', '編輯')}
                               </button>
                               {!active && (
                                 <button
@@ -1472,6 +1647,29 @@ export function AccountDrawer({
                                   autoComplete="off"
                                 />
                               </span>
+                              {step.type === 'press' && (
+                                <span className="input-shell manual-step-row__key-field">
+                                  <KeyRound size={15} />
+                                  <input
+                                    aria-label={tr(
+                                      `步骤 ${index + 1} 按键`,
+                                      `Step ${index + 1} key`,
+                                      `步驟 ${index + 1} 按鍵`
+                                    )}
+                                    value={step.key}
+                                    onChange={(event) =>
+                                      updateManualStep(step.id, (current) =>
+                                        current.type === 'press'
+                                          ? { ...current, key: event.target.value }
+                                          : current
+                                      )
+                                    }
+                                    placeholder="Enter"
+                                    spellCheck={false}
+                                    autoComplete="off"
+                                  />
+                                </span>
+                              )}
                               {result && (
                                 <small
                                   className={`selector-config-row__result${
@@ -1645,8 +1843,8 @@ export function AccountDrawer({
         <Modal
           title={recipeDetails.name}
           eyebrow={tr('录制流程详情', 'RECORDED FLOW', '錄製流程詳情')}
-          onClose={() => setRecipeDetails(null)}
-          width="620px"
+          onClose={closeRecipeDetails}
+          width="780px"
           className="recipe-details-modal"
         >
           <div className="recipe-details-meta">
@@ -1658,72 +1856,184 @@ export function AccountDrawer({
               <strong>{tr('当前启用', 'Active', '目前啟用')}</strong>
             )}
           </div>
-          <ol className="recipe-steps">
-            {recipeDetails.recipe.steps.map((step, index) => (
-              <li
-                className={
-                  draggedRecipeStepId === step.id ? 'is-dragging' : undefined
-                }
-                key={step.id}
-                onDragOver={(event) => {
-                  if (!draggedRecipeStepId) return
-                  event.preventDefault()
-                  event.dataTransfer.dropEffect = 'move'
-                }}
-                onDrop={(event) => {
-                  event.preventDefault()
-                  if (draggedRecipeStepId) {
-                    moveRecipeStep(draggedRecipeStepId, step.id)
-                  }
-                  setDraggedRecipeStepId(null)
-                }}
-              >
-                <span
-                  className="recipe-step-handle"
-                  draggable
-                  onDragStart={(event) => {
-                    event.dataTransfer.effectAllowed = 'move'
-                    event.dataTransfer.setData('text/plain', step.id)
-                    setDraggedRecipeStepId(step.id)
-                  }}
-                  onDragEnd={() => setDraggedRecipeStepId(null)}
-                  aria-label={tr(
-                    `拖拽步骤 ${index + 1}`,
-                    `Drag step ${index + 1}`,
-                    `拖曳步驟 ${index + 1}`
+          <div className="recipe-details-steps" role="list">
+            {recipeDetails.recipe.steps.length === 0 && (
+              <div className="manual-step-empty">
+                <ListChecks size={18} />
+                <span>
+                  {tr(
+                    '这个流程还没有步骤。点击下方按钮添加第一条步骤。',
+                    'This flow has no steps yet. Add one below.',
+                    '這個流程還沒有步驟。點擊下方按鈕新增第一個步驟。'
                   )}
-                  title={tr('拖拽排序', 'Drag to reorder', '拖曳排序')}
-                >
-                  <GripVertical size={13} />
                 </span>
-                <span>{String(index + 1).padStart(2, '0')}</span>
-                <div>
-                  <strong>{recipeStepName(step.type, tr)}</strong>
-                  <small>
-                    {step.type === 'press'
-                      ? `${tr('按键', 'Key', '按鍵')} ${step.key}`
-                      : step.selector
-                        ? step.selector.candidates.join('  ·  ')
-                        : tr('无需选择器', 'No selector', '無需選擇器')}
-                  </small>
-                </div>
-                <button
-                  type="button"
-                  className="icon-button icon-button--small"
-                  onClick={() => removeRecipeStep(step.id)}
-                  disabled={recipeBusy}
-                  aria-label={tr(
-                    `删除步骤 ${index + 1}`,
-                    `Delete step ${index + 1}`,
-                    `刪除步驟 ${index + 1}`
-                  )}
-                  title={tr('删除步骤', 'Delete step', '刪除步驟')}
+              </div>
+            )}
+            {recipeDetails.recipe.steps.map((step, index) => {
+              const result = recipeStepTests[step.id]
+              return (
+                <div
+                  className={`manual-step-row recipe-details-step-row${
+                    draggedRecipeStepId === step.id ? ' is-dragging' : ''
+                  }`}
+                  key={step.id}
+                  role="listitem"
+                  onDragOver={(event) => {
+                    if (!draggedRecipeStepId) return
+                    event.preventDefault()
+                    event.dataTransfer.dropEffect = 'move'
+                  }}
+                  onDrop={(event) => {
+                    event.preventDefault()
+                    if (draggedRecipeStepId) {
+                      moveRecipeStep(draggedRecipeStepId, step.id)
+                    }
+                    setDraggedRecipeStepId(null)
+                  }}
                 >
-                  <Trash2 size={13} />
-                </button>
-              </li>
-            ))}
-          </ol>
+                  <span
+                    className="manual-step-row__handle"
+                    draggable
+                    onDragStart={(event) => {
+                      event.dataTransfer.effectAllowed = 'move'
+                      event.dataTransfer.setData('text/plain', step.id)
+                      setDraggedRecipeStepId(step.id)
+                    }}
+                    onDragEnd={() => setDraggedRecipeStepId(null)}
+                    aria-label={tr(
+                      `拖拽步骤 ${index + 1}`,
+                      `Drag step ${index + 1}`,
+                      `拖曳步驟 ${index + 1}`
+                    )}
+                    title={tr('拖拽排序', 'Drag to reorder', '拖曳排序')}
+                  >
+                    <GripVertical size={14} />
+                  </span>
+                  <select
+                    className="filter-control manual-step-row__action"
+                    aria-label={tr(
+                      `步骤 ${index + 1} 动作类型`,
+                      `Step ${index + 1} action`,
+                      `步驟 ${index + 1} 動作類型`
+                    )}
+                    value={step.type}
+                    onChange={(event) =>
+                      changeRecipeStepType(
+                        step.id,
+                        event.target.value as ManualStepAction
+                      )
+                    }
+                  >
+                    {MANUAL_STEP_ACTIONS.map((action) => (
+                      <option value={action} key={action}>
+                        {manualStepActionLabel(action, tr)}
+                      </option>
+                    ))}
+                  </select>
+                  <span className="manual-step-row__selector-cell">
+                    <span className="input-shell">
+                      <SlidersHorizontal size={15} />
+                      <input
+                        aria-label={tr(
+                          `步骤 ${index + 1} Selector`,
+                          `Step ${index + 1} selector`,
+                          `步驟 ${index + 1} Selector`
+                        )}
+                        value={manualStepSelector(step)}
+                        onChange={(event) =>
+                          updateRecipeStepSelector(step.id, event.target.value)
+                        }
+                        onBlur={() => persistCurrentRecipeDetails(false)}
+                        placeholder={selectorPlaceholderForAction(step.type)}
+                        spellCheck={false}
+                        autoComplete="off"
+                      />
+                    </span>
+                    {step.type === 'press' && (
+                      <span className="input-shell manual-step-row__key-field">
+                        <KeyRound size={15} />
+                        <input
+                          aria-label={tr(
+                            `步骤 ${index + 1} 按键`,
+                            `Step ${index + 1} key`,
+                            `步驟 ${index + 1} 按鍵`
+                          )}
+                          value={step.key}
+                          onChange={(event) =>
+                            updateRecipeStepKey(step.id, event.target.value)
+                          }
+                          onBlur={() => persistCurrentRecipeDetails(false)}
+                          placeholder="Enter"
+                          spellCheck={false}
+                          autoComplete="off"
+                        />
+                      </span>
+                    )}
+                    {result && (
+                      <small
+                        className={`selector-config-row__result${
+                          result.found ? ' is-success' : ' is-error'
+                        }`}
+                      >
+                        {result.message}
+                      </small>
+                    )}
+                  </span>
+                  <button
+                    type="button"
+                    className="button button--ghost button--small"
+                    onClick={() => void testRecipeStep(step)}
+                    disabled={
+                      recipeStepTesting !== null ||
+                      recipeBusy ||
+                      !manualStepSelector(step).trim()
+                    }
+                  >
+                    {recipeStepTesting === step.id ? (
+                      <LoaderCircle size={13} className="spin" />
+                    ) : (
+                      <RefreshCw size={13} />
+                    )}
+                    {tr('测试', 'Test', '測試')}
+                  </button>
+                  <button
+                    type="button"
+                    className="icon-button icon-button--small manual-step-row__delete"
+                    onClick={() => removeRecipeStep(step.id)}
+                    disabled={recipeBusy}
+                    aria-label={tr(
+                      `删除步骤 ${index + 1}`,
+                      `Delete step ${index + 1}`,
+                      `刪除步驟 ${index + 1}`
+                    )}
+                    title={tr('删除步骤', 'Delete step', '刪除步驟')}
+                  >
+                    <Trash2 size={14} />
+                  </button>
+                </div>
+              )
+            })}
+          </div>
+          <footer className="manual-selector-panel__footer recipe-details-modal__footer">
+            <button
+              type="button"
+              className="button button--ghost button--small"
+              onClick={addRecipeStep}
+              disabled={recipeBusy || recipeDetails.recipe.steps.length >= 30}
+            >
+              <Plus size={13} />
+              {tr('添加新步骤', 'Add new step', '新增步驟')}
+            </button>
+            <small>
+              {recipeBusy
+                ? tr('正在保存…', 'Saving…', '正在儲存…')
+                : tr(
+                    '修改后自动保存，可拖拽调整执行顺序',
+                    'Changes save automatically. Drag to reorder.',
+                    '修改後會自動儲存，可拖曳調整執行順序'
+                  )}
+            </small>
+          </footer>
           <p className="modal-description">
             {tr(
               '这里只展示步骤类型与稳定选择器，不包含账号、密码、验证码或页面输入的真实内容。',
@@ -1745,12 +2055,18 @@ function safeHostname(value: string): string {
   }
 }
 
-type ManualStepAction = 'fillUsername' | 'fillPassword' | 'click' | 'focusChallenge'
+type ManualStepAction =
+  | 'fillUsername'
+  | 'fillPassword'
+  | 'click'
+  | 'press'
+  | 'focusChallenge'
 
 const MANUAL_STEP_ACTIONS: ManualStepAction[] = [
   'fillUsername',
   'fillPassword',
   'click',
+  'press',
   'focusChallenge'
 ]
 
@@ -1770,13 +2086,20 @@ function initialManualSteps(account: AccountWithSite | undefined): RecipeStep[] 
   )
 }
 
-function createManualStep(action: ManualStepAction, selector = ''): RecipeStep {
+function createManualStep(
+  action: ManualStepAction,
+  selector = '',
+  key = 'Enter'
+): RecipeStep {
   const base = {
     id: crypto.randomUUID(),
     selector: { candidates: [selector] }
   }
   if (action === 'click') {
     return { ...base, type: 'click', navigationExpected: true }
+  }
+  if (action === 'press') {
+    return { ...base, type: 'press', key }
   }
   return { ...base, type: action }
 }
@@ -1814,6 +2137,14 @@ function changeManualStepType(
       navigationExpected: true
     }
   }
+  if (action === 'press') {
+    return {
+      id: step.id,
+      type: 'press',
+      selector,
+      key: step.type === 'press' ? step.key : 'Enter'
+    }
+  }
   return { id: step.id, type: action, selector }
 }
 
@@ -1846,6 +2177,34 @@ function normalizeManualSteps(steps: RecipeStep[]): RecipeStep[] {
   })
 }
 
+function normalizeRecipeStepsForSave(steps: RecipeStep[]): RecipeStep[] {
+  return steps.map((step) => {
+    const selector = manualStepSelectorSpec(step)
+    const candidate = selector.candidates[0]?.trim() ?? ''
+    if (step.type === 'focusChallenge' && !candidate) {
+      const { selector: _selector, ...withoutSelector } = step
+      return withoutSelector
+    }
+    return {
+      ...step,
+      ...(step.type === 'press' ? { key: step.key.trim() } : {}),
+      selector: {
+        ...selector,
+        candidates: candidate ? [candidate] : []
+      }
+    } as RecipeStep
+  })
+}
+
+function recipeStepsCanBeSaved(steps: RecipeStep[]): boolean {
+  return steps.every((step) => {
+    if (step.type === 'focusChallenge' && !('selector' in step)) return true
+    const selector = manualStepSelector(step).trim()
+    if (!selector) return false
+    return step.type !== 'press' || Boolean(step.key.trim())
+  })
+}
+
 function selectorTestFieldForAction(action: RecipeStep['type']): SelectorTestField {
   if (action === 'fillUsername') return 'username'
   if (action === 'fillPassword') return 'password'
@@ -1870,26 +2229,10 @@ function manualStepActionLabel(
       return tr('输入密码', 'Fill password', '輸入密碼')
     case 'click':
       return tr('点击元素', 'Click element', '點擊元素')
-    case 'focusChallenge':
-      return tr('聚焦验证码', 'Focus challenge', '聚焦驗證碼')
-  }
-}
-
-function recipeStepName(
-  type: AccountRecipe['recipe']['steps'][number]['type'],
-  tr: (zhCN: string, en: string, zhTW: string) => string
-): string {
-  switch (type) {
-    case 'fillUsername':
-      return tr('填写用户名', 'Fill username', '填寫使用者名稱')
-    case 'fillPassword':
-      return tr('填写密码', 'Fill password', '填寫密碼')
-    case 'click':
-      return tr('点击元素', 'Click element', '點擊元素')
     case 'press':
       return tr('按下按键', 'Press key', '按下按鍵')
     case 'focusChallenge':
-      return tr('聚焦人工验证', 'Focus manual challenge', '聚焦人工驗證')
+      return tr('聚焦验证码', 'Focus challenge', '聚焦驗證碼')
   }
 }
 

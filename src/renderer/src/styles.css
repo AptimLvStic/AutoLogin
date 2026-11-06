@@ -14111,3 +14111,61 @@ body.is-dragging-password-generator * {
     gap: 6px;
   }
 }
+
+/* v0.9.5 editable recorded flows and flat Chrome-style active tabs. */
+.manual-step-row__key-field {
+  margin-top: 3px;
+}
+
+.manual-step-row__key-field .input-shell input {
+  font-family: 'Manrope', monospace;
+  font-size: calc(10px * var(--font-scale, 1));
+}
+
+.recipe-details-steps {
+  display: flex;
+  max-height: min(440px, 54vh);
+  flex-direction: column;
+  gap: 0;
+  overflow-y: auto;
+  margin: 0 22px;
+  padding: 0 4px 0 0;
+  scrollbar-gutter: stable;
+}
+
+.recipe-details-step-row {
+  min-height: 48px;
+  padding: 7px 0;
+}
+
+.recipe-details-step-row .manual-step-row__selector-cell .input-shell {
+  height: 36px;
+  min-height: 36px;
+}
+
+.recipe-details-modal__footer {
+  padding: 12px 22px 4px;
+  border-top: 1px solid var(--content-divider);
+}
+
+.recipe-details-modal .modal-description {
+  margin: 0;
+  padding: 4px 22px 22px;
+  line-height: 4;
+}
+
+.account-tabs__scroll {
+  padding-bottom: 0;
+}
+
+.account-tab.is-active {
+  margin-bottom: 0;
+  border: 0;
+  border-radius: 10px 10px 0 0;
+  background: var(--card);
+  box-shadow: none;
+}
+
+.account-tab.is-active::after {
+  display: none;
+}

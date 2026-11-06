@@ -1965,7 +1965,7 @@ test('defers an available update prompt until the vault is unlocked', async () =
   await application.evaluate(({ BrowserWindow }) => {
     BrowserWindow.getAllWindows()[0]?.webContents.send('app:update-state', {
       phase: 'available',
-      currentVersion: '0.9.4',
+      currentVersion: '0.9.5',
       latestVersion: '99.0.1',
       releaseName: 'AutoLogin v99.0.1',
       releaseNotes: '## 更新内容\n\n- 解锁后显示更新提示',
@@ -2819,6 +2819,10 @@ test('records and replays a multi-step login flow', async () => {
   await page.getByRole('button', { name: '结束录制' }).click()
   await expect(page.getByRole('heading', { name: '全部账号' })).toBeVisible()
   await expect(page.locator('.account-row').first()).toContainText('已录制')
+  const activeTab = page.locator('.account-tab.is-active')
+  await expect(activeTab).toHaveCSS('box-shadow', 'none')
+  await expect(activeTab).toHaveCSS('border-bottom-left-radius', '0px')
+  await expect(activeTab).toHaveCSS('border-bottom-right-radius', '0px')
   const recordedTypes = await page.evaluate(async () => {
     const accounts = await window.autologin.accounts.list()
     const active = accounts[0]?.recipes?.find(
@@ -2830,8 +2834,75 @@ test('records and replays a multi-step login flow', async () => {
 
   await page.locator('.account-row').first().dblclick()
   await expect(page.locator('.account-drawer')).toContainText('1/3 已保存')
-  await page.locator('.drawer-recipe-row').getByRole('button', { name: '查看' }).click()
-  await expect(page.locator('.recipe-details-modal')).toContainText('填写用户名')
+
+  await page.locator('.drawer-recipe-row').getByRole('button', { name: '编辑' }).click()
+  const recipeModal = page.locator('.recipe-details-modal')
+  await expect(recipeModal).toBeVisible()
+  const recipeRows = recipeModal.locator('.recipe-details-step-row')
+  await expect(recipeRows).toHaveCount(4)
+  await expect(recipeRows.first().getByLabel('步骤 1 动作类型')).toHaveValue(
+    'fillUsername'
+  )
+  await expect(recipeRows.first().locator('.manual-step-row__handle')).toHaveAttribute(
+    'draggable',
+    'true'
+  )
+
+  const firstSelector = recipeRows.first().getByLabel('步骤 1 Selector')
+  await firstSelector.fill('input[name="username"]')
+  await firstSelector.blur()
+  await expect
+    .poll(() =>
+      page.evaluate(async () => {
+        const accounts = await window.autologin.accounts.list()
+        const active = accounts[0]?.recipes?.find(
+          (recipe) => recipe.id === accounts[0]?.activeRecipeId
+        )
+        return active?.recipe.steps[0]?.selector?.candidates[0] ?? ''
+      })
+    )
+    .toBe('input[name="username"]')
+
+  await recipeRows.first().getByRole('button', { name: '测试' }).click()
+  await expect(recipeRows.first()).toContainText('已找到可见的匹配元素', {
+    timeout: 20000
+  })
+
+  const addRecipeStepButton = recipeModal.getByRole('button', {
+    name: '添加新步骤'
+  })
+  await expect(addRecipeStepButton).toBeEnabled()
+  await addRecipeStepButton.click()
+  await expect(recipeRows).toHaveCount(5)
+  const addedRow = recipeRows.last()
+  await addedRow.getByLabel('步骤 5 动作类型').selectOption('click')
+  await addedRow.getByLabel('步骤 5 Selector').fill('#next')
+  await addedRow.getByLabel('步骤 5 Selector').blur()
+  await expect
+    .poll(() =>
+      page.evaluate(async () => {
+        const accounts = await window.autologin.accounts.list()
+        const active = accounts[0]?.recipes?.find(
+          (recipe) => recipe.id === accounts[0]?.activeRecipeId
+        )
+        const step = active?.recipe.steps.at(-1)
+        return step?.type === 'click' ? step.selector.candidates[0] ?? '' : ''
+      })
+    )
+    .toBe('#next')
+  await addedRow.getByRole('button', { name: '删除步骤 5' }).click()
+  await expect(recipeRows).toHaveCount(4)
+  await expect
+    .poll(() =>
+      page.evaluate(async () => {
+        const accounts = await window.autologin.accounts.list()
+        const active = accounts[0]?.recipes?.find(
+          (recipe) => recipe.id === accounts[0]?.activeRecipeId
+        )
+        return active?.recipe.steps.length ?? 0
+      })
+    )
+    .toBe(4)
   await page.locator('.modal-backdrop').click({ position: { x: 10, y: 10 } })
   await page.locator('.account-drawer').getByRole('button', { name: '清除会话' }).click()
   await page.locator('.confirm-dialog').getByRole('button', { name: '清除会话' }).click()

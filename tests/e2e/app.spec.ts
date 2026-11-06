@@ -262,11 +262,21 @@ test('saves and tests manual selectors, then uses them for login', async () => {
         .evaluate((element) => element.getBoundingClientRect().height)
     )
     .toBeCloseTo(savedPasswordHeight, 0)
-  const selectorRows = drawer.locator('.selector-config-row')
+  await drawer.getByRole('button', { name: '添加步骤' }).click()
+  await drawer.getByRole('button', { name: '添加步骤' }).click()
+  await drawer.getByRole('button', { name: '添加步骤' }).click()
+  const selectorRows = drawer.locator('.manual-step-row')
   await expect(selectorRows).toHaveCount(3)
-  await selectorRows.nth(0).locator('input').fill('#username')
-  await selectorRows.nth(1).locator('input').fill('#password')
-  await selectorRows.nth(2).locator('input').fill('#login')
+  await expect(selectorRows.nth(0).getByLabel('步骤 1 动作类型')).toHaveValue(
+    'fillUsername'
+  )
+  await expect(selectorRows.nth(1).getByLabel('步骤 2 动作类型')).toHaveValue(
+    'fillPassword'
+  )
+  await expect(selectorRows.nth(2).getByLabel('步骤 3 动作类型')).toHaveValue('click')
+  await selectorRows.nth(0).getByLabel('步骤 1 Selector').fill('#username')
+  await selectorRows.nth(1).getByLabel('步骤 2 Selector').fill('#password')
+  await selectorRows.nth(2).getByLabel('步骤 3 Selector').fill('#login')
 
   await selectorRows.nth(0).getByRole('button', { name: '测试' }).click()
   await expect(selectorRows.nth(0)).toContainText('已找到可见的匹配元素', {
@@ -279,13 +289,18 @@ test('saves and tests manual selectors, then uses them for login', async () => {
     return accounts[0]
   })
   expect(stored).toMatchObject({
-    loginStrategy: 'manual',
-    manualSelectors: {
-      username: '#username',
-      password: '#password',
-      submit: '#login'
-    }
+    loginStrategy: 'manual'
   })
+  expect(
+    stored.manualSteps?.map((step) => ({
+      type: step.type,
+      selector: 'selector' in step ? step.selector?.candidates[0] : undefined
+    }))
+  ).toEqual([
+    { type: 'fillUsername', selector: '#username' },
+    { type: 'fillPassword', selector: '#password' },
+    { type: 'click', selector: '#login' }
+  ])
 
   const previousBatchId = await currentBatchId(page)
   await page.locator('.account-row').first().getByRole('button', { name: '登录' }).click()
@@ -1668,6 +1683,54 @@ test('edits and copies accounts from the right-click menu', async () => {
   expect(copied?.favorite).toBe(false)
 })
 
+test('keeps the account context menu at the pointer after scrolling', async () => {
+  await createVault(page)
+  const siteId = await page.evaluate(
+    async (startUrl) => {
+      const site = await window.autologin.sites.save({
+        name: '滚动菜单站点',
+        startUrl,
+        autoSubmit: true
+      })
+      return site.id
+    },
+    `${server.baseUrl}/login`
+  )
+  await page.evaluate(
+    async ({ targetSiteId }) => {
+      for (let index = 0; index < 30; index += 1) {
+        await window.autologin.accounts.create({
+          siteId: targetSiteId,
+          label: `滚动菜单账号 ${index + 1}`,
+          username: `scroll-menu-${index + 1}@example.test`,
+          password: 'secret-password'
+        })
+      }
+    },
+    { targetSiteId: siteId }
+  )
+  await page.getByRole('button', { name: '刷新' }).click()
+  const rows = page.locator('.account-row')
+  await expect(rows).toHaveCount(20, { timeout: 15000 })
+
+  const target = rows.last()
+  await target.scrollIntoViewIfNeeded()
+  const rowBox = await target.boundingBox()
+  expect(rowBox).not.toBeNull()
+  const pointerX = rowBox!.x + rowBox!.width * 0.4
+  const pointerY = rowBox!.y + rowBox!.height / 2
+  await page.mouse.click(pointerX, pointerY, { button: 'right' })
+
+  const menu = page.locator('.account-context-menu')
+  await expect(menu).toBeVisible()
+  await expect(menu).toHaveCSS('position', 'fixed')
+  const menuBox = await menu.boundingBox()
+  expect(menuBox).not.toBeNull()
+  const opensBelow = Math.abs(menuBox!.y - pointerY)
+  const opensAbove = Math.abs(menuBox!.y + menuBox!.height - pointerY)
+  expect(Math.min(opensBelow, opensAbove)).toBeLessThanOrEqual(10)
+})
+
 test('uses a configurable, disabled-by-default account copy shortcut', async () => {
   await createVault(page)
   await addAccount(page, {
@@ -1856,7 +1919,7 @@ test('closes a tab without deleting its encrypted AutoLogin snapshot', async () 
   const initialTabs = await page.evaluate(() => window.autologin.tabs.list())
 
   await page.getByRole('button', { name: '新增标签页或打开数据库' }).click()
-  await page.getByRole('menuitem', { name: '新增标签页' }).click()
+  await page.getByRole('menuitem', { name: '新增本地数据库' }).click()
   await expect
     .poll(() => page.evaluate(() => window.autologin.tabs.list().then((tabs) => tabs.length)))
     .toBe(initialTabs.length + 1)
@@ -1879,10 +1942,10 @@ test('closes a tab without deleting its encrypted AutoLogin snapshot', async () 
   await expect.poll(() => existsSync(snapshotPath)).toBe(true)
 
   await page
-    .getByRole('button', { name: `关闭“${createdTab!.name}”标签页` })
+    .getByRole('button', { name: `关闭“${createdTab!.name}”数据库` })
     .click()
   await expect(
-    page.getByRole('button', { name: `关闭“${createdTab!.name}”标签页` })
+    page.getByRole('button', { name: `关闭“${createdTab!.name}”数据库` })
   ).toHaveCount(0)
   await expect
     .poll(() =>
@@ -1902,7 +1965,7 @@ test('defers an available update prompt until the vault is unlocked', async () =
   await application.evaluate(({ BrowserWindow }) => {
     BrowserWindow.getAllWindows()[0]?.webContents.send('app:update-state', {
       phase: 'available',
-      currentVersion: '0.9.3',
+      currentVersion: '0.9.4',
       latestVersion: '99.0.1',
       releaseName: 'AutoLogin v99.0.1',
       releaseNotes: '## 更新内容\n\n- 解锁后显示更新提示',
@@ -1941,7 +2004,7 @@ test('persists appearance, language and interface scale with separate resets', a
   await expect(importMenu).toHaveCount(0)
   await page.getByRole('button', { name: '新增标签页或打开数据库' }).click()
   const createMenu = page.locator('.account-create-menu')
-  await expect(createMenu.getByRole('menuitem', { name: '新增标签页' })).toBeVisible()
+  await expect(createMenu.getByRole('menuitem', { name: '新增本地数据库' })).toBeVisible()
   await expect(
     createMenu.getByRole('menuitem', { name: '打开本地 AutoLogin 数据库' })
   ).toBeVisible()
@@ -2504,6 +2567,9 @@ test('supports group actions, batch editing and one-browser tabs', async () => {
   const editDrawer = page.locator('.account-drawer')
   await expect(editDrawer.getByRole('heading', { name: '备用站点' })).toBeVisible()
   await editDrawer.getByRole('radio', { name: /手动配置/ }).check()
+  await editDrawer.getByRole('button', { name: '添加步骤' }).click()
+  await editDrawer.getByRole('button', { name: '添加步骤' }).click()
+  await editDrawer.getByRole('button', { name: '添加步骤' }).click()
   const drawerLayout = await editDrawer.evaluate((element) => {
     const body = element.querySelector<HTMLElement>('.account-drawer__body')
     const footer = element.querySelector<HTMLElement>('.account-drawer__footer')
@@ -2529,7 +2595,7 @@ test('supports group actions, batch editing and one-browser tabs', async () => {
   const selectorPanelLayout = await editDrawer.evaluate((element) => {
     const panel = element.querySelector<HTMLElement>('.manual-selector-panel')
     const fields = panel?.querySelector<HTMLElement>('.manual-selector-panel__fields')
-    const rows = Array.from(panel?.querySelectorAll<HTMLElement>('.selector-config-row') ?? [])
+    const rows = Array.from(panel?.querySelectorAll<HTMLElement>('.manual-step-row') ?? [])
     if (!panel || !fields || rows.length !== 3) return null
     const panelRect = panel.getBoundingClientRect()
     return {
@@ -2537,7 +2603,7 @@ test('supports group actions, batch editing and one-browser tabs', async () => {
       rowHeights: rows.map((row) => row.getBoundingClientRect().height),
       controlHeights: rows.map(
         (row) =>
-          row.querySelector<HTMLElement>('.selector-config-row__control')?.getBoundingClientRect()
+          row.querySelector<HTMLElement>('.manual-step-row__action')?.getBoundingClientRect()
             .height ?? 0
       ),
       rowsContained: rows.every((row) => {
@@ -2567,9 +2633,9 @@ test('supports group actions, batch editing and one-browser tabs', async () => {
       : 0
   })
   expect(selectorFooterGap).toBeGreaterThanOrEqual(24)
-  await expect(
-    editDrawer.locator('.selector-config-row').filter({ hasText: '提交按钮' }).getByRole('textbox')
-  ).toBeVisible()
+  await expect(editDrawer.locator('.manual-step-row').nth(2).getByLabel('步骤 3 动作类型')).toHaveValue(
+    'click'
+  )
   await editDrawer.getByRole('radio', { name: /自动识别/ }).check()
   await editDrawer.getByPlaceholder('例如：工作台').fill('备用站点（已编辑）')
   await editDrawer.getByRole('button', { name: '保存修改' }).click()

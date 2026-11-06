@@ -177,6 +177,7 @@ export const storedAccountSchema = z.object({
   favorite: z.boolean(),
   loginStrategy: z.enum(LOGIN_STRATEGIES).default('auto'),
   manualSelectors: manualLoginSelectorsSchema.optional(),
+  manualSteps: z.array(recipeStepSchema).max(30).optional(),
   recipes: z.array(accountRecipeSchema).max(3).default([]),
   activeRecipeId: idSchema.optional(),
   lastUsedAt: z.string().optional(),
@@ -381,7 +382,8 @@ export const accountCreateInputSchema = z.object({
   password: z.string().max(2048),
   favorite: z.boolean().optional(),
   loginStrategy: z.enum(LOGIN_STRATEGIES).optional(),
-  manualSelectors: manualLoginSelectorsSchema.optional()
+  manualSelectors: manualLoginSelectorsSchema.optional(),
+  manualSteps: z.array(recipeStepSchema).max(30).optional()
 })
 
 export const accountUpdateInputSchema = z.object({
@@ -391,8 +393,17 @@ export const accountUpdateInputSchema = z.object({
   favorite: z.boolean().optional(),
   activeRecipeId: idSchema.optional(),
   loginStrategy: z.enum(LOGIN_STRATEGIES).optional(),
-  manualSelectors: manualLoginSelectorsSchema.optional()
+  manualSelectors: manualLoginSelectorsSchema.optional(),
+  manualSteps: z.array(recipeStepSchema).max(30).optional()
 })
+
+export const accountRecipeUpdateInputSchema = z
+  .object({
+    accountId: idSchema,
+    recipeId: idSchema,
+    steps: z.array(recipeStepSchema).max(30)
+  })
+  .strict()
 
 export const accountBatchStrategyInputSchema = z
   .object({

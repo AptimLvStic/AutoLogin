@@ -73,6 +73,7 @@ export class LoginSessionManager {
   private handledGeneration = -1
   private pageRunTimer: NodeJS.Timeout | null = null
   private stepIndex = 0
+  private manualStepIndex = 0
   private recipeRunning = false
   private hadSubmission = false
   private challengeSeen = false
@@ -81,6 +82,7 @@ export class LoginSessionManager {
   private recordingSteps: RecipeStep[] = []
   private recordingOrigins = new Set<string>()
   private recordingChallengeDetected = false
+  private recordedStepKeys = new Set<string>()
   private navigationPending = false
   private destroyed = false
   private submissionTimer: NodeJS.Timeout | null = null
@@ -127,6 +129,7 @@ export class LoginSessionManager {
     this.site = site
     this.mode = mode
     this.stepIndex = 0
+    this.manualStepIndex = 0
     this.hadSubmission = false
     this.challengeSeen = false
     this.genericFallbackTried = false
@@ -134,6 +137,7 @@ export class LoginSessionManager {
     this.recordingSteps = []
     this.recordingOrigins = new Set([safeOrigin(site.startUrl)].filter(Boolean))
     this.recordingChallengeDetected = false
+    this.recordedStepKeys = new Set()
     this.pageGeneration = 0
     this.handledGeneration = -1
     this.recipeRunning = false
@@ -331,6 +335,7 @@ export class LoginSessionManager {
     this.account = account
     this.vault.save()
     this.mode = 'login'
+    this.recordedStepKeys = new Set()
     await this.runAgentCommand({ type: 'record-stop' }).catch(() => null)
     this.emit({
       mode: 'login',
@@ -351,6 +356,7 @@ export class LoginSessionManager {
   cancelRecording(): void {
     this.recordingSteps = []
     this.recordingChallengeDetected = false
+    this.recordedStepKeys = new Set()
     this.mode = 'login'
     void this.runAgentCommand({ type: 'record-stop' }).catch(() => null)
     this.emit({
@@ -635,6 +641,19 @@ export class LoginSessionManager {
     if (!this.account || !this.browser) {
       return
     }
+    const manualSteps = this.account.manualSteps
+    if (manualSteps?.length) {
+      if (this.manualStepIndex >= manualSteps.length && this.hadSubmission) {
+        this.clearSubmissionTimer()
+        this.emit({
+          status: 'authenticated',
+          message: '登录页面已离开，手动登录流程完成'
+        })
+        return
+      }
+      await this.runManualSteps(manualSteps)
+      return
+    }
     const selectors = this.account.manualSelectors
     if (!selectors?.username || !selectors.password) {
       this.emit({
@@ -682,6 +701,104 @@ export class LoginSessionManager {
         message: '手动配置未能定位完整表单，请编辑账号并测试定位器'
       })
     }
+  }
+
+  private async runManualSteps(steps: RecipeStep[]): Promise<void> {
+    if (!this.account || !this.site || !this.browser) {
+      return
+    }
+    this.emit({
+      status: 'filling',
+      message: '正在执行手动登录步骤'
+    })
+
+    for (let index = this.manualStepIndex; index < steps.length; index += 1) {
+      if (!this.browser) return
+      const step = steps[index]
+      if (!step) break
+      const origin = safeOrigin(this.browser.getSnapshot().url)
+      if (!isOriginTrusted(this.site, origin, null)) {
+        this.emit({
+          status: 'needs_action',
+          message: `手动步骤已暂停：当前域名 ${origin || '未知'} 未被信任`
+        })
+        return
+      }
+
+      this.emit({
+        status: 'filling',
+        message: `正在执行手动步骤 ${index + 1}/${steps.length}`
+      })
+      const beforeUrl = this.browser.getSnapshot().url
+      const beforeGeneration = this.pageGeneration
+      const result = requireStepResult(
+        await this.runAgentCommand({
+          type: 'run-step',
+          step,
+          username: this.account.username,
+          password: this.account.password
+        })
+      )
+      if (!result.found) {
+        this.emit({
+          status: 'needs_action',
+          message: `手动步骤 ${index + 1} 未找到目标元素，请编辑账号并测试定位器`
+        })
+        return
+      }
+      if (result.challengeDetected) {
+        this.challengeSeen = true
+        this.recordingChallengeDetected = true
+        this.emit({
+          status: 'awaiting_manual_challenge',
+          message: '已定位验证码输入框，请在默认浏览器中人工完成验证'
+        })
+        return
+      }
+
+      this.manualStepIndex = index + 1
+      if (step.type === 'click' || step.type === 'press') {
+        const navigated = await this.waitForNavigationChange(
+          beforeUrl,
+          beforeGeneration,
+          step.type === 'click' && step.navigationExpected === false ? 400 : 2_500
+        )
+        if (navigated) {
+          this.hadSubmission = true
+          if (this.manualStepIndex < steps.length) {
+            this.emit({
+              status: 'filling',
+              message: `页面已跳转，将继续执行手动步骤 ${this.manualStepIndex + 1}/${steps.length}`
+            })
+          } else {
+            this.emit({ status: 'submitting', message: '已提交登录，正在等待页面响应' })
+            this.startSubmissionWatch()
+          }
+          return
+        }
+      } else {
+        await delay(160)
+      }
+    }
+
+    await delay(350)
+    try {
+      if (await this.sendChallengeCommand()) {
+        this.challengeSeen = true
+        this.recordingChallengeDetected = true
+        this.emit({
+          status: 'awaiting_manual_challenge',
+          message: '已定位验证码输入框，请在默认浏览器中人工完成验证'
+        })
+        return
+      }
+    } catch {
+      // Challenge detection is best-effort after a manual sequence.
+    }
+    this.emit({
+      status: 'needs_action',
+      message: '手动步骤已执行，请在默认浏览器中确认登录结果'
+    })
   }
 
   private async runRecipe(): Promise<boolean> {
@@ -875,6 +992,15 @@ export class LoginSessionManager {
       return
     }
     const step = parsed.data as RecipeStep
+    const selectorKey =
+      step.type === 'focusChallenge'
+        ? (step.selector?.candidates.join('|') ?? '')
+        : step.selector.candidates.join('|')
+    const stepKey = `${stripQuery(this.browser?.getSnapshot().url ?? '')}:${step.type}:${selectorKey}`
+    if (this.recordedStepKeys.has(stepKey)) {
+      return
+    }
+    this.recordedStepKeys.add(stepKey)
     this.recordingSteps.push(step)
     if (step.type === 'focusChallenge') {
       this.recordingChallengeDetected = true

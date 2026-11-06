@@ -1,4 +1,4 @@
-import { forwardRef, useEffect, useMemo, useRef, useState } from 'react'
+import { forwardRef, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import {
   ArchiveRestore,
@@ -11,6 +11,7 @@ import {
   Database,
   FileClock,
   FileSpreadsheet,
+  FolderOpen,
   Globe2,
   GripVertical,
   ImagePlus,
@@ -86,8 +87,15 @@ type LibraryView =
 type GroupDropPosition = 'before' | 'after' | 'inside'
 type DrawerState = { mode: 'create'; siteId?: string } | { mode: 'edit'; accountId: string }
 type AccountMenuState =
-  | { kind: 'account'; account: AccountWithSite; left: number; top: number }
-  | { kind: 'page'; left: number; top: number }
+  | {
+      kind: 'account'
+      account: AccountWithSite
+      anchorX: number
+      anchorY: number
+      left: number
+      top: number
+    }
+  | { kind: 'page'; anchorX: number; anchorY: number; left: number; top: number }
 type AccountColumnSizing = 'content' | 'window' | 'manual'
 type AccountPageSize = 10 | 20 | 50 | 100 | 200
 const ACCOUNT_COLUMN_KEYS = ['username', 'group', 'updated', 'status', 'url'] as const
@@ -572,6 +580,7 @@ export function LibraryScreen({
   const groupCreateInputRef = useRef<HTMLInputElement>(null)
   const batchIconInputRef = useRef<HTMLInputElement>(null)
   const columnMenuRef = useRef<HTMLDivElement>(null)
+  const accountMenuRef = useRef<HTMLDivElement>(null)
   const columnResizeCleanupRef = useRef<(() => void) | null>(null)
   const accountListRef = useRef<HTMLElement>(null)
   const accountTableScrollRef = useRef<HTMLDivElement>(null)
@@ -1066,11 +1075,40 @@ export function LibraryScreen({
     document.addEventListener('pointerdown', closeOnPointer)
     document.addEventListener('keydown', closeOnEscape)
     window.addEventListener('resize', close)
+    window.addEventListener('scroll', close, true)
+    window.addEventListener('wheel', close, { passive: true })
     return () => {
       document.removeEventListener('pointerdown', closeOnPointer)
       document.removeEventListener('keydown', closeOnEscape)
       window.removeEventListener('resize', close)
+      window.removeEventListener('scroll', close, true)
+      window.removeEventListener('wheel', close)
     }
+  }, [accountMenu])
+
+  useLayoutEffect(() => {
+    if (!accountMenu) return
+    const menu = accountMenuRef.current
+    if (!menu) return
+    const rect = menu.getBoundingClientRect()
+    const margin = 8
+    const left = Math.max(
+      margin,
+      Math.min(accountMenu.anchorX, window.innerWidth - rect.width - margin)
+    )
+    const top =
+      accountMenu.anchorY + rect.height + margin <= window.innerHeight
+        ? accountMenu.anchorY
+        : Math.max(margin, accountMenu.anchorY - rect.height - margin)
+    if (
+      Math.abs(left - accountMenu.left) < 0.5 &&
+      Math.abs(top - accountMenu.top) < 0.5
+    ) {
+      return
+    }
+    setAccountMenu((current) =>
+      current ? { ...current, left, top } : current
+    )
   }, [accountMenu])
 
   useEffect(() => {
@@ -1603,16 +1641,37 @@ export function LibraryScreen({
         }
       }
       setTabMenu(null)
-      notify('success', tr('标签页已关闭', 'Tab closed.', '標籤頁已關閉'))
+      notify(
+        'success',
+        tab.source === 'bookmarks'
+          ? tr('标签页已关闭', 'Tab closed.', '標籤頁已關閉')
+          : tr('数据库已关闭', 'Database closed.', '資料庫已關閉')
+      )
     } catch (error) {
       notify(
         'error',
         error instanceof Error
           ? error.message
-          : tr('关闭标签页失败', 'Could not close tab.', '關閉標籤頁失敗')
+          : tab.source === 'bookmarks'
+            ? tr('关闭标签页失败', 'Could not close tab.', '關閉標籤頁失敗')
+            : tr('关闭数据库失败', 'Could not close database.', '關閉資料庫失敗')
       )
     } finally {
       setTabBusy(false)
+    }
+  }
+
+  async function revealTabDatabase(tab: AccountTab): Promise<void> {
+    setTabMenu(null)
+    try {
+      await window.autologin.tabs.reveal(tab.id)
+    } catch (error) {
+      notify(
+        'error',
+        error instanceof Error
+          ? error.message
+          : tr('无法打开数据库文件夹', 'Could not open the database folder.', '無法開啟資料庫資料夾')
+      )
     }
   }
 
@@ -1846,15 +1905,16 @@ export function LibraryScreen({
     event.preventDefault()
     event.stopPropagation()
     const menuWidth = 196
-    const menuHeight = 420
+    const pointer = event.nativeEvent
+    const anchorX = pointer.clientX
+    const anchorY = pointer.clientY
     setAccountMenu({
       kind: 'account',
       account,
-      left: Math.max(8, Math.min(event.clientX, window.innerWidth - menuWidth - 8)),
-      top:
-        event.clientY + menuHeight + 8 <= window.innerHeight
-          ? event.clientY
-          : Math.max(8, event.clientY - menuHeight)
+      anchorX,
+      anchorY,
+      left: Math.max(8, Math.min(anchorX, window.innerWidth - menuWidth - 8)),
+      top: Math.max(8, Math.min(anchorY, window.innerHeight - 8))
     })
   }
 
@@ -1872,14 +1932,15 @@ export function LibraryScreen({
     event.preventDefault()
     event.stopPropagation()
     const menuWidth = 190
-    const menuHeight = 50
+    const pointer = event.nativeEvent
+    const anchorX = pointer.clientX
+    const anchorY = pointer.clientY
     setAccountMenu({
       kind: 'page',
-      left: Math.max(8, Math.min(event.clientX, window.innerWidth - menuWidth - 8)),
-      top:
-        event.clientY + menuHeight + 8 <= window.innerHeight
-          ? event.clientY
-          : Math.max(8, event.clientY - menuHeight)
+      anchorX,
+      anchorY,
+      left: Math.max(8, Math.min(anchorX, window.innerWidth - menuWidth - 8)),
+      top: Math.max(8, Math.min(anchorY, window.innerHeight - 8))
     })
   }
 
@@ -3171,11 +3232,24 @@ export function LibraryScreen({
           <button
             type="button"
             role="menuitem"
+            onClick={() => void revealTabDatabase(tabMenu.tab)}
+          >
+            <FolderOpen size={14} />
+            {tabMenu.tab.source === 'bookmarks'
+              ? tr('打开标签页所在文件夹', 'Open tab folder', '開啟標籤頁資料夾')
+              : tr('打开数据库所在文件夹', 'Open database folder', '開啟資料庫資料夾')}
+          </button>
+          <div className="account-context-menu__divider" aria-hidden="true" />
+          <button
+            type="button"
+            role="menuitem"
             className="is-danger"
             onClick={() => void closeTab(tabMenu.tab)}
           >
             <X size={14} />
-            {tr('关闭标签页', 'Close tab', '關閉標籤頁')}
+            {tabMenu.tab.source === 'bookmarks'
+              ? tr('关闭标签页', 'Close tab', '關閉標籤頁')
+              : tr('关闭数据库', 'Close database', '關閉資料庫')}
           </button>
         </div>
       )}
@@ -3282,6 +3356,7 @@ export function LibraryScreen({
       {accountMenu?.kind === 'account' &&
         createPortal(
         <div
+          ref={accountMenuRef}
           className="account-context-menu"
           role="menu"
           aria-label={
@@ -3368,6 +3443,7 @@ export function LibraryScreen({
       {accountMenu?.kind === 'page' &&
         createPortal(
         <div
+          ref={accountMenuRef}
           className="account-context-menu"
           role="menu"
           aria-label={tr('账号页面操作', 'Account page actions', '帳號頁面操作')}
@@ -3863,12 +3939,24 @@ export function LibraryScreen({
                       <button
                         type="button"
                         className="account-tab__close"
-                        aria-label={tr(
-                          `关闭“${tab.name}”标签页`,
-                          `Close “${tab.name}” tab`,
-                          `關閉「${tab.name}」標籤頁`
-                        )}
-                        title={tr('关闭标签页', 'Close tab', '關閉標籤頁')}
+                        aria-label={
+                          tab.source === 'bookmarks'
+                            ? tr(
+                                `关闭“${tab.name}”标签页`,
+                                `Close “${tab.name}” tab`,
+                                `關閉「${tab.name}」標籤頁`
+                              )
+                            : tr(
+                                `关闭“${tab.name}”数据库`,
+                                `Close “${tab.name}” database`,
+                                `關閉「${tab.name}」資料庫`
+                              )
+                        }
+                        title={
+                          tab.source === 'bookmarks'
+                            ? tr('关闭标签页', 'Close tab', '關閉標籤頁')
+                            : tr('关闭数据库', 'Close database', '關閉資料庫')
+                        }
                         disabled={tabBusy}
                         onClick={(event) => {
                           event.stopPropagation()

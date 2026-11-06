@@ -305,6 +305,7 @@ export interface Account {
   favorite: boolean
   loginStrategy: LoginStrategy
   manualSelectors?: ManualLoginSelectors
+  manualSteps?: RecipeStep[]
   recipes?: AccountRecipe[]
   activeRecipeId?: string
   lastUsedAt?: string
@@ -408,6 +409,7 @@ export interface AccountCreateInput {
   favorite?: boolean
   loginStrategy?: LoginStrategy
   manualSelectors?: ManualLoginSelectors
+  manualSteps?: RecipeStep[]
 }
 
 export interface AccountUpdateInput {
@@ -418,12 +420,19 @@ export interface AccountUpdateInput {
   activeRecipeId?: string
   loginStrategy?: LoginStrategy
   manualSelectors?: ManualLoginSelectors
+  manualSteps?: RecipeStep[]
 }
 
 export interface AccountBatchStrategyInput {
   accountIds: string[]
   loginStrategy: LoginStrategy
   manualSelectors?: ManualLoginSelectors
+}
+
+export interface AccountRecipeUpdateInput {
+  accountId: string
+  recipeId: string
+  steps: RecipeStep[]
 }
 
 export interface AccountBatchIconInput {
@@ -629,6 +638,7 @@ export interface AutologinApi {
     create: (input?: AccountTabCreateInput) => Promise<AccountTab>
     update: (tabId: string, input: AccountTabUpdateInput) => Promise<AccountTab>
     delete: (tabId: string) => Promise<void>
+    reveal: (tabId: string) => Promise<void>
   }
   groups: {
     list: (tabId?: string) => Promise<GroupDefinition[]>
@@ -662,6 +672,7 @@ export interface AutologinApi {
     copyUrl: (accountId: string) => Promise<void>
     setActiveRecipe: (accountId: string, recipeId?: string) => Promise<AccountWithSite>
     deleteRecipe: (accountId: string, recipeId: string) => Promise<AccountWithSite>
+    updateRecipe: (input: AccountRecipeUpdateInput) => Promise<AccountWithSite>
   }
   login: {
     start: (input: LoginStartInput) => Promise<LoginViewState>

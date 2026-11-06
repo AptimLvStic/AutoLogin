@@ -13,6 +13,7 @@ import {
   accountDeleteManyInputSchema,
   accountDuplicateInputSchema,
   accountMoveInputSchema,
+  accountRecipeUpdateInputSchema,
   accountReorderInputSchema,
   accountTabCreateInputSchema,
   accountTabUpdateInputSchema,
@@ -54,6 +55,7 @@ import type {
   AccountBatchStrategyInput,
   AccountDeleteResult,
   AccountMoveInput,
+  AccountRecipeUpdateInput,
   AccountReorderInput,
   AccountTab,
   AccountTabUpdateInput,
@@ -81,6 +83,7 @@ import type {
   PasswordReveal,
   ProxySettings,
   ProxyTestResult,
+  RecipeStep,
   SelectorTestInput,
   SelectorTestResult,
   Site,
@@ -559,6 +562,24 @@ function registerIpc(): void {
     assertTrustedSender(event)
     await deleteAccountTab(requireId(tabId))
   })
+  ipcMain.handle('tabs:reveal', async (event, tabId: unknown) => {
+    assertTrustedSender(event)
+    const id = requireId(tabId)
+    if (!vault.requireData().tabs.some((tab) => tab.id === id)) {
+      throw new Error('标签页不存在')
+    }
+    const tabsDirectory = join(dataDirectory, 'tabs')
+    const databasePath = join(tabsDirectory, `tab-${id}.autologin`)
+    if (existsSync(databasePath)) {
+      shell.showItemInFolder(databasePath)
+      return
+    }
+    mkdirSync(tabsDirectory, { recursive: true })
+    const error = await shell.openPath(tabsDirectory)
+    if (error) {
+      throw new Error(`无法打开数据库所在文件夹：${error}`)
+    }
+  })
 
   ipcMain.handle('sites:list', (event, tabId: unknown) => {
     assertTrustedSender(event)
@@ -796,6 +817,14 @@ function registerIpc(): void {
   ipcMain.handle('accounts:delete-recipe', (event, accountId: unknown, recipeId: unknown) => {
     assertTrustedSender(event)
     return deleteAccountRecipe(requireId(accountId), requireId(recipeId))
+  })
+  ipcMain.handle('accounts:update-recipe', (event, payload: unknown) => {
+    assertTrustedSender(event)
+    const parsed = accountRecipeUpdateInputSchema.safeParse(payload)
+    if (!parsed.success) {
+      throw new Error(firstIssue(parsed.error))
+    }
+    return updateAccountRecipe(parsed.data)
   })
   ipcMain.handle('accounts:reorder', (event, payload: unknown) => {
     assertTrustedSender(event)
@@ -2190,6 +2219,7 @@ function createAccount(input: {
     password?: string
     submit?: string
   }
+  manualSteps?: RecipeStep[]
 }): AccountWithSite {
   const data = vault.requireData()
   const site = data.sites.find((entry) => entry.id === input.siteId)
@@ -2206,7 +2236,10 @@ function createAccount(input: {
   }
   const loginStrategy = input.loginStrategy ?? 'auto'
   const manualSelectors = normalizeManualSelectors(input.manualSelectors)
-  assertManualSelectors(loginStrategy, manualSelectors)
+  const manualSteps = input.manualSteps?.length
+    ? structuredClone(input.manualSteps)
+    : undefined
+  assertManualConfiguration(loginStrategy, manualSelectors, manualSteps)
   const now = new Date().toISOString()
   const account: StoredAccount = {
     id: randomUUID(),
@@ -2218,6 +2251,7 @@ function createAccount(input: {
     favorite: input.favorite ?? false,
     loginStrategy,
     manualSelectors,
+    manualSteps,
     sortOrder: nextAccountSortOrder(data, site.tabId),
     createdAt: now,
     updatedAt: now
@@ -2325,6 +2359,24 @@ function assertManualSelectors(
   }
 }
 
+function hasManualLoginSteps(steps: RecipeStep[] | undefined): boolean {
+  if (!steps?.length) return false
+  return (
+    steps.some((step) => step.type === 'fillUsername') &&
+    steps.some((step) => step.type === 'fillPassword')
+  )
+}
+
+function assertManualConfiguration(
+  strategy: 'auto' | 'manual',
+  selectors: { username?: string; password?: string } | undefined,
+  steps: RecipeStep[] | undefined
+): void {
+  if (strategy !== 'manual') return
+  if (hasManualLoginSteps(steps)) return
+  assertManualSelectors(strategy, selectors)
+}
+
 function updateAccount(
   accountId: string,
   patch: {
@@ -2339,6 +2391,7 @@ function updateAccount(
       password?: string
       submit?: string
     }
+    manualSteps?: RecipeStep[]
   }
 ): AccountWithSite {
   const data = vault.requireData()
@@ -2361,6 +2414,11 @@ function updateAccount(
       ...patch.manualSelectors
     })
   }
+  if (patch.manualSteps !== undefined) {
+    account.manualSteps = patch.manualSteps.length
+      ? structuredClone(patch.manualSteps)
+      : undefined
+  }
   if (patch.activeRecipeId !== undefined) {
     if (
       patch.activeRecipeId &&
@@ -2370,7 +2428,11 @@ function updateAccount(
     }
     account.activeRecipeId = patch.activeRecipeId || undefined
   }
-  assertManualSelectors(account.loginStrategy, account.manualSelectors)
+  assertManualConfiguration(
+    account.loginStrategy,
+    account.manualSelectors,
+    account.manualSteps
+  )
   account.updatedAt = new Date().toISOString()
   vault.save()
   return toPublicAccount(account, site)
@@ -2399,7 +2461,8 @@ function setAccountStrategyBatch(
   if (input.loginStrategy === 'manual' && !sharedSelectors) {
     const incomplete = accounts.some(
       (account) =>
-        !account.manualSelectors?.username || !account.manualSelectors.password
+        !hasManualLoginSteps(account.manualSteps) &&
+        (!account.manualSelectors?.username || !account.manualSelectors.password)
     )
     if (incomplete) {
       throw new Error('部分账号尚无完整定位器，请填写统一定位器后再应用')
@@ -2411,6 +2474,7 @@ function setAccountStrategyBatch(
     account.loginStrategy = input.loginStrategy
     if (input.loginStrategy === 'manual' && sharedSelectors) {
       account.manualSelectors = structuredClone(sharedSelectors)
+      account.manualSteps = undefined
     }
     account.updatedAt = now
   }
@@ -2680,6 +2744,7 @@ function toPublicAccount(
     favorite: account.favorite,
     loginStrategy: account.loginStrategy ?? 'auto',
     manualSelectors: structuredClone(account.manualSelectors),
+    manualSteps: structuredClone(account.manualSteps),
     recipes: structuredClone(account.recipes ?? []),
     activeRecipeId: account.activeRecipeId,
     lastUsedAt: account.lastUsedAt,
@@ -2732,6 +2797,37 @@ function deleteAccountRecipe(accountId: string, recipeId: string): AccountWithSi
   if (!site) {
     throw new Error('站点不存在')
   }
+  return toPublicAccount(account, site)
+}
+
+function updateAccountRecipe(input: AccountRecipeUpdateInput): AccountWithSite {
+  const data = vault.requireData()
+  const account = data.accounts.find((entry) => entry.id === input.accountId)
+  if (!account) {
+    throw new Error('账号不存在')
+  }
+  const recipe = (account.recipes ?? []).find((entry) => entry.id === input.recipeId)
+  if (!recipe) {
+    throw new Error('录制流程不存在')
+  }
+  if (new Set(input.steps.map((step) => step.id)).size !== input.steps.length) {
+    throw new Error('录制流程步骤标识不能重复')
+  }
+  const now = new Date().toISOString()
+  recipe.recipe.steps = structuredClone(input.steps)
+  recipe.recipe.updatedAt = now
+  account.updatedAt = now
+  vault.save()
+  const site = data.sites.find((entry) => entry.id === account.siteId)
+  if (!site) {
+    throw new Error('站点不存在')
+  }
+  appendAppLog(dataDirectory, {
+    level: 'info',
+    category: 'data',
+    message: `录制流程已更新：${recipe.name}`,
+    details: `${input.steps.length} 个步骤`
+  })
   return toPublicAccount(account, site)
 }
 

@@ -43,7 +43,8 @@ const api: AutologinApi = {
     list: () => invoke('tabs:list'),
     create: (input) => invoke('tabs:create', input),
     update: (tabId, input) => invoke('tabs:update', tabId, input),
-    delete: (tabId) => invoke('tabs:delete', tabId)
+    delete: (tabId) => invoke('tabs:delete', tabId),
+    reveal: (tabId) => invoke('tabs:reveal', tabId)
   },
   groups: {
     list: (tabId) => invoke('groups:list', tabId),
@@ -82,7 +83,8 @@ const api: AutologinApi = {
     setActiveRecipe: (accountId, recipeId) =>
       invoke('accounts:set-active-recipe', accountId, recipeId),
     deleteRecipe: (accountId, recipeId) =>
-      invoke('accounts:delete-recipe', accountId, recipeId)
+      invoke('accounts:delete-recipe', accountId, recipeId),
+    updateRecipe: (input) => invoke('accounts:update-recipe', input)
   },
   login: {
     start: (input: LoginStartInput) => invoke('login:start', input),

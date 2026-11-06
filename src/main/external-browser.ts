@@ -159,6 +159,9 @@ export class ExternalBrowserHost {
       '--disable-background-timer-throttling',
       '--disable-backgrounding-occluded-windows',
       '--disable-renderer-backgrounding',
+      // The managed profile is isolated to AutoLogin. This allows legacy
+      // intranet sites with self-signed or private-CA certificates to load.
+      '--ignore-certificate-errors',
       ...proxyArguments(options.proxy),
       ...(options.headless ? ['--headless=new', '--disable-gpu'] : []),
       '--new-window',

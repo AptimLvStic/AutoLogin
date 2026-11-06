@@ -8,11 +8,13 @@ import {
   Eye,
   EyeOff,
   Globe2,
+  GripVertical,
   ImagePlus,
   KeyRound,
   Layers3,
   ListChecks,
   LoaderCircle,
+  Plus,
   RefreshCw,
   Search,
   SlidersHorizontal,
@@ -25,9 +27,10 @@ import type {
   AccountWithSite,
   GroupDefinition,
   LoginStrategy,
-  ManualLoginSelectors,
+  RecipeStep,
   SelectorTestField,
   SelectorTestResult,
+  SelectorSpec,
   Site
 } from '@shared/types'
 import { useI18n } from '../i18n'
@@ -98,13 +101,16 @@ export function AccountDrawer({
   const [loginStrategy, setLoginStrategy] = useState<LoginStrategy>(
     account?.loginStrategy ?? 'auto'
   )
-  const [manualSelectors, setManualSelectors] = useState<ManualLoginSelectors>(
-    account?.manualSelectors ?? {}
+  const [manualSteps, setManualSteps] = useState<RecipeStep[]>(() =>
+    initialManualSteps(account)
   )
-  const [selectorTests, setSelectorTests] = useState<
-    Partial<Record<SelectorTestField, SelectorTestResult>>
-  >({})
-  const [selectorTesting, setSelectorTesting] = useState<SelectorTestField | null>(null)
+  const [selectorTests, setSelectorTests] = useState<Record<string, SelectorTestResult>>(
+    {}
+  )
+  const [selectorTesting, setSelectorTesting] = useState<string | null>(null)
+  const [draggedManualStepId, setDraggedManualStepId] = useState<string | null>(
+    null
+  )
   const [sitePickerOpen, setSitePickerOpen] = useState(false)
   const [groupPickerOpen, setGroupPickerOpen] = useState(false)
   const [sitePickerQuery, setSitePickerQuery] = useState('')
@@ -112,6 +118,7 @@ export function AccountDrawer({
   const [recipeDetails, setRecipeDetails] = useState<AccountRecipe | null>(null)
   const [confirmRecipeDelete, setConfirmRecipeDelete] = useState<AccountRecipe | null>(null)
   const [recipeBusy, setRecipeBusy] = useState(false)
+  const [draggedRecipeStepId, setDraggedRecipeStepId] = useState<string | null>(null)
   const [iconBusy, setIconBusy] = useState(false)
   const revealTimer = useRef<number | null>(null)
   const sitePickerRef = useRef<HTMLDivElement>(null)
@@ -332,13 +339,13 @@ export function AccountDrawer({
     if (
       !isBookmark &&
       loginStrategy === 'manual' &&
-      (!manualSelectors.username?.trim() || !manualSelectors.password?.trim())
+      !manualStepsAreComplete(manualSteps)
     ) {
       setError(
         tr(
-          '手动配置需要填写用户名和密码定位器',
-          'Enter username and password selectors for manual configuration.',
-          '手動設定需要填寫使用者名稱和密碼定位器'
+          '手动配置至少需要包含“输入用户名”和“输入密码”步骤，且每个步骤都要填写 Selector',
+          'Manual configuration needs username and password steps with selectors.',
+          '手動設定至少需要包含「輸入使用者名稱」和「輸入密碼」步驟，且每個步驟都要填寫 Selector'
         )
       )
       return
@@ -389,7 +396,8 @@ export function AccountDrawer({
             : {
                 username: username.trim(),
                 loginStrategy,
-                manualSelectors,
+                manualSteps:
+                  loginStrategy === 'manual' ? normalizeManualSteps(manualSteps) : [],
                 ...(password ? { password } : {})
               })
         })
@@ -406,7 +414,10 @@ export function AccountDrawer({
           username: isBookmark ? '' : username.trim(),
           password: isBookmark ? '' : password,
           loginStrategy: isBookmark ? 'auto' : loginStrategy,
-          manualSelectors: isBookmark ? {} : manualSelectors
+          manualSteps:
+            isBookmark || loginStrategy !== 'manual'
+              ? []
+              : normalizeManualSteps(manualSteps)
         })
         onSaved(
           saved,
@@ -537,6 +548,69 @@ export function AccountDrawer({
     }
   }
 
+  async function persistRecipeSteps(
+    recipe: AccountRecipe,
+    steps: RecipeStep[]
+  ): Promise<void> {
+    if (!account || recipeBusy) return
+    setRecipeBusy(true)
+    try {
+      const saved = await window.autologin.accounts.updateRecipe({
+        accountId: account.id,
+        recipeId: recipe.id,
+        steps
+      })
+      const updatedRecipes = saved.recipes ?? []
+      const updatedRecipe =
+        updatedRecipes.find((entry) => entry.id === recipe.id) ?? null
+      setRecipes(updatedRecipes)
+      setActiveRecipeId(saved.activeRecipeId)
+      setRecipeDetails(updatedRecipe)
+      await onChanged()
+      notify(
+        'success',
+        tr('录制流程已更新', 'Recorded flow updated.', '錄製流程已更新')
+      )
+    } catch (reason) {
+      notify(
+        'error',
+        reason instanceof Error
+          ? reason.message
+          : tr('更新录制流程失败', 'Could not update recorded flow.', '更新錄製流程失敗')
+      )
+    } finally {
+      setRecipeBusy(false)
+    }
+  }
+
+  function removeRecipeStep(stepId: string): void {
+    if (!recipeDetails) return
+    const next = recipeDetails.recipe.steps.filter((step) => step.id !== stepId)
+    const updated = {
+      ...recipeDetails,
+      recipe: { ...recipeDetails.recipe, steps: next }
+    }
+    setRecipeDetails(updated)
+    void persistRecipeSteps(updated, next)
+  }
+
+  function moveRecipeStep(sourceId: string, targetId: string): void {
+    if (!recipeDetails || sourceId === targetId) return
+    const steps = [...recipeDetails.recipe.steps]
+    const sourceIndex = steps.findIndex((step) => step.id === sourceId)
+    const targetIndex = steps.findIndex((step) => step.id === targetId)
+    if (sourceIndex < 0 || targetIndex < 0) return
+    const [moved] = steps.splice(sourceIndex, 1)
+    if (!moved) return
+    steps.splice(targetIndex, 0, moved)
+    const updated = {
+      ...recipeDetails,
+      recipe: { ...recipeDetails.recipe, steps }
+    }
+    setRecipeDetails(updated)
+    void persistRecipeSteps(updated, steps)
+  }
+
   function startRecording(): void {
     if (!onRecord) return
     if (recipes.length >= 3) {
@@ -553,17 +627,49 @@ export function AccountDrawer({
     onRecord()
   }
 
-  function updateManualSelector(field: SelectorTestField, value: string): void {
-    setManualSelectors((current) => ({ ...current, [field]: value }))
+  function updateManualStep(stepId: string, updater: (step: RecipeStep) => RecipeStep): void {
+    setManualSteps((current) =>
+      current.map((step) => (step.id === stepId ? updater(step) : step))
+    )
     setSelectorTests((current) => {
-      if (!current[field]) return current
+      if (!current[stepId]) return current
       const next = { ...current }
-      delete next[field]
+      delete next[stepId]
       return next
     })
   }
 
-  async function testManualSelector(field: SelectorTestField): Promise<void> {
+  function addManualStep(): void {
+    setManualSteps((current) => [
+      ...current,
+      createManualStep(nextManualStepType(current))
+    ])
+  }
+
+  function removeManualStep(stepId: string): void {
+    setManualSteps((current) => current.filter((step) => step.id !== stepId))
+    setSelectorTests((current) => {
+      const next = { ...current }
+      delete next[stepId]
+      return next
+    })
+  }
+
+  function moveManualStep(sourceId: string, targetId: string): void {
+    if (sourceId === targetId) return
+    setManualSteps((current) => {
+      const sourceIndex = current.findIndex((step) => step.id === sourceId)
+      const targetIndex = current.findIndex((step) => step.id === targetId)
+      if (sourceIndex < 0 || targetIndex < 0) return current
+      const next = [...current]
+      const [moved] = next.splice(sourceIndex, 1)
+      if (!moved) return current
+      next.splice(targetIndex, 0, moved)
+      return next
+    })
+  }
+
+  async function testManualStep(step: RecipeStep): Promise<void> {
     if (!account) {
       notify(
         'info',
@@ -575,7 +681,7 @@ export function AccountDrawer({
       )
       return
     }
-    const selector = manualSelectors[field]?.trim()
+    const selector = manualStepSelector(step).trim()
     if (!selector) {
       notify(
         'info',
@@ -583,7 +689,8 @@ export function AccountDrawer({
       )
       return
     }
-    setSelectorTesting(field)
+    const field = selectorTestFieldForAction(step.type)
+    setSelectorTesting(step.id)
     try {
       const result = await window.autologin.login.testSelector({
         accountId: account.id,
@@ -591,7 +698,7 @@ export function AccountDrawer({
         selector,
         url: startUrl.trim() || undefined
       })
-      setSelectorTests((current) => ({ ...current, [field]: result }))
+      setSelectorTests((current) => ({ ...current, [step.id]: result }))
       notify(result.found ? 'success' : 'error', result.message)
     } catch (reason) {
       const message =
@@ -600,7 +707,7 @@ export function AccountDrawer({
           : tr('定位器测试失败', 'Element test failed.', '定位器測試失敗')
       setSelectorTests((current) => ({
         ...current,
-        [field]: { found: false, visible: false, count: 0, message }
+        [step.id]: { found: false, visible: false, count: 0, message }
       }))
       notify('error', message)
     } finally {
@@ -1158,9 +1265,9 @@ export function AccountDrawer({
                         <strong>{tr('手动配置', 'Manual configuration', '手動設定')}</strong>
                         <small>
                           {tr(
-                            '使用精确的样式定位器匹配账号、密码和提交按钮',
-                            'Use exact selectors for credentials and submit',
-                            '使用精確的樣式定位器匹配帳號、密碼和提交按鈕'
+                            '按顺序配置输入、点击和验证码步骤',
+                            'Order input, click and challenge steps explicitly',
+                            '按順序設定輸入、點擊和驗證碼步驟'
                           )}
                         </small>
                       </span>
@@ -1268,57 +1375,160 @@ export function AccountDrawer({
                       </div>
                     </header>
                     <div className="manual-selector-panel__fields">
-                      {(
-                        [
-                          ['username', tr('用户名', 'Username', '使用者名稱')],
-                          ['password', tr('密码', 'Password', '密碼')],
-                          ['submit', tr('提交按钮', 'Submit button', '提交按鈕')]
-                        ] as const
-                      ).map(([field, label]) => {
-                        const result = selectorTests[field]
+                      {manualSteps.length === 0 && (
+                        <div className="manual-step-empty">
+                          <ListChecks size={18} />
+                          <span>
+                            {tr(
+                              '还没有步骤。添加“输入用户名”和“输入密码”后，再按需添加点击或验证码步骤。',
+                              'No steps yet. Add username and password actions, then optional click or challenge steps.',
+                              '還沒有步驟。新增「輸入使用者名稱」和「輸入密碼」後，再按需要新增點擊或驗證碼步驟。'
+                            )}
+                          </span>
+                        </div>
+                      )}
+                      {manualSteps.map((step, index) => {
+                        const result = selectorTests[step.id]
                         return (
-                          <label className="field selector-config-row" key={field}>
-                            <span className="field__label">{label}</span>
-                            <span className="selector-config-row__control">
+                          <div
+                            className={`manual-step-row${
+                              draggedManualStepId === step.id ? ' is-dragging' : ''
+                            }`}
+                            key={step.id}
+                            onDragOver={(event) => {
+                              if (!draggedManualStepId) return
+                              event.preventDefault()
+                              event.dataTransfer.dropEffect = 'move'
+                            }}
+                            onDrop={(event) => {
+                              event.preventDefault()
+                              if (draggedManualStepId) {
+                                moveManualStep(draggedManualStepId, step.id)
+                              }
+                              setDraggedManualStepId(null)
+                            }}
+                          >
+                            <span
+                              className="manual-step-row__handle"
+                              draggable
+                              onDragStart={(event) => {
+                                event.dataTransfer.effectAllowed = 'move'
+                                event.dataTransfer.setData('text/plain', step.id)
+                                setDraggedManualStepId(step.id)
+                              }}
+                              onDragEnd={() => setDraggedManualStepId(null)}
+                              aria-label={tr(
+                                `拖拽步骤 ${index + 1}`,
+                                `Drag step ${index + 1}`,
+                                `拖曳步驟 ${index + 1}`
+                              )}
+                              title={tr('拖拽排序', 'Drag to reorder', '拖曳排序')}
+                            >
+                              <GripVertical size={14} />
+                            </span>
+                            <select
+                              className="filter-control manual-step-row__action"
+                              aria-label={tr(
+                                `步骤 ${index + 1} 动作类型`,
+                                `Step ${index + 1} action`,
+                                `步驟 ${index + 1} 動作類型`
+                              )}
+                              value={step.type}
+                              onChange={(event) =>
+                                updateManualStep(step.id, (current) =>
+                                  changeManualStepType(
+                                    current,
+                                    event.target.value as ManualStepAction
+                                  )
+                                )
+                              }
+                            >
+                              {MANUAL_STEP_ACTIONS.map((action) => (
+                                <option value={action} key={action}>
+                                  {manualStepActionLabel(action, tr)}
+                                </option>
+                              ))}
+                            </select>
+                            <span className="manual-step-row__selector-cell">
                               <span className="input-shell">
                                 <SlidersHorizontal size={15} />
                                 <input
-                                  value={manualSelectors[field] ?? ''}
+                                  aria-label={tr(
+                                    `步骤 ${index + 1} Selector`,
+                                    `Step ${index + 1} selector`,
+                                    `步驟 ${index + 1} Selector`
+                                  )}
+                                  value={manualStepSelector(step)}
                                   onChange={(event) =>
-                                    updateManualSelector(field, event.target.value)
+                                    updateManualStep(step.id, (current) =>
+                                      updateManualStepSelector(
+                                        current,
+                                        event.target.value
+                                      )
+                                    )
                                   }
-                                  placeholder={selectorPlaceholder(field)}
+                                  placeholder={selectorPlaceholderForAction(step.type)}
                                   spellCheck={false}
                                   autoComplete="off"
                                 />
                               </span>
-                              <button
-                                type="button"
-                                className="button button--ghost button--small"
-                                onClick={() => void testManualSelector(field)}
-                                disabled={selectorTesting !== null}
-                              >
-                                {selectorTesting === field ? (
-                                  <LoaderCircle size={13} className="spin" />
-                                ) : (
-                                  <RefreshCw size={13} />
-                                )}
-                                {tr('测试', 'Test', '測試')}
-                              </button>
+                              {result && (
+                                <small
+                                  className={`selector-config-row__result${
+                                    result.found ? ' is-success' : ' is-error'
+                                  }`}
+                                >
+                                  {result.message}
+                                </small>
+                              )}
                             </span>
-                            {result && (
-                              <small
-                                className={`selector-config-row__result${
-                                  result.found ? ' is-success' : ' is-error'
-                                }`}
-                              >
-                                {result.message}
-                              </small>
-                            )}
-                          </label>
+                            <button
+                              type="button"
+                              className="button button--ghost button--small"
+                              onClick={() => void testManualStep(step)}
+                              disabled={selectorTesting !== null}
+                            >
+                              {selectorTesting === step.id ? (
+                                <LoaderCircle size={13} className="spin" />
+                              ) : (
+                                <RefreshCw size={13} />
+                              )}
+                              {tr('测试', 'Test', '測試')}
+                            </button>
+                            <button
+                              type="button"
+                              className="icon-button icon-button--small manual-step-row__delete"
+                              onClick={() => removeManualStep(step.id)}
+                              aria-label={tr(
+                                `删除步骤 ${index + 1}`,
+                                `Delete step ${index + 1}`,
+                                `刪除步驟 ${index + 1}`
+                              )}
+                              title={tr('删除步骤', 'Delete step', '刪除步驟')}
+                            >
+                              <Trash2 size={14} />
+                            </button>
+                          </div>
                         )
                       })}
                     </div>
+                    <footer className="manual-selector-panel__footer">
+                      <button
+                        type="button"
+                        className="button button--ghost button--small"
+                        onClick={addManualStep}
+                      >
+                        <Plus size={13} />
+                        {tr('添加步骤', 'Add step', '新增步驟')}
+                      </button>
+                      <small>
+                        {tr(
+                          '按从上到下的顺序执行',
+                          'Steps run from top to bottom',
+                          '步驟會由上到下執行'
+                        )}
+                      </small>
+                    </footer>
                   </section>
                 )}
               </>
@@ -1450,7 +1660,42 @@ export function AccountDrawer({
           </div>
           <ol className="recipe-steps">
             {recipeDetails.recipe.steps.map((step, index) => (
-              <li key={step.id}>
+              <li
+                className={
+                  draggedRecipeStepId === step.id ? 'is-dragging' : undefined
+                }
+                key={step.id}
+                onDragOver={(event) => {
+                  if (!draggedRecipeStepId) return
+                  event.preventDefault()
+                  event.dataTransfer.dropEffect = 'move'
+                }}
+                onDrop={(event) => {
+                  event.preventDefault()
+                  if (draggedRecipeStepId) {
+                    moveRecipeStep(draggedRecipeStepId, step.id)
+                  }
+                  setDraggedRecipeStepId(null)
+                }}
+              >
+                <span
+                  className="recipe-step-handle"
+                  draggable
+                  onDragStart={(event) => {
+                    event.dataTransfer.effectAllowed = 'move'
+                    event.dataTransfer.setData('text/plain', step.id)
+                    setDraggedRecipeStepId(step.id)
+                  }}
+                  onDragEnd={() => setDraggedRecipeStepId(null)}
+                  aria-label={tr(
+                    `拖拽步骤 ${index + 1}`,
+                    `Drag step ${index + 1}`,
+                    `拖曳步驟 ${index + 1}`
+                  )}
+                  title={tr('拖拽排序', 'Drag to reorder', '拖曳排序')}
+                >
+                  <GripVertical size={13} />
+                </span>
                 <span>{String(index + 1).padStart(2, '0')}</span>
                 <div>
                   <strong>{recipeStepName(step.type, tr)}</strong>
@@ -1462,6 +1707,20 @@ export function AccountDrawer({
                         : tr('无需选择器', 'No selector', '無需選擇器')}
                   </small>
                 </div>
+                <button
+                  type="button"
+                  className="icon-button icon-button--small"
+                  onClick={() => removeRecipeStep(step.id)}
+                  disabled={recipeBusy}
+                  aria-label={tr(
+                    `删除步骤 ${index + 1}`,
+                    `Delete step ${index + 1}`,
+                    `刪除步驟 ${index + 1}`
+                  )}
+                  title={tr('删除步骤', 'Delete step', '刪除步驟')}
+                >
+                  <Trash2 size={13} />
+                </button>
               </li>
             ))}
           </ol>
@@ -1486,10 +1745,134 @@ function safeHostname(value: string): string {
   }
 }
 
-function selectorPlaceholder(field: SelectorTestField): string {
-  if (field === 'username') return 'input[name="username"], #username'
-  if (field === 'password') return 'input[type="password"], #password'
+type ManualStepAction = 'fillUsername' | 'fillPassword' | 'click' | 'focusChallenge'
+
+const MANUAL_STEP_ACTIONS: ManualStepAction[] = [
+  'fillUsername',
+  'fillPassword',
+  'click',
+  'focusChallenge'
+]
+
+function initialManualSteps(account: AccountWithSite | undefined): RecipeStep[] {
+  if (account?.manualSteps?.length) {
+    return structuredClone(account.manualSteps)
+  }
+  if (!account?.manualSelectors) return []
+  return (
+    [
+      ['fillUsername', account.manualSelectors.username],
+      ['fillPassword', account.manualSelectors.password],
+      ['click', account.manualSelectors.submit]
+    ] as const
+  ).flatMap(([action, selector]) =>
+    selector?.trim() ? [createManualStep(action, selector)] : []
+  )
+}
+
+function createManualStep(action: ManualStepAction, selector = ''): RecipeStep {
+  const base = {
+    id: crypto.randomUUID(),
+    selector: { candidates: [selector] }
+  }
+  if (action === 'click') {
+    return { ...base, type: 'click', navigationExpected: true }
+  }
+  return { ...base, type: action }
+}
+
+function manualStepSelectorSpec(step: RecipeStep): SelectorSpec {
+  return 'selector' in step && step.selector
+    ? step.selector
+    : { candidates: [''] }
+}
+
+function manualStepSelector(step: RecipeStep): string {
+  return manualStepSelectorSpec(step).candidates[0] ?? ''
+}
+
+function updateManualStepSelector(step: RecipeStep, value: string): RecipeStep {
+  return {
+    ...step,
+    selector: {
+      ...manualStepSelectorSpec(step),
+      candidates: [value]
+    }
+  } as RecipeStep
+}
+
+function changeManualStepType(
+  step: RecipeStep,
+  action: ManualStepAction
+): RecipeStep {
+  const selector = manualStepSelectorSpec(step)
+  if (action === 'click') {
+    return {
+      id: step.id,
+      type: 'click',
+      selector,
+      navigationExpected: true
+    }
+  }
+  return { id: step.id, type: action, selector }
+}
+
+function nextManualStepType(steps: RecipeStep[]): ManualStepAction {
+  if (!steps.some((step) => step.type === 'fillUsername')) return 'fillUsername'
+  if (!steps.some((step) => step.type === 'fillPassword')) return 'fillPassword'
+  if (!steps.some((step) => step.type === 'click')) return 'click'
+  return 'focusChallenge'
+}
+
+function manualStepsAreComplete(steps: RecipeStep[]): boolean {
+  return (
+    steps.length > 0 &&
+    steps.every((step) => Boolean(manualStepSelector(step).trim())) &&
+    steps.some((step) => step.type === 'fillUsername') &&
+    steps.some((step) => step.type === 'fillPassword')
+  )
+}
+
+function normalizeManualSteps(steps: RecipeStep[]): RecipeStep[] {
+  return steps.map((step) => {
+    const selector = manualStepSelectorSpec(step)
+    return {
+      ...step,
+      selector: {
+        ...selector,
+        candidates: selector.candidates.map((candidate) => candidate.trim()).filter(Boolean)
+      }
+    } as RecipeStep
+  })
+}
+
+function selectorTestFieldForAction(action: RecipeStep['type']): SelectorTestField {
+  if (action === 'fillUsername') return 'username'
+  if (action === 'fillPassword') return 'password'
+  return 'submit'
+}
+
+function selectorPlaceholderForAction(action: RecipeStep['type']): string {
+  if (action === 'fillUsername') return 'input[name="username"], #username'
+  if (action === 'fillPassword') return 'input[type="password"], #password'
+  if (action === 'focusChallenge') return 'input[name="otp"], #verification-code'
   return 'button[type="submit"], #login'
+}
+
+function manualStepActionLabel(
+  action: ManualStepAction,
+  tr: (zhCN: string, en: string, zhTW: string) => string
+): string {
+  switch (action) {
+    case 'fillUsername':
+      return tr('输入用户名', 'Fill username', '輸入使用者名稱')
+    case 'fillPassword':
+      return tr('输入密码', 'Fill password', '輸入密碼')
+    case 'click':
+      return tr('点击元素', 'Click element', '點擊元素')
+    case 'focusChallenge':
+      return tr('聚焦验证码', 'Focus challenge', '聚焦驗證碼')
+  }
 }
 
 function recipeStepName(

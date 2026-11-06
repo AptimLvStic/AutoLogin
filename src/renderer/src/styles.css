@@ -13841,3 +13841,273 @@ body.is-resizing-account-column {
     padding-left: 18px;
   }
 }
+
+/* v0.9.4 tabs, table chrome, recording steps and drag performance. */
+.account-tabs {
+  margin-bottom: 0;
+  padding-bottom: 0;
+  border-bottom: 0;
+  background: var(--sidebar-bg);
+}
+
+.account-tab {
+  min-height: 38px;
+  border: 0;
+  border-radius: 10px 10px 0 0;
+  background: transparent;
+  color: var(--muted);
+  cursor: default;
+  transition:
+    background-color 180ms ease,
+    color 180ms ease,
+    box-shadow 180ms ease;
+}
+
+.account-tab__select,
+.account-tab__close {
+  cursor: default;
+}
+
+.account-tab:not(.is-active):hover {
+  background: color-mix(in srgb, var(--card) 48%, transparent);
+  color: var(--ink);
+}
+
+.account-tab.is-active {
+  margin-bottom: 0;
+  border: 0;
+  border-radius: 10px 10px 0 0;
+  background:
+    radial-gradient(
+        circle at 0 100%,
+        transparent 0 7.5px,
+        var(--card) 8px
+      )
+      left bottom / 10px 10px no-repeat,
+    radial-gradient(
+        circle at 100% 100%,
+        transparent 0 7.5px,
+        var(--card) 8px
+      )
+      right bottom / 10px 10px no-repeat,
+    linear-gradient(var(--card), var(--card)) left top / 100% calc(100% - 9px)
+      no-repeat,
+    linear-gradient(var(--card), var(--card)) center bottom /
+      calc(100% - 20px) 10px no-repeat;
+  box-shadow: inset 0 1px 0 var(--card-border);
+  color: var(--ink);
+  transition:
+    background-color 180ms ease,
+    color 180ms ease,
+    box-shadow 180ms ease;
+}
+
+.account-tab.is-active::after {
+  display: none;
+}
+
+.accounts-table__header {
+  font-size: calc(10.5px * var(--font-scale, 1));
+}
+
+.accounts-table__header > [data-column-key]::after {
+  top: 50%;
+  right: -4px;
+  bottom: auto;
+  width: 1px;
+  height: 50%;
+  background: var(--content-divider);
+  opacity: 1;
+  transform: translateY(-50%);
+}
+
+.account-column-resizer::after {
+  top: 25%;
+  bottom: auto;
+  height: 50%;
+  background: transparent;
+  opacity: 0;
+}
+
+.account-column-resizer:hover::after,
+.account-column-resizer:active::after {
+  height: 50%;
+  background: color-mix(in srgb, var(--accent) 72%, transparent);
+  opacity: 1;
+}
+
+.manual-selector-panel {
+  height: auto;
+  min-height: fit-content;
+  overflow: visible;
+}
+
+.manual-selector-panel__fields {
+  display: flex;
+  min-height: 0;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.manual-step-empty {
+  display: flex;
+  align-items: flex-start;
+  gap: 9px;
+  padding: 14px 12px;
+  border: 1px dashed var(--card-border);
+  border-radius: 6px;
+  color: var(--muted);
+  font-size: calc(10.5px * var(--font-scale, 1));
+  line-height: 1.55;
+}
+
+.manual-step-empty svg {
+  flex: 0 0 auto;
+  color: var(--accent);
+}
+
+.manual-step-row {
+  display: grid;
+  grid-template-columns: 22px minmax(124px, 0.78fr) minmax(210px, 1.65fr) auto 32px;
+  align-items: start;
+  gap: 8px;
+  padding: 5px 0;
+  border-bottom: 1px solid var(--content-divider);
+}
+
+.manual-step-row:last-child {
+  border-bottom: 0;
+}
+
+.manual-step-row.is-dragging {
+  opacity: 0.45;
+}
+
+.manual-step-row__handle {
+  display: inline-grid;
+  width: 22px;
+  height: 36px;
+  place-items: center;
+  border-radius: 5px;
+  color: var(--muted);
+  cursor: grab;
+  touch-action: none;
+}
+
+.manual-step-row__handle:active {
+  cursor: grabbing;
+}
+
+.manual-step-row__handle:hover {
+  background: color-mix(in srgb, var(--ink) 5%, transparent);
+  color: var(--ink);
+}
+
+.manual-step-row__action,
+.manual-step-row__selector-cell .input-shell,
+.manual-step-row > .button,
+.manual-step-row__delete {
+  min-height: 36px;
+  height: 36px;
+}
+
+.manual-step-row__selector-cell {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.manual-step-row__selector-cell .input-shell {
+  width: 100%;
+}
+
+.manual-step-row__selector-cell .input-shell input {
+  font-family: 'Manrope', monospace;
+  font-size: calc(10px * var(--font-scale, 1));
+}
+
+.manual-step-row > .button {
+  justify-content: center;
+  padding-inline: 12px;
+  white-space: nowrap;
+}
+
+.manual-step-row__delete {
+  justify-self: center;
+}
+
+.manual-selector-panel__footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding-top: 4px;
+}
+
+.manual-selector-panel__footer small {
+  color: var(--muted);
+  font-size: calc(9px * var(--font-scale, 1));
+}
+
+.account-editor-page .manual-selector-panel__fields > .manual-step-row {
+  min-height: 46px;
+  flex: 0 0 auto;
+}
+
+.recipe-steps li {
+  grid-template-columns: 18px 28px minmax(0, 1fr) 32px;
+  align-items: start;
+}
+
+.recipe-steps li.is-dragging {
+  opacity: 0.45;
+}
+
+.recipe-step-handle {
+  display: inline-grid;
+  width: 18px;
+  height: 24px;
+  place-items: center;
+  border-radius: 4px;
+  color: var(--muted) !important;
+  cursor: grab;
+  touch-action: none;
+}
+
+.recipe-step-handle:hover {
+  background: color-mix(in srgb, var(--ink) 5%, transparent);
+  color: var(--ink) !important;
+}
+
+.recipe-step-handle:active {
+  cursor: grabbing;
+}
+
+.recipe-steps li > .icon-button {
+  justify-self: end;
+}
+
+.password-generator-popover {
+  contain: layout style;
+}
+
+.password-generator-popover.is-dragging {
+  animation: none;
+  box-shadow:
+    0 12px 28px rgba(20, 24, 32, 0.16),
+    0 2px 8px rgba(20, 24, 32, 0.06);
+  will-change: transform;
+}
+
+body.is-dragging-password-generator,
+body.is-dragging-password-generator * {
+  user-select: none !important;
+}
+
+@media (max-width: 760px) {
+  .manual-step-row {
+    grid-template-columns: 22px minmax(110px, 0.8fr) minmax(150px, 1.4fr) auto 30px;
+    gap: 6px;
+  }
+}

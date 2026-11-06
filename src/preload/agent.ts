@@ -7,7 +7,6 @@ import {
   findChallengeField,
   focusChallenge,
   scoreChallenge,
-  scoreSubmit,
   scoreUsername,
   selectorFor
 } from '../shared/form-detection'
@@ -55,7 +54,9 @@ declare global {
 if (!window.__autologinAgent) {
   let recording = false
   let recordingListenersAttached = false
-  const recordedKeys = new Set<string>()
+  const recordedAt = new Map<string, number>()
+  let pendingPointerTarget: Element | null = null
+  let pendingPointerAt = 0
   let lastActivityReport = 0
 
   attachActivityListeners()
@@ -78,7 +79,8 @@ if (!window.__autologinAgent) {
 
     if (command.type === 'record-stop') {
       recording = false
-      recordedKeys.clear()
+      recordedAt.clear()
+      pendingPointerTarget = null
       return { ok: true }
     }
 
@@ -236,7 +238,7 @@ if (!window.__autologinAgent) {
     )
 
     document.addEventListener(
-      'click',
+      'mousedown',
       (event) => {
         if (!recording) {
           return
@@ -245,21 +247,66 @@ if (!window.__autologinAgent) {
         if (!(target instanceof Element)) {
           return
         }
-        const clickable = target.closest(
-          'button, input[type="submit"], [role="button"], a[role="button"]'
-        )
-        if (!(clickable instanceof HTMLElement) || scoreSubmit(clickable) < 2) {
-          return
-        }
-        recordStep({
-          id: crypto.randomUUID(),
-          type: 'click',
-          selector: selectorFor(clickable),
-          navigationExpected: true
-        })
+        pendingPointerTarget = target
+        pendingPointerAt = Date.now()
       },
       true
     )
+
+    document.addEventListener(
+      'click',
+      (event) => {
+        if (!recording || event.button !== 0) return
+        const target = event.target
+        if (!(target instanceof Element)) return
+        const clicked =
+          pendingPointerTarget &&
+          Date.now() - pendingPointerAt <= 500 &&
+          (target === pendingPointerTarget || target.contains(pendingPointerTarget))
+            ? pendingPointerTarget
+            : target
+        pendingPointerTarget = null
+        recordClickStep(clicked)
+      },
+      true
+    )
+
+    document.addEventListener(
+      'contextmenu',
+      (event) => {
+        if (!recording) return
+        const target = event.target
+        if (!(target instanceof Element)) return
+        const clicked =
+          pendingPointerTarget &&
+          Date.now() - pendingPointerAt <= 500
+            ? pendingPointerTarget
+            : target
+        pendingPointerTarget = null
+        recordClickStep(clicked, false)
+      },
+      true
+    )
+  }
+
+  function recordClickStep(target: Element, navigationExpected?: boolean): void {
+    const clickable =
+      target.closest(
+        'button, input, select, textarea, a, label, summary, [role="button"], [role="link"], [role="menuitem"], [role="tab"], [onclick]'
+      ) ?? target
+    if (!(clickable instanceof HTMLElement)) return
+    recordStep({
+      id: crypto.randomUUID(),
+      type: 'click',
+      selector: selectorFor(clickable),
+      navigationExpected:
+        navigationExpected ??
+        Boolean(
+          clickable.closest(
+            'a[href], button, input[type="submit"], [role="button"], [role="link"]'
+          )
+        )
+    })
   }
 
   function recordInputStep(
@@ -279,10 +326,11 @@ if (!window.__autologinAgent) {
         ? (step.selector?.candidates.join('|') ?? '')
         : step.selector.candidates.join('|')
     const key = `${step.type}:${selectorKey}`
-    if (recordedKeys.has(key)) {
+    const now = Date.now()
+    if (now - (recordedAt.get(key) ?? 0) < 250) {
       return
     }
-    recordedKeys.add(key)
+    recordedAt.set(key, now)
     sendEvent({ type: 'record-action', step })
   }
 

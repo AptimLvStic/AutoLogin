@@ -381,7 +381,9 @@ export function AccountTransferControls({
               }}
             >
               <Plus size={15} />
-              <span>{tr('新增标签页', 'New tab', '新增標籤頁')}</span>
+              <span>
+                {tr('新增本地数据库', 'New local database', '新增本機資料庫')}
+              </span>
             </button>
             <button type="button" role="menuitem" onClick={() => void chooseAutologin()}>
               <FolderOpen size={15} />

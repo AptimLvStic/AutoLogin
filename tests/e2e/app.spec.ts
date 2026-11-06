@@ -1314,10 +1314,10 @@ test('resizes, hides and restores the account subnav, and creates three group le
   await expect(expandButton).toBeVisible()
   await page.waitForTimeout(300)
   const collapsedButtonBox = await expandButton.boundingBox()
-  const collapsedLayoutBox = await layout.boundingBox()
+  const collapsedHeaderBox = await page.locator('.library-header').boundingBox()
   expect(collapsedButtonBox).not.toBeNull()
-  expect(collapsedLayoutBox).not.toBeNull()
-  expect(Math.abs(collapsedButtonBox!.x - collapsedLayoutBox!.x)).toBeLessThan(3)
+  expect(collapsedHeaderBox).not.toBeNull()
+  expect(Math.abs(collapsedButtonBox!.x - collapsedHeaderBox!.x)).toBeLessThan(3)
   for (const selector of [
     '.account-col--site',
     '.account-col--username',
@@ -2030,7 +2030,7 @@ test('defers an available update prompt until the vault is unlocked', async () =
   await application.evaluate(({ BrowserWindow }) => {
     BrowserWindow.getAllWindows()[0]?.webContents.send('app:update-state', {
       phase: 'available',
-      currentVersion: '0.9.7',
+      currentVersion: '0.9.8',
       latestVersion: '99.0.1',
       releaseName: 'AutoLogin v99.0.1',
       releaseNotes: '## 更新内容\n\n- 解锁后显示更新提示',
@@ -2076,9 +2076,11 @@ test('persists appearance, language and interface scale with separate resets', a
   const createMenu = page.locator('.account-create-menu')
   await expect(createMenu.getByRole('menuitem', { name: '新增本地数据库' })).toBeVisible()
   await expect(
-    createMenu.getByRole('menuitem', { name: '打开本地 AutoLogin 数据库' })
+    createMenu.getByRole('menuitem', { name: '📁 打开本地数据库' })
   ).toBeVisible()
-  await expect(createMenu.getByRole('menuitem', { name: '打开 KDBX 数据库' })).toBeVisible()
+  await expect(
+    createMenu.getByRole('menuitem', { name: '打开 KDBX 数据库' })
+  ).toHaveCount(0)
   await page.keyboard.press('Escape')
   await expect(createMenu).toHaveCount(0)
 

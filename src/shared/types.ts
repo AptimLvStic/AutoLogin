@@ -552,7 +552,33 @@ export interface AutologinSelection {
   size: number
 }
 
+export type LocalDatabaseKind = 'autologin' | 'kdbx'
+
+export interface LocalDatabaseFileSelection {
+  kind: LocalDatabaseKind
+  token: string
+  fileName: string
+  size: number
+}
+
+export interface ExistingDatabaseSelection {
+  kind: 'existing'
+  source: LocalDatabaseKind
+  tabId: string
+  tabName: string
+  fileName: string
+}
+
+export type LocalDatabaseOpenSelection =
+  | LocalDatabaseFileSelection
+  | ExistingDatabaseSelection
+
 export interface AutologinImportInput {
+  token: string
+  password: string
+}
+
+export interface LocalDatabaseImportInput {
   token: string
   password: string
 }
@@ -736,6 +762,8 @@ export interface AutologinApi {
     exportTab: (input: DataExportInput) => Promise<FileOperationResult>
     exportCsvTemplate: () => Promise<FileOperationResult>
     importCsv: (input: CsvImportInput) => Promise<DataImportResult | null>
+    chooseDatabase: () => Promise<LocalDatabaseOpenSelection | null>
+    importDatabase: (input: LocalDatabaseImportInput) => Promise<DataImportResult>
     chooseKdbx: () => Promise<KdbxSelection | null>
     importKdbx: (input: KdbxImportInput) => Promise<DataImportResult>
     chooseAutologin: () => Promise<AutologinSelection | null>
@@ -743,6 +771,9 @@ export interface AutologinApi {
     importBookmarks: () => Promise<DataImportResult | null>
     listBackups: () => Promise<BackupRecord[]>
     restoreBackup: (backupId: string) => Promise<void>
+  }
+  clipboard: {
+    writeSecret: (value: string) => Promise<void>
   }
   bookmarks: {
     visit: (accountId: string) => Promise<AccessLogEntry>

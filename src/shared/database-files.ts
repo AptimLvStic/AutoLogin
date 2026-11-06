@@ -35,6 +35,11 @@ export function extensionFromDatabaseFileName(fileName?: string): string {
   )
 }
 
+export function databaseNameFromFileName(fileName: string): string {
+  const extension = extensionFromDatabaseFileName(fileName)
+  return extension ? fileName.slice(0, -extension.length) : fileName
+}
+
 export function databaseExtensionForSource(
   source: AccountTabSource,
   originalFileName?: string
@@ -65,6 +70,10 @@ export function databaseExtensionForTab(tab: AccountTab): string {
     extensionFromDatabaseFileName(tab.databaseFileName) ||
     databaseExtensionForSource(tab.source)
   )
+}
+
+export function shouldWriteEncryptedTabSnapshot(tab: AccountTab): boolean {
+  return tab.source === 'local' || tab.source === 'autologin'
 }
 
 export function normalizeDatabaseName(value: string): string {

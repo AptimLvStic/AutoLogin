@@ -9,11 +9,14 @@ import {
   ProtectedValue
 } from 'kdbxweb'
 import {
+  CSV_TEMPLATE,
   configureKdbxArgon2,
+  mergeAutologinSnapshot,
   mergeImportedLogins,
   parseBookmarksImport,
   parseCsvImport,
-  parseKdbxImport
+  parseKdbxImport,
+  serializeTabCsv
 } from '../../src/main/data-transfer'
 import { DEFAULT_APP_SETTINGS } from '../../src/shared/theme'
 import type { VaultData } from '../../src/shared/types'
@@ -112,6 +115,54 @@ describe('data transfer', () => {
     expect(second.result.warnings[0]).toContain('相同用户名')
   })
 
+  it('opens an AutoLogin snapshot with its exact file name instead of appending a copy suffix', () => {
+    const imported = emptyVault()
+    imported.tabs[0] = {
+      ...imported.tabs[0]!,
+      name: '本地数据库 4'
+    }
+    imported.sites = [
+      {
+        id: 'site-4',
+        tabId: 'local',
+        name: 'Example',
+        startUrl: 'https://example.com/login',
+        allowedOrigins: ['https://example.com'],
+        autoSubmit: true,
+        createdAt: '2026-01-01T00:00:00.000Z',
+        updatedAt: '2026-01-01T00:00:00.000Z'
+      }
+    ]
+    imported.accounts = [
+      {
+        id: 'account-4',
+        tabId: 'local',
+        siteId: 'site-4',
+        label: 'Example',
+        username: 'user@example.com',
+        password: 'secret',
+        favorite: false,
+        loginStrategy: 'auto',
+        createdAt: '2026-01-01T00:00:00.000Z',
+        updatedAt: '2026-01-01T00:00:00.000Z'
+      }
+    ]
+
+    const merged = mergeAutologinSnapshot(emptyVault(), imported, {
+      preferredTabName: '本地数据库 4',
+      allowSuffixOnConflict: false
+    })
+    expect(merged.result.tabName).toBe('本地数据库 4')
+    expect(merged.data.tabs.at(-1)?.databaseFileName).toBe('本地数据库 4.autologin')
+
+    expect(() =>
+      mergeAutologinSnapshot(merged.data, imported, {
+        preferredTabName: '本地数据库 4',
+        allowSuffixOnConflict: false
+      })
+    ).toThrow('未创建副本')
+  })
+
   it('decodes GB18030 CSV files so Chinese site data is not garbled', async () => {
     const directory = createDirectory()
     const path = join(directory, 'gb18030.csv')
@@ -129,6 +180,36 @@ describe('data transfer', () => {
       siteGroup: '工作',
       username: 'user@example.com'
     })
+  })
+
+  it('exports and imports the localized CSV template without a favorite column', async () => {
+    expect(CSV_TEMPLATE.split(/\r?\n/)[4]).toBe(
+      '站点名称,登录地址,分组,用户名,密码,自动提交'
+    )
+    expect(CSV_TEMPLATE).not.toContain('favorite')
+
+    const directory = createDirectory()
+    const path = join(directory, 'localized.csv')
+    writeFileSync(
+      path,
+      [
+        '\uFEFF站点名称,登录地址,分组,用户名,密码,自动提交',
+        '"中文站点","https://zh.example/login","工作","user@example.com","secret","false"'
+      ].join('\r\n'),
+      'utf8'
+    )
+
+    const parsed = await parseCsvImport(path)
+    expect(parsed.candidates[0]).toMatchObject({
+      siteName: '中文站点',
+      siteGroup: '工作',
+      username: 'user@example.com',
+      autoSubmit: false,
+      favorite: false
+    })
+    expect(serializeTabCsv(emptyVault(), 'local')).toBe(
+      '\uFEFF站点名称,登录地址,分组,用户名,密码,自动提交\r\n'
+    )
   })
 
   it('imports browser bookmark folders and ignores unsafe URLs', async () => {

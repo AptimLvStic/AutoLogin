@@ -140,6 +140,8 @@ const api: AutologinApi = {
     exportTab: (input) => invoke('data:export-vault', input),
     exportCsvTemplate: () => invoke('data:export-csv-template'),
     importCsv: (input) => invoke('data:import-csv', input),
+    chooseDatabase: () => invoke('data:choose-database'),
+    importDatabase: (input) => invoke('data:import-database', input),
     chooseKdbx: () => invoke('data:choose-kdbx'),
     importKdbx: (input) => invoke('data:import-kdbx', input),
     chooseAutologin: () => invoke('data:choose-autologin'),
@@ -147,6 +149,9 @@ const api: AutologinApi = {
     importBookmarks: () => invoke('data:import-bookmarks'),
     listBackups: () => invoke('data:list-backups'),
     restoreBackup: (backupId) => invoke('data:restore-backup', backupId)
+  },
+  clipboard: {
+    writeSecret: (value) => invoke('clipboard:write-secret', { value })
   },
   bookmarks: {
     visit: (accountId) => invoke('bookmarks:visit', accountId)

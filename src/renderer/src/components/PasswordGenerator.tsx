@@ -107,7 +107,7 @@ export function PasswordGenerator({
 
   async function copyPassword(): Promise<void> {
     try {
-      await navigator.clipboard.writeText(password)
+      await window.autologin.clipboard.writeSecret(password)
       notify?.('success', tr('密码已复制', 'Password copied', '密碼已複製'))
     } catch {
       notify?.('error', tr('复制密码失败', 'Could not copy password', '複製密碼失敗'))

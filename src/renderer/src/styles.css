@@ -14314,3 +14314,109 @@ body.is-dragging-password-generator * {
 .account-tab.is-active::after {
   display: none;
 }
+
+/* v0.9.8 workspace layering, seamless database tabs and readable table dividers. */
+.library-main,
+.library-content-scroll--accounts {
+  background: var(--workspace-bg, var(--canvas));
+}
+
+.account-tabs {
+  border-bottom: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+.account-tabs__scroll {
+  align-items: flex-end;
+  padding-bottom: 0;
+}
+
+.account-tab {
+  border: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+.account-tab:not(.is-active) {
+  background: transparent;
+  box-shadow: none;
+  color: var(--muted);
+}
+
+.account-tab:not(.is-active):hover {
+  background: color-mix(in srgb, var(--card) 54%, transparent);
+  color: var(--ink-soft);
+}
+
+.account-tab.is-active {
+  border: 0;
+  background: var(--card);
+  box-shadow: none;
+  color: var(--ink);
+}
+
+.account-tab.is-active::after {
+  display: none;
+}
+
+.library-content-scroll--accounts
+  > .library-view-layout--accounts
+  > .library-view-main {
+  height: auto;
+  min-height: 0;
+  align-self: stretch;
+  padding: 0 12px 12px;
+  border: 1px solid var(--card-border);
+  border-radius: 12px;
+  background: var(--card);
+  box-shadow: var(--card-shadow);
+}
+
+.library-content-scroll--accounts .account-list__header {
+  background: var(--card);
+}
+
+.accounts-table__header > [data-column-key] {
+  justify-content: flex-start;
+  text-align: left;
+}
+
+.accounts-table__header > [data-column-key]:not(.account-col--actions)::after {
+  top: 10%;
+  right: -4px;
+  bottom: auto;
+  width: 1px;
+  height: 80%;
+  background: color-mix(in srgb, var(--muted) 52%, var(--content-divider));
+  opacity: 1;
+  transform: none;
+}
+
+.account-row > [data-column-key] {
+  position: relative;
+}
+
+.account-row > [data-column-key]:not(.account-actions)::after {
+  position: absolute;
+  z-index: 2;
+  top: 18%;
+  right: -4px;
+  bottom: 18%;
+  width: 1px;
+  background: color-mix(in srgb, var(--content-divider) 82%, transparent);
+  content: '';
+  pointer-events: none;
+}
+
+.account-row > .account-actions::after {
+  display: none;
+}
+
+html[data-color-mode='dark']
+  .library-content-scroll--accounts
+  > .library-view-layout--accounts
+  > .library-view-main {
+  border-color: rgba(255, 255, 255, 0.09);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.34);
+}

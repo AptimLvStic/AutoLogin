@@ -42,7 +42,7 @@ export function AccountTransferControls({
   const [templateBusy, setTemplateBusy] = useState(false)
   const [exportBusy, setExportBusy] = useState(false)
   const [kdbxSelection, setKdbxSelection] = useState<KdbxSelection | null>(null)
-  const [kdbxPassword, setKdbxPassword] = useState('')
+  const [databasePassword, setDatabasePassword] = useState('')
   const [kdbxError, setKdbxError] = useState('')
   const [kdbxBusy, setKdbxBusy] = useState(false)
   const [autologinSelection, setAutologinSelection] =
@@ -129,68 +129,37 @@ export function AccountTransferControls({
     }
   }
 
-  async function chooseKdbx(): Promise<void> {
+  async function chooseDatabase(): Promise<void> {
     if (importBusy) return
     setMenuOpen(false)
     setCreateMenuOpen(false)
     setImportBusy(true)
     try {
-      const selection = await window.autologin.data.chooseKdbx()
-      if (selection) {
+      const selection = await window.autologin.data.chooseDatabase()
+      if (!selection) return
+      if (selection.kind === 'existing') {
+        onImported({
+          source: selection.source,
+          tabId: selection.tabId,
+          tabName: selection.tabName,
+          sitesCreated: 0,
+          accountsCreated: 0,
+          skipped: 0,
+          warnings: []
+        })
+        notify(
+          'success',
+          tr(
+            `已打开数据库：${selection.tabName}`,
+            `Database opened: ${selection.tabName}`,
+            `已開啟資料庫：${selection.tabName}`
+          )
+        )
+      } else if (selection.kind === 'kdbx') {
         setKdbxSelection(selection)
-        setKdbxPassword('')
+        setDatabasePassword('')
         setKdbxError('')
-      }
-    } catch (error) {
-      notify(
-        'error',
-        error instanceof Error
-          ? error.message
-          : tr('选择 KDBX 文件失败', 'Could not select KDBX file.', '選擇 KDBX 檔案失敗')
-      )
-    } finally {
-      setImportBusy(false)
-    }
-  }
-
-  async function importKdbx(event: React.FormEvent): Promise<void> {
-    event.preventDefault()
-    if (!kdbxSelection || !kdbxPassword) {
-      setKdbxError(
-        tr('请输入数据库主密码', 'Enter the database master password.', '請輸入資料庫主密碼')
-      )
-      return
-    }
-    if (kdbxBusy) return
-    setKdbxBusy(true)
-    setKdbxError('')
-    try {
-      const result = await window.autologin.data.importKdbx({
-        token: kdbxSelection.token,
-        password: kdbxPassword
-      })
-      setKdbxSelection(null)
-      setKdbxPassword('')
-      acceptImport(result)
-    } catch (error) {
-      setKdbxError(
-        error instanceof Error
-          ? error.message
-          : tr('导入 KDBX 数据库失败', 'Could not import the KDBX database.', '匯入 KDBX 資料庫失敗')
-      )
-    } finally {
-      setKdbxBusy(false)
-    }
-  }
-
-  async function chooseAutologin(): Promise<void> {
-    if (importBusy) return
-    setMenuOpen(false)
-    setCreateMenuOpen(false)
-    setImportBusy(true)
-    try {
-      const selection = await window.autologin.data.chooseAutologin()
-      if (selection) {
+      } else {
         setAutologinSelection(selection)
         setAutologinPassword('')
         setAutologinError('')
@@ -200,14 +169,40 @@ export function AccountTransferControls({
         'error',
         error instanceof Error
           ? error.message
-          : tr(
-              '选择 AutoLogin 配置文件失败',
-              'Could not select the AutoLogin configuration.',
-              '選擇 AutoLogin 設定檔失敗'
-            )
+          : tr('打开本地数据库失败', 'Could not open the local database.', '開啟本機資料庫失敗')
       )
     } finally {
       setImportBusy(false)
+    }
+  }
+
+  async function importKdbx(event: React.FormEvent): Promise<void> {
+    event.preventDefault()
+    if (!kdbxSelection || !databasePassword) {
+      setKdbxError(
+        tr('请输入数据库主密码', 'Enter the database master password.', '請輸入資料庫主密碼')
+      )
+      return
+    }
+    if (kdbxBusy) return
+    setKdbxBusy(true)
+    setKdbxError('')
+    try {
+      const result = await window.autologin.data.importDatabase({
+        token: kdbxSelection.token,
+        password: databasePassword
+      })
+      setKdbxSelection(null)
+      setDatabasePassword('')
+      acceptImport(result)
+    } catch (error) {
+      setKdbxError(
+        error instanceof Error
+          ? error.message
+          : tr('导入 KDBX 数据库失败', 'Could not import the KDBX database.', '匯入 KDBX 資料庫失敗')
+      )
+    } finally {
+      setKdbxBusy(false)
     }
   }
 
@@ -223,7 +218,7 @@ export function AccountTransferControls({
     setAutologinBusy(true)
     setAutologinError('')
     try {
-      const result = await window.autologin.data.importAutologin({
+      const result = await window.autologin.data.importDatabase({
         token: autologinSelection.token,
         password: autologinPassword
       })
@@ -386,23 +381,13 @@ export function AccountTransferControls({
                 {tr('新增本地数据库', 'New local database', '新增本機資料庫')}
               </span>
             </button>
-            <button type="button" role="menuitem" onClick={() => void chooseAutologin()}>
+            <button type="button" role="menuitem" onClick={() => void chooseDatabase()}>
               <FolderOpen size={15} />
               <span>
                 {tr(
-                  '打开本地 AutoLogin 数据库',
-                  'Open local AutoLogin database',
-                  '開啟本機 AutoLogin 資料庫'
-                )}
-              </span>
-            </button>
-            <button type="button" role="menuitem" onClick={() => void chooseKdbx()}>
-              <KeyRound size={15} />
-              <span>
-                {tr(
-                  '打开 KDBX 数据库',
-                  'Open KDBX database',
-                  '開啟 KDBX 資料庫'
+                  '📁 打开本地数据库',
+                  '📁 Open local database',
+                  '📁 開啟本機資料庫'
                 )}
               </span>
             </button>
@@ -474,7 +459,7 @@ export function AccountTransferControls({
           onClose={() => {
             if (kdbxBusy) return
             setKdbxSelection(null)
-            setKdbxPassword('')
+            setDatabasePassword('')
             setKdbxError('')
           }}
           width="520px"
@@ -504,8 +489,8 @@ export function AccountTransferControls({
                 <KeyRound size={16} />
                 <input
                   type="password"
-                  value={kdbxPassword}
-                  onChange={(event) => setKdbxPassword(event.target.value)}
+                  value={databasePassword}
+                  onChange={(event) => setDatabasePassword(event.target.value)}
                   data-autofocus
                   autoComplete="current-password"
                 />
@@ -518,7 +503,7 @@ export function AccountTransferControls({
                 className="button button--ghost"
                 onClick={() => {
                   setKdbxSelection(null)
-                  setKdbxPassword('')
+                  setDatabasePassword('')
                   setKdbxError('')
                 }}
                 disabled={kdbxBusy}

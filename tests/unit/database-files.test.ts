@@ -9,9 +9,11 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 import {
+  databaseNameFromFileName,
   databaseExtensionForSource,
   databaseFileNameFor,
-  isDatabaseNameFileSafe
+  isDatabaseNameFileSafe,
+  shouldWriteEncryptedTabSnapshot
 } from '../../src/shared/database-files'
 import { migrateTabDatabaseFiles } from '../../src/main/tab-database-files'
 import {
@@ -101,6 +103,26 @@ describe('database files', () => {
     expect(isDatabaseNameFileSafe('工作账号')).toBe(true)
     expect(isDatabaseNameFileSafe('工作/账号')).toBe(false)
     expect(isDatabaseNameFileSafe('CON')).toBe(false)
+    expect(databaseNameFromFileName('本地数据库 4.autologin')).toBe('本地数据库 4')
+    expect(databaseNameFromFileName('工作账号.KDBX')).toBe('工作账号')
+  })
+
+  it('only syncs AutoLogin-owned encrypted snapshots', () => {
+    expect(shouldWriteEncryptedTabSnapshot(createTab('local', '本地账号', 'local'))).toBe(
+      true
+    )
+    expect(
+      shouldWriteEncryptedTabSnapshot(createTab('auto', '导入配置', 'autologin'))
+    ).toBe(true)
+    expect(shouldWriteEncryptedTabSnapshot(createTab('kdbx', '工作账号', 'kdbx'))).toBe(
+      false
+    )
+    expect(shouldWriteEncryptedTabSnapshot(createTab('csv', '财务数据', 'csv'))).toBe(
+      false
+    )
+    expect(
+      shouldWriteEncryptedTabSnapshot(createTab('bookmarks', '书签', 'bookmarks'))
+    ).toBe(false)
   })
 
   it('migrates every legacy tab-uuid file to its database name and suffix', () => {

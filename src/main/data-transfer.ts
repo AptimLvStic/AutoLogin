@@ -13,6 +13,7 @@ import {
 } from 'kdbxweb'
 import { argon2d, argon2id } from 'hash-wasm'
 import { DEFAULT_ACCOUNT_TAB_ID, GROUP_PATH_SEPARATOR } from '@shared/types'
+import { databaseFileNameFor } from '@shared/database-files'
 import type {
   AccountTab,
   AccountTabSource,
@@ -27,23 +28,39 @@ const MAX_IMPORT_BYTES = 50 * 1024 * 1024
 const MAX_IMPORT_ROWS = 1_000
 
 export const CSV_TEMPLATE_HEADERS = [
-  'siteName',
-  'startUrl',
-  'siteGroup',
-  'username',
-  'password',
-  'autoSubmit',
-  'favorite'
+  '站点名称',
+  '登录地址',
+  '分组',
+  '用户名',
+  '密码',
+  '自动提交'
 ] as const
 
 export const CSV_TEMPLATE = [
   '# AutoLogin CSV 导入模板',
-  '# 必填列：siteName（站点名称）、startUrl（http/https 登录地址）、username（用户名）、password（密码）',
-  '# 可选列：siteGroup（分组，多级用 " / " 分隔）、autoSubmit（true/false）、favorite（true/false）',
+  '# 必填列：站点名称、登录地址（http/https）、用户名、密码',
+  '# 可选列：分组（多级用 " / " 分隔）、自动提交（true/false）',
   '# 每一行代表一个账号；以 # 开头的行会被忽略。',
   CSV_TEMPLATE_HEADERS.join(','),
-  '"示例站点","https://example.com/login","工作","name@example.com","replace-me","true","false"'
+  '"示例站点","https://example.com/login","工作","name@example.com","replace-me","true"'
 ].join('\r\n')
+
+const CSV_HEADER_ALIASES: Record<string, string> = {
+  sitename: 'siteName',
+  '站点名称': 'siteName',
+  starturl: 'startUrl',
+  '登录地址': 'startUrl',
+  sitegroup: 'siteGroup',
+  '分组': 'siteGroup',
+  username: 'username',
+  '用户名': 'username',
+  password: 'password',
+  '密码': 'password',
+  autosubmit: 'autoSubmit',
+  '自动提交': 'autoSubmit',
+  favorite: 'favorite',
+  '收藏': 'favorite'
+}
 
 export interface ImportedLoginCandidate {
   siteName: string
@@ -74,7 +91,10 @@ export async function parseCsvImport(path: string): Promise<ParsedImport> {
       bom: true,
       comment: '#',
       columns: (header: string[]) =>
-        header.map((value) => value.trim().replace(/^\uFEFF/, '')),
+        header.map((value) => {
+          const cleaned = value.trim().replace(/^\uFEFF/, '')
+          return CSV_HEADER_ALIASES[cleaned.toLocaleLowerCase()] ?? cleaned
+        }),
       skip_empty_lines: true,
       trim: true,
       relax_column_count: false,
@@ -375,8 +395,7 @@ export function serializeTabCsv(data: VaultData, tabId: string): string {
         site.group ?? '',
         account.username,
         account.password,
-        String(site.autoSubmit),
-        String(account.favorite)
+        String(site.autoSubmit)
       ]
         .map(escapeCsvCell)
         .join(',')
@@ -476,7 +495,11 @@ export function serializeTabBookmarks(data: VaultData, tabId: string): string {
 
 export function mergeAutologinSnapshot(
   current: VaultData,
-  imported: VaultData
+  imported: VaultData,
+  options: {
+    preferredTabName?: string
+    allowSuffixOnConflict?: boolean
+  } = {}
 ): { data: VaultData; result: DataImportResult } {
   const data = structuredClone(current)
   const now = new Date().toISOString()
@@ -495,10 +518,16 @@ export function mergeAutologinSnapshot(
   let firstTab: AccountTab | null = null
 
   for (const sourceTab of importedTabs) {
-    const baseName = sourceTab.name.trim() || 'AutoLogin 导入'
+    const baseName =
+      (importedTabs.length === 1 && options.preferredTabName?.trim()
+        ? options.preferredTabName
+        : sourceTab.name.trim()) || 'AutoLogin 导入'
     let tabName = baseName
     let sequence = 2
     while (takenNames.has(tabName.toLocaleLowerCase())) {
+      if (options.allowSuffixOnConflict === false) {
+        throw new Error(`数据库“${baseName}”已在标签页中打开，未创建副本`)
+      }
       const suffix = ` ${sequence}`
       tabName = `${baseName.slice(0, 40 - suffix.length).trimEnd()}${suffix}`
       sequence += 1
@@ -509,6 +538,7 @@ export function mergeAutologinSnapshot(
       name: tabName,
       color: sourceTab.color,
       source: 'autologin',
+      databaseFileName: databaseFileNameFor(tabName, '.autologin'),
       hidden: false,
       createdAt: now,
       updatedAt: now

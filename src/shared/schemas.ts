@@ -574,6 +574,12 @@ export const kdbxSelectionImportSchema = z
 
 export const autologinSelectionImportSchema = kdbxSelectionImportSchema
 
+export const clipboardSecretInputSchema = z
+  .object({
+    value: z.string().min(1, '剪贴板内容不能为空').max(4096)
+  })
+  .strict()
+
 export const dataExportInputSchema = z
   .object({
     tabId: idSchema,

@@ -1,5 +1,13 @@
 import { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, net, session, shell } from 'electron'
-import { existsSync, mkdirSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs'
+import {
+  copyFileSync,
+  existsSync,
+  mkdirSync,
+  renameSync,
+  rmSync,
+  statSync,
+  writeFileSync
+} from 'node:fs'
 import { basename, dirname, join, resolve } from 'node:path'
 import { randomUUID } from 'node:crypto'
 import type { IpcMainEvent, IpcMainInvokeEvent } from 'electron'
@@ -25,6 +33,7 @@ import {
   appSettingsPatchSchema,
   autologinSelectionImportSchema,
   changePasswordSchema,
+  clipboardSecretInputSchema,
   csvImportInputSchema,
   dataExportInputSchema,
   favoriteGroupInputSchema,
@@ -53,9 +62,11 @@ import {
 import {
   databaseExtensionForSource,
   databaseExtensionForTab,
+  databaseNameFromFileName,
   databaseFileNameFor,
   isDatabaseNameFileSafe,
-  normalizeDatabaseName
+  normalizeDatabaseName,
+  shouldWriteEncryptedTabSnapshot
 } from '@shared/database-files'
 import type {
   AccountBatchIconFetchResult,
@@ -75,6 +86,7 @@ import type {
   DataImportResult,
   DataLocationInfo,
   DeletedAccountWithSite,
+  ExistingDatabaseSelection,
   FileOperationResult,
   GroupCreateInput,
   GroupDefinition,
@@ -82,6 +94,9 @@ import type {
   GroupMoveResult,
   GroupRenameInput,
   KdbxSelection,
+  LocalDatabaseFileSelection,
+  LocalDatabaseKind,
+  LocalDatabaseOpenSelection,
   LoginLogEntry,
   LoginLogDeleteResult,
   LoginLogQuery,
@@ -191,6 +206,16 @@ const pendingKdbxSelections = new Map<
 const pendingAutologinSelections = new Map<
   string,
   { path: string; fileName: string; size: number; expiresAt: number }
+>()
+const pendingDatabaseSelections = new Map<
+  string,
+  {
+    kind: LocalDatabaseKind
+    path: string
+    fileName: string
+    size: number
+    expiresAt: number
+  }
 >()
 
 const REPOSITORY_URL = ['https:', '//github.com', '/AptimLvStic/AutoLogin'].join('')
@@ -407,6 +432,9 @@ function syncTabSnapshotFiles(data: VaultData): void {
 
   const dataByTab = indexVaultDataByTab(data)
   for (const tab of data.tabs) {
+    if (!shouldWriteEncryptedTabSnapshot(tab)) {
+      continue
+    }
     try {
       const snapshot = buildTabSnapshot(
         data,
@@ -1061,6 +1089,31 @@ function registerIpc(): void {
       details: safeLogUrl(site.startUrl)
     })
   })
+  ipcMain.handle('clipboard:write-secret', async (event, payload: unknown) => {
+    assertTrustedSender(event)
+    const parsed = clipboardSecretInputSchema.safeParse(payload)
+    if (!parsed.success) {
+      throw new Error(firstIssue(parsed.error))
+    }
+    try {
+      await copySecret(parsed.data.value)
+      appendAppLog(dataDirectory, {
+        level: 'info',
+        category: 'clipboard',
+        message: '密码生成器结果已复制到剪贴板'
+      })
+    } catch (error) {
+      appendAppLog(dataDirectory, {
+        level: 'error',
+        category: 'error',
+        message: '复制密码失败',
+        details: sanitizeLogDetails(
+          error instanceof Error ? error.message : String(error)
+        )
+      })
+      throw new Error('复制密码失败')
+    }
+  })
   ipcMain.handle('bookmarks:visit', async (event, accountId: unknown) => {
     assertTrustedSender(event)
     const id = requireId(accountId)
@@ -1399,6 +1452,123 @@ function registerIpc(): void {
     appendImportLog(result, basename(path))
     return result
   })
+  ipcMain.handle('data:choose-database', async (event): Promise<LocalDatabaseOpenSelection | null> => {
+    assertTrustedSender(event)
+    if (!mainWindow) return null
+    cleanExpiredDatabaseSelections()
+    const selection = await dialog.showOpenDialog(mainWindow, {
+      title: '打开本地数据库',
+      buttonLabel: '打开数据库',
+      properties: ['openFile'],
+      filters: [
+        {
+          name: 'AutoLogin / KDBX 数据库',
+          extensions: ['autologin', 'kdbx']
+        }
+      ]
+    })
+    const path = selection.filePaths[0]
+    if (selection.canceled || !path) {
+      return null
+    }
+    const normalizedPath = path.toLocaleLowerCase()
+    const kind: LocalDatabaseKind = normalizedPath.endsWith('.kdbx')
+      ? 'kdbx'
+      : normalizedPath.endsWith('.autologin')
+        ? 'autologin'
+        : (() => {
+            throw new Error('请选择 .autologin 或 .kdbx 格式的本地数据库')
+          })()
+    const fileName = basename(path)
+    const existing = findExistingDatabaseTab(path, kind)
+    if (existing) {
+      const result = activateExistingDatabaseTab(existing, kind, fileName)
+      appendAppLog(dataDirectory, {
+        level: 'info',
+        category: 'data',
+        message: `已打开数据库：${existing.name}`,
+        details: fileName
+      })
+      return result
+    }
+    const stats = statSync(path)
+    const token = randomUUID()
+    pendingDatabaseSelections.set(token, {
+      kind,
+      path,
+      fileName,
+      size: stats.size,
+      expiresAt: Date.now() + 10 * 60 * 1000
+    })
+    const fileSelection: LocalDatabaseFileSelection = {
+      kind,
+      token,
+      fileName,
+      size: stats.size
+    }
+    return fileSelection
+  })
+  ipcMain.handle(
+    'data:import-database',
+    async (event, payload: unknown): Promise<DataImportResult> => {
+      assertTrustedSender(event)
+      const parsed = autologinSelectionImportSchema.safeParse(payload)
+      if (!parsed.success) {
+        throw new Error(firstIssue(parsed.error))
+      }
+      cleanExpiredDatabaseSelections()
+      const selection = pendingDatabaseSelections.get(parsed.data.token)
+      if (!selection) {
+        throw new Error('数据库选择已过期，请重新选择文件')
+      }
+      const existing = findExistingDatabaseTab(
+        selection.path,
+        selection.kind
+      )
+      if (existing) {
+        const active = activateExistingDatabaseTab(
+          existing,
+          selection.kind,
+          selection.fileName
+        )
+        pendingDatabaseSelections.delete(parsed.data.token)
+        return {
+          source: active.source,
+          tabId: active.tabId,
+          tabName: active.tabName,
+          sitesCreated: 0,
+          accountsCreated: 0,
+          skipped: 0,
+          warnings: []
+        }
+      }
+
+      const result =
+        selection.kind === 'autologin'
+          ? applyAutologinImport(
+              await vault.readEncryptedSnapshot(
+                selection.path,
+                parsed.data.password
+              ),
+              {
+                fileName: selection.fileName,
+                sourcePath: selection.path,
+                exactFileName: true
+              }
+            )
+          : applyDataImport(
+              await parseKdbxImport(selection.path, parsed.data.password),
+              'kdbx',
+              selection.fileName,
+              'new',
+              undefined,
+              { sourcePath: selection.path }
+            )
+      pendingDatabaseSelections.delete(parsed.data.token)
+      appendImportLog(result, selection.fileName)
+      return result
+    }
+  )
   ipcMain.handle('data:choose-kdbx', async (event): Promise<KdbxSelection | null> => {
     assertTrustedSender(event)
     if (!mainWindow) return null
@@ -1441,7 +1611,14 @@ function registerIpc(): void {
         throw new Error('KeePassXC 数据库选择已过期，请重新选择文件')
       }
       const imported = await parseKdbxImport(selection.path, parsed.data.password)
-      const result = applyDataImport(imported, 'kdbx', selection.fileName)
+      const result = applyDataImport(
+        imported,
+        'kdbx',
+        selection.fileName,
+        'new',
+        undefined,
+        { sourcePath: selection.path }
+      )
       pendingKdbxSelections.delete(parsed.data.token)
       appendImportLog(result, selection.fileName)
       return result
@@ -1492,7 +1669,11 @@ function registerIpc(): void {
         selection.path,
         parsed.data.password
       )
-      const result = applyAutologinImport(imported)
+      const result = applyAutologinImport(imported, {
+        fileName: selection.fileName,
+        sourcePath: selection.path,
+        exactFileName: true
+      })
       pendingAutologinSelections.delete(parsed.data.token)
       appendImportLog(result, selection.fileName)
       return result
@@ -3063,7 +3244,8 @@ function applyDataImport(
   source: 'csv' | 'kdbx' | 'bookmarks',
   fileName: string,
   mode: 'current' | 'new' = 'new',
-  currentTabId?: string
+  currentTabId?: string,
+  options: { sourcePath?: string } = {}
 ): DataImportResult {
   const data = vault.requireData()
   const sourceColors: Record<typeof source, string> = {
@@ -3078,18 +3260,28 @@ function applyDataImport(
       ? staged.tabs.find(
           (tab) => tab.id === (currentTabId ?? DEFAULT_ACCOUNT_TAB_ID) && !tab.hidden
         )
-      : buildAccountTab(
-          staged,
-          source === 'csv' ? nextLocalDatabaseName(staged) : fileNameWithoutExtension,
-          source,
-          sourceColors[source],
-          fileName
-        )
+      : source === 'kdbx'
+        ? buildOpenedDatabaseTab(
+            staged,
+            fileName,
+            source,
+            sourceColors[source]
+          )
+        : buildAccountTab(
+            staged,
+            source === 'csv' ? nextLocalDatabaseName(staged) : fileNameWithoutExtension,
+            source,
+            sourceColors[source],
+            fileName
+          )
   if (!targetTab) {
     throw new Error('当前数据库不存在，无法导入 CSV')
   }
   if (mode === 'new') staged.tabs.push(targetTab)
   const merged = mergeImportedLogins(staged, source, parsed, targetTab.id)
+  if (mode === 'new' && options.sourcePath) {
+    ensureOpenedDatabaseFileStored(targetTab, options.sourcePath)
+  }
   data.tabs = merged.data.tabs
   data.sites = merged.data.sites
   data.accounts = merged.data.accounts
@@ -3099,9 +3291,27 @@ function applyDataImport(
   return merged.result
 }
 
-function applyAutologinImport(imported: VaultData): DataImportResult {
+function applyAutologinImport(
+  imported: VaultData,
+  options: {
+    fileName?: string
+    sourcePath?: string
+    exactFileName?: boolean
+  } = {}
+): DataImportResult {
   const data = vault.requireData()
-  const merged = mergeAutologinSnapshot(data, imported)
+  const preferredTabName =
+    options.exactFileName && options.fileName
+      ? normalizeDatabaseName(databaseNameFromFileName(options.fileName))
+      : undefined
+  const merged = mergeAutologinSnapshot(data, imported, {
+    preferredTabName,
+    allowSuffixOnConflict: !options.exactFileName
+  })
+  const targetTab = merged.data.tabs.find((tab) => tab.id === merged.result.tabId)
+  if (options.sourcePath && targetTab) {
+    ensureOpenedDatabaseFileStored(targetTab, options.sourcePath)
+  }
   data.tabs = merged.data.tabs
   data.sites = merged.data.sites
   data.accounts = merged.data.accounts
@@ -3109,6 +3319,125 @@ function applyAutologinImport(imported: VaultData): DataImportResult {
   vault.save()
   sessionIndex.replace(data.accounts.map((account) => account.id))
   return merged.result
+}
+
+function buildOpenedDatabaseTab(
+  data: VaultData,
+  fileName: string,
+  source: 'kdbx',
+  color: string
+): AccountTab {
+  const name = normalizeDatabaseName(
+    databaseNameFromFileName(fileName).slice(0, 40)
+  )
+  const extension = databaseExtensionForSource(source, fileName)
+  const databaseFileName = databaseFileNameFor(name, extension)
+  const nameConflict = data.tabs.some(
+    (tab) => tab.name.toLocaleLowerCase() === name.toLocaleLowerCase()
+  )
+  const fileConflict = data.tabs.some(
+    (tab) =>
+      (
+        tab.databaseFileName ??
+        databaseFileNameFor(tab.name, databaseExtensionForTab(tab))
+      ).toLocaleLowerCase() === databaseFileName.toLocaleLowerCase()
+  )
+  if (nameConflict || fileConflict) {
+    throw new Error(`数据库“${name}”已在标签页中打开，未创建副本`)
+  }
+  const now = new Date().toISOString()
+  return {
+    id: randomUUID(),
+    name,
+    color,
+    source,
+    databaseFileName,
+    hidden: false,
+    createdAt: now,
+    updatedAt: now
+  }
+}
+
+function ensureOpenedDatabaseFileStored(
+  tab: AccountTab,
+  sourcePath: string
+): void {
+  const databaseFileName =
+    tab.databaseFileName ??
+    databaseFileNameFor(tab.name, databaseExtensionForTab(tab))
+  const targetPath = join(dataDirectory, 'tabs', databaseFileName)
+  if (
+    resolve(sourcePath).toLocaleLowerCase() ===
+    resolve(targetPath).toLocaleLowerCase()
+  ) {
+    return
+  }
+  if (existsSync(targetPath)) {
+    throw new Error(`数据库文件“${databaseFileName}”已存在，未覆盖原文件`)
+  }
+  mkdirSync(dirname(targetPath), { recursive: true })
+  copyFileSync(sourcePath, targetPath)
+}
+
+function findExistingDatabaseTab(
+  filePath: string,
+  kind: LocalDatabaseKind
+): AccountTab | null {
+  const data = vault.requireData()
+  const normalizedPath = resolve(filePath).toLocaleLowerCase()
+  const exact = data.tabs.find(
+    (tab) =>
+      tabMatchesDatabaseKind(tab, kind) &&
+      resolve(tabDatabasePath(tab)).toLocaleLowerCase() === normalizedPath
+  )
+  if (exact) return exact
+
+  const tabsDirectory = resolve(join(dataDirectory, 'tabs')).toLocaleLowerCase()
+  if (dirname(normalizedPath) !== tabsDirectory) {
+    return null
+  }
+  const requestedName = normalizeDatabaseName(
+    databaseNameFromFileName(basename(filePath))
+  )
+    .replace(/\s+/g, '')
+    .toLocaleLowerCase()
+  return (
+    data.tabs.find(
+      (tab) =>
+        tabMatchesDatabaseKind(tab, kind) &&
+        normalizeDatabaseName(tab.name)
+          .replace(/\s+/g, '')
+          .toLocaleLowerCase() === requestedName
+    ) ?? null
+  )
+}
+
+function tabMatchesDatabaseKind(
+  tab: AccountTab,
+  kind: LocalDatabaseKind
+): boolean {
+  return kind === 'kdbx'
+    ? tab.source === 'kdbx'
+    : tab.source === 'local' || tab.source === 'autologin'
+}
+
+function activateExistingDatabaseTab(
+  tab: AccountTab,
+  source: LocalDatabaseKind,
+  fileName: string
+): ExistingDatabaseSelection {
+  if (tab.hidden) {
+    tab.hidden = false
+    tab.updatedAt = new Date().toISOString()
+    vault.save()
+  }
+  return {
+    kind: 'existing',
+    source,
+    tabId: tab.id,
+    tabName: tab.name,
+    fileName
+  }
 }
 
 function appendImportLog(result: DataImportResult, fileName: string): void {
@@ -3138,6 +3467,15 @@ function cleanExpiredKdbxSelections(): void {
   for (const [token, selection] of pendingKdbxSelections) {
     if (selection.expiresAt <= now) {
       pendingKdbxSelections.delete(token)
+    }
+  }
+}
+
+function cleanExpiredDatabaseSelections(): void {
+  const now = Date.now()
+  for (const [token, selection] of pendingDatabaseSelections) {
+    if (selection.expiresAt <= now) {
+      pendingDatabaseSelections.delete(token)
     }
   }
 }

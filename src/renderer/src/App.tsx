@@ -35,7 +35,7 @@ export default function App(): React.JSX.Element {
   const [accounts, setAccounts] = useState<AccountWithSite[]>([])
   const [sites, setSites] = useState<Site[]>([])
   const [settings, setSettings] = useState<AppSettings>(DEFAULT_SETTINGS)
-  const [appVersion, setAppVersion] = useState('0.9.7')
+  const [appVersion, setAppVersion] = useState('0.9.8')
   const [loginTarget, setLoginTarget] = useState<LoginTarget | null>(null)
   const [batchState, setBatchState] = useState<LoginBatchState | null>(null)
   const [updateState, setUpdateState] = useState<AppUpdateState | null>(null)
@@ -176,9 +176,17 @@ export default function App(): React.JSX.Element {
         ? '#202329'
         : colors.surface
       : '#FFFFFF'
+    const workspaceBackground = isMagpie
+      ? isDark
+        ? '#151619'
+        : '#F5F6F8'
+      : isDark
+        ? `color-mix(in srgb, ${colors.background} 88%, #0B0D10)`
+        : `color-mix(in srgb, ${colors.background} 88%, #FFFFFF)`
     root.setProperty('--canvas', colors.background)
     root.setProperty('--surface', colors.surface)
     root.setProperty('--sidebar-bg', sidebarBackground)
+    root.setProperty('--workspace-bg', workspaceBackground)
     root.setProperty('--card', cardBackground)
     root.setProperty('--ink', isDark ? '#F2F3F5' : '#17191C')
     root.setProperty('--accent', colors.accent)

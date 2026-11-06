@@ -4577,6 +4577,7 @@ export function LibraryScreen({
                         order: accountColumnOrderStyle(accountColumnOrder, 'actions')
                       }}
                     >
+                      <span>{tr('操作', 'Actions', '操作')}</span>
                       {accountColumnResizer('actions', tr('操作', 'actions', '操作'))}
                       {columnMenuOpen &&
                         createPortal(

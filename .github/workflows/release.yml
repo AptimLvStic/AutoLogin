@@ -55,13 +55,13 @@ jobs:
       - name: Publish GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: v0.9.7
-          name: AutoLogin v0.9.7
+          tag_name: v0.9.8
+          name: AutoLogin v0.9.8
           body_path: RELEASE_NOTES.md
           draft: false
           prerelease: false
           fail_on_unmatched_files: true
           files: |
-            outputs/AutoLogin-0.9.7-x64.exe
-            outputs/AutoLogin-0.9.7-x64.exe.blockmap
+            outputs/AutoLogin-0.9.8-x64.exe
+            outputs/AutoLogin-0.9.8-x64.exe.blockmap
             outputs/latest.yml

@@ -3950,54 +3950,57 @@ export function LibraryScreen({
               onOpenMenu={openTabMenu}
               onClose={(tab) => void closeTab(tab)}
               controls={
-                <>
-                  {view === 'accounts' && (
-                    <AccountTransferControls
-                      tabId={activeTabId}
-                      onCreateTab={() => createTab('local')}
-                      onImported={(result) =>
-                        void handleDataImported(result.tabId)
-                      }
-                      notify={notify}
-                    />
-                  )}
-                  {view === 'bookmarks' && (
-                    <>
-                      <button
-                        type="button"
-                        className="account-tabs__add"
-                        onClick={() => void createTab('bookmarks')}
-                        disabled={tabBusy}
-                        aria-label={tr(
-                          '新增书签标签页',
-                          'Add bookmark tab',
-                          '新增書籤標籤頁'
-                        )}
-                        title={tr(
-                          '新增书签标签页',
-                          'Add bookmark tab',
-                          '新增書籤標籤頁'
-                        )}
-                      >
-                        <DatabaseCreateIcon busy={tabBusy} />
-                      </button>
-                      <BookmarkImportButton
+                showDatabaseEmptyState ? null : (
+                  <>
+                    {view === 'accounts' && (
+                      <AccountTransferControls
+                        tabId={activeTabId}
+                        onCreateTab={() => createTab('local')}
                         onImported={(result) =>
                           void handleDataImported(result.tabId)
                         }
                         notify={notify}
                       />
-                      <BookmarkExportButton
-                        tabId={activeTabId}
-                        notify={notify}
-                      />
-                    </>
-                  )}
-                </>
+                    )}
+                    {view === 'bookmarks' && (
+                      <>
+                        <button
+                          type="button"
+                          className="account-tabs__add"
+                          onClick={() => void createTab('bookmarks')}
+                          disabled={tabBusy}
+                          aria-label={tr(
+                            '新增书签标签页',
+                            'Add bookmark tab',
+                            '新增書籤標籤頁'
+                          )}
+                          title={tr(
+                            '新增书签标签页',
+                            'Add bookmark tab',
+                            '新增書籤標籤頁'
+                          )}
+                        >
+                          <DatabaseCreateIcon busy={tabBusy} />
+                        </button>
+                        <BookmarkImportButton
+                          onImported={(result) =>
+                            void handleDataImported(result.tabId)
+                          }
+                          notify={notify}
+                        />
+                        <BookmarkExportButton
+                          tabId={activeTabId}
+                          notify={notify}
+                        />
+                      </>
+                    )}
+                  </>
+                )
               }
             />
             {showDatabaseEmptyState ? (
               <DatabaseWorkspaceEmptyState
+                bookmarkMode={view === 'bookmarks'}
                 creating={tabBusy}
                 onCreate={() =>
                   createTab(view === 'bookmarks' ? 'bookmarks' : 'local')
@@ -5472,11 +5475,13 @@ function EmptyState({
 }
 
 function DatabaseWorkspaceEmptyState({
+  bookmarkMode = false,
   creating,
   onCreate,
   onImported,
   notify
 }: {
+  bookmarkMode?: boolean
   creating: boolean
   onCreate: () => Promise<void>
   onImported: (tabId: string) => void
@@ -5490,33 +5495,51 @@ function DatabaseWorkspaceEmptyState({
   return (
     <section
       className="empty-state library-database-empty-state"
-      aria-label={tr(
-        '没有打开的数据库',
-        'No database is open',
-        '沒有開啟的資料庫'
-      )}
+      aria-label={
+        bookmarkMode
+          ? tr(
+              '没有打开的书签标签页',
+              'No bookmark tab is open',
+              '沒有開啟的書籤標籤頁'
+            )
+          : tr('没有打开的数据库', 'No database is open', '沒有開啟的資料庫')
+      }
     >
       <div className="empty-state__art" aria-hidden="true">
         <span />
         <span />
         <span>
-          <Database size={27} strokeWidth={1.6} />
+          {bookmarkMode ? (
+            <Bookmark size={27} strokeWidth={1.6} />
+          ) : (
+            <Database size={27} strokeWidth={1.6} />
+          )}
         </span>
       </div>
-      <span className="eyebrow">NO DATABASE OPEN</span>
+      <span className="eyebrow">
+        {bookmarkMode ? 'NO BOOKMARK TAB OPEN' : 'NO DATABASE OPEN'}
+      </span>
       <h2>
-        {tr(
-          '打开一个数据库开始使用',
-          'Open a database to get started',
-          '開啟資料庫開始使用'
-        )}
+        {bookmarkMode
+          ? tr('还没有书签标签页', 'No bookmark tabs yet', '尚未有書籤標籤頁')
+          : tr(
+              '打开一个数据库开始使用',
+              'Open a database to get started',
+              '開啟資料庫開始使用'
+            )}
       </h2>
       <p>
-        {tr(
-          '所有数据库标签页都已关闭。新建本地数据库，或选择已有的 AutoLogin、KDBX 文件继续。',
-          'All database tabs are closed. Create a local database or open an existing AutoLogin or KDBX file.',
-          '所有資料庫分頁都已關閉。建立本機資料庫，或選擇既有的 AutoLogin、KDBX 檔案繼續。'
-        )}
+        {bookmarkMode
+          ? tr(
+              '新建一个书签标签页，或导入浏览器书签开始使用。',
+              'Create a bookmark tab or import browser bookmarks to get started.',
+              '建立一個書籤標籤頁，或匯入瀏覽器書籤開始使用。'
+            )
+          : tr(
+              '所有数据库标签页都已关闭。新建本地数据库，或选择已有的 AutoLogin、KDBX 文件继续。',
+              'All database tabs are closed. Create a local database or open an existing AutoLogin or KDBX file.',
+              '所有資料庫分頁都已關閉。建立本機資料庫，或選擇既有的 AutoLogin、KDBX 檔案繼續。'
+            )}
       </p>
       <div className="library-database-empty-state__actions">
         <button
@@ -5526,27 +5549,40 @@ function DatabaseWorkspaceEmptyState({
           disabled={busy}
         >
           <Plus size={17} />
-          {tr('新建数据库', 'New database', '新增資料庫')}
+          {bookmarkMode
+            ? tr('新建书签标签页', 'New bookmark tab', '新增書籤標籤頁')
+            : tr('新建数据库', 'New database', '新增資料庫')}
         </button>
-        <button
-          type="button"
-          className="button button--ghost"
-          onClick={() => setOpenDatabaseRequest((value) => value + 1)}
-          disabled={busy}
-        >
-          <FolderOpen size={17} />
-          {tr('打开本地数据库', 'Open local database', '開啟本機資料庫')}
-        </button>
+        {bookmarkMode ? (
+          <BookmarkImportButton
+            showLabel
+            buttonClassName="button button--ghost"
+            onImported={(result) => onImported(result.tabId)}
+            notify={notify}
+          />
+        ) : (
+          <button
+            type="button"
+            className="button button--ghost"
+            onClick={() => setOpenDatabaseRequest((value) => value + 1)}
+            disabled={busy}
+          >
+            <FolderOpen size={17} />
+            {tr('打开本地数据库', 'Open local database', '開啟本機資料庫')}
+          </button>
+        )}
       </div>
-      <AccountTransferControls
-        tabId=""
-        renderControls={false}
-        openDatabaseRequest={openDatabaseRequest}
-        onDatabaseBusyChange={setOpeningDatabase}
-        onCreateTab={onCreate}
-        onImported={(result) => onImported(result.tabId)}
-        notify={notify}
-      />
+      {!bookmarkMode && (
+        <AccountTransferControls
+          tabId=""
+          renderControls={false}
+          openDatabaseRequest={openDatabaseRequest}
+          onDatabaseBusyChange={setOpeningDatabase}
+          onCreateTab={onCreate}
+          onImported={(result) => onImported(result.tabId)}
+          notify={notify}
+        />
+      )}
     </section>
   )
 }

@@ -6,11 +6,13 @@ import { useI18n } from '../i18n'
 export function BookmarkImportButton({
   onImported,
   notify,
-  showLabel = false
+  showLabel = false,
+  buttonClassName
 }: {
   onImported: (result: DataImportResult) => void
   notify: (kind: 'success' | 'error' | 'info', message: string) => void
   showLabel?: boolean
+  buttonClassName?: string
 }): React.JSX.Element {
   const { tr } = useI18n()
   const [busy, setBusy] = useState(false)
@@ -45,7 +47,11 @@ export function BookmarkImportButton({
   return (
     <button
       type="button"
-      className={showLabel ? 'button button--primary' : 'account-tabs__tool'}
+      className={
+        showLabel
+          ? (buttonClassName ?? 'button button--primary')
+          : 'account-tabs__tool'
+      }
       onClick={() => void importBookmarks()}
       disabled={busy}
       aria-label={tr('导入浏览器书签', 'Import browser bookmarks', '匯入瀏覽器書籤')}

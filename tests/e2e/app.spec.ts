@@ -2056,6 +2056,13 @@ test('shows a global empty state after every account database is closed', async 
   await expect(
     emptyState.getByRole('button', { name: '打开本地数据库' })
   ).toBeVisible()
+  await expect(
+    page.getByRole('button', { name: '新增标签页或打开数据库' })
+  ).toHaveCount(0)
+  await expect(page.getByRole('button', { name: '导入账号' })).toHaveCount(0)
+  await expect(page.getByRole('button', { name: '导出', exact: true })).toHaveCount(
+    0
+  )
 
   await emptyState.getByRole('button', { name: '新建数据库' }).click()
   await expect(page.locator('.toast')).toContainText('数据库已创建')
@@ -2075,8 +2082,22 @@ test('shows the database empty state when every bookmark tab is closed', async (
   await expect(emptyState).toBeVisible()
   await expect(page.locator('.account-subnav-shell')).toHaveCount(0)
   await expect(page.locator('.account-table-scroll')).toHaveCount(0)
+  await expect(emptyState.getByText('还没有书签标签页')).toBeVisible()
+  await expect(emptyState.getByText('打开一个数据库开始使用')).toHaveCount(0)
+  await expect(
+    emptyState.getByRole('button', { name: '新建书签标签页' })
+  ).toBeVisible()
+  await expect(
+    emptyState.getByRole('button', { name: '导入浏览器书签' })
+  ).toBeVisible()
+  await expect(
+    page.getByRole('button', { name: '新增书签标签页' })
+  ).toHaveCount(0)
+  await expect(
+    page.getByRole('button', { name: '导出浏览器书签' })
+  ).toHaveCount(0)
 
-  await emptyState.getByRole('button', { name: '新建数据库' }).click()
+  await emptyState.getByRole('button', { name: '新建书签标签页' }).click()
   await expect(page.locator('.toast')).toContainText('书签标签页已创建')
   await expect(page.locator('.account-tab')).toHaveCount(1)
   await expect(emptyState).toHaveCount(0)

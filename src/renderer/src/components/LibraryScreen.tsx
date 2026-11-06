@@ -356,8 +356,9 @@ export function LibraryScreen({
     [tabs]
   )
   const visibleTabs = view === 'bookmarks' ? bookmarkTabs : accountTabs
-  const showAccountDatabaseEmptyState =
-    view === 'accounts' && visibleTabs.length === 0
+  const isAccountCollectionView = view === 'accounts' || view === 'bookmarks'
+  const showDatabaseEmptyState =
+    isAccountCollectionView && visibleTabs.length === 0
   const activeTab = useMemo(
     () => visibleTabs.find((tab) => tab.id === activeTabId) ?? null,
     [activeTabId, visibleTabs]
@@ -369,7 +370,6 @@ export function LibraryScreen({
     }
     return counts
   }, [allAccounts])
-  const isAccountCollectionView = view === 'accounts' || view === 'bookmarks'
   const isLogView = view === 'loginLogs' || view === 'appLogs'
   const bookmarkTabIds = useMemo(
     () => new Set(bookmarkTabs.map((tab) => tab.id)),
@@ -3927,7 +3927,7 @@ export function LibraryScreen({
             view === 'settings' ? ' library-content-scroll--settings' : ''
           }`}
           onContextMenu={
-            isAccountCollectionView && !showAccountDatabaseEmptyState
+            isAccountCollectionView && !showDatabaseEmptyState
               ? openPageAccountMenu
               : undefined
           }
@@ -3996,10 +3996,12 @@ export function LibraryScreen({
                 </>
               }
             />
-            {showAccountDatabaseEmptyState ? (
+            {showDatabaseEmptyState ? (
               <DatabaseWorkspaceEmptyState
                 creating={tabBusy}
-                onCreate={() => createTab('local')}
+                onCreate={() =>
+                  createTab(view === 'bookmarks' ? 'bookmarks' : 'local')
+                }
                 onImported={(tabId) => void handleDataImported(tabId)}
                 notify={notify}
               />

@@ -2064,6 +2064,25 @@ test('shows a global empty state after every account database is closed', async 
   await expect(page.locator('.library-database-empty-state')).toHaveCount(0)
 })
 
+test('shows the database empty state when every bookmark tab is closed', async () => {
+  await createVault(page)
+  await page
+    .locator('.sidebar-nav')
+    .getByRole('button', { name: '书签' })
+    .click()
+
+  const emptyState = page.locator('.library-database-empty-state')
+  await expect(emptyState).toBeVisible()
+  await expect(page.locator('.account-subnav-shell')).toHaveCount(0)
+  await expect(page.locator('.account-table-scroll')).toHaveCount(0)
+
+  await emptyState.getByRole('button', { name: '新建数据库' }).click()
+  await expect(page.locator('.toast')).toContainText('书签标签页已创建')
+  await expect(page.locator('.account-tab')).toHaveCount(1)
+  await expect(emptyState).toHaveCount(0)
+  await expect(page.locator('.account-subnav-shell')).toBeVisible()
+})
+
 test('does not resurrect a database file deleted outside the app', async () => {
   await createVault(page)
   const deletedTab = await page.evaluate(() =>

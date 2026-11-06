@@ -14324,45 +14324,27 @@ html[data-color-mode='dark']
   box-shadow: 0 1px 2px rgba(0, 0, 0, 0.34);
 }
 
-/* v0.9.9 seamless account workspace and vertically centered table headers. */
-.library-content-scroll--accounts > .account-tabs {
-  margin-bottom: 0;
-  padding-bottom: 0;
-  background: var(--workspace-bg, var(--canvas));
+/* v0.9.10 restores layered account panels and the global database empty state. */
+.account-transfer-controls {
+  display: contents;
 }
 
-.library-content-scroll--accounts > .library-view-layout--accounts,
-.library-content-scroll--accounts .account-subnav-shell,
-.library-content-scroll--accounts .account-subnav-shell .account-subnav,
-.library-content-scroll--accounts
-  > .library-view-layout--accounts
-  > .library-view-main {
-  background: var(--card);
-}
-
-.library-content-scroll--accounts .account-subnav-shell {
-  border-right: 0;
-}
-
-.library-content-scroll--accounts
-  > .library-view-layout--accounts
-  > .library-view-main {
-  padding: 0 12px 12px;
+.library-database-empty-state {
+  min-height: 0;
+  flex: 1 1 auto;
   border: 0;
-  border-radius: 0;
-  box-shadow: none;
+  padding: clamp(32px, 8vh, 96px) 20px;
 }
 
-.account-tab.is-active {
-  border: 0;
-  box-shadow: none;
-}
-
-.accounts-table__header > [data-column-key] {
+.library-database-empty-state__actions {
   display: flex;
-  min-height: 30px;
+  flex-wrap: wrap;
   align-items: center;
-  padding-top: 0;
-  padding-bottom: 0;
-  line-height: 1.2;
+  justify-content: center;
+  gap: 10px;
+  margin-top: 22px;
+}
+
+.library-database-empty-state__actions .button {
+  margin-top: 0;
 }

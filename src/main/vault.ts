@@ -79,6 +79,7 @@ export class VaultManager {
   private data: VaultData | null = null
   private lockTimer: NodeJS.Timeout | null = null
   private autoLockMinutes: AutoLockMinutes = 10
+  private beforeSaveListener: ((data: VaultData) => void) | null = null
   private saveListener: ((data: VaultData) => void) | null = null
 
   constructor(
@@ -181,6 +182,10 @@ export class VaultManager {
     this.saveListener = listener
   }
 
+  setBeforeSaveListener(listener: ((data: VaultData) => void) | null): void {
+    this.beforeSaveListener = listener
+  }
+
   requireData(): VaultData {
     if (!this.data) {
       throw new VaultError('保险库已锁定', 'LOCKED')
@@ -190,7 +195,8 @@ export class VaultManager {
   }
 
   save(): void {
-    this.requireData()
+    const data = this.requireData()
+    this.beforeSaveListener?.(data)
     this.writeEncrypted()
     this.touch()
   }

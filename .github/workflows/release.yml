@@ -10,10 +10,15 @@ on:
 
 permissions:
   contents: write
+  pages: write
+  id-token: write
 
 jobs:
   release:
     runs-on: windows-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
 
     steps:
       - name: Check out source
@@ -55,13 +60,38 @@ jobs:
       - name: Publish GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: v0.9.9
-          name: AutoLogin v0.9.9
+          tag_name: v0.9.10
+          name: AutoLogin v0.9.10
           body_path: RELEASE_NOTES.md
           draft: false
           prerelease: false
           fail_on_unmatched_files: true
           files: |
-            outputs/AutoLogin-0.9.9-x64.exe
-            outputs/AutoLogin-0.9.9-x64.exe.blockmap
+            outputs/AutoLogin-0.9.10-x64.exe
+            outputs/AutoLogin-0.9.10-x64.exe.blockmap
             outputs/latest.yml
+
+      - name: Stage CDN update feed
+        shell: pwsh
+        run: |
+          $site = Join-Path $env:GITHUB_WORKSPACE "updates-site"
+          $updates = Join-Path $site "updates"
+          New-Item -ItemType Directory -Path $updates -Force | Out-Null
+          Copy-Item "outputs/latest.yml" (Join-Path $updates "latest.yml")
+          Copy-Item "outputs/AutoLogin-0.9.10-x64.exe" $updates
+          Copy-Item "outputs/AutoLogin-0.9.10-x64.exe.blockmap" $updates
+          New-Item -ItemType File -Path (Join-Path $site ".nojekyll") -Force | Out-Null
+
+      - name: Configure GitHub Pages
+        uses: actions/configure-pages@v5
+        with:
+          enablement: true
+
+      - name: Upload CDN update feed
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: updates-site
+
+      - name: Deploy CDN update feed
+        id: deployment
+        uses: actions/deploy-pages@v4

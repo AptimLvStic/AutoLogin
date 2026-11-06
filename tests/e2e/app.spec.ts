@@ -559,43 +559,19 @@ test('searches accounts and renders left-aligned table columns with icon-only ac
     'text-align',
     'left'
   )
-  const headerMetrics = await page.locator('.account-list__header').evaluate((header) => {
-    const cells = [
-      ...header.querySelectorAll<HTMLElement>('[data-column-key]')
-    ]
-    return cells.map((cell) => {
-      const style = getComputedStyle(cell)
+  const mainPanelStyles = await page
+    .locator('.library-view-layout--accounts > .library-view-main')
+    .evaluate((element) => {
+      const style = getComputedStyle(element)
       return {
-        alignItems: style.alignItems,
-        paddingTop: style.paddingTop,
-        paddingBottom: style.paddingBottom
+        borderTopWidth: style.borderTopWidth,
+        borderTopStyle: style.borderTopStyle,
+        boxShadow: style.boxShadow
       }
     })
-  })
-  expect(headerMetrics.length).toBeGreaterThan(0)
-  for (const metrics of headerMetrics) {
-    expect(metrics.alignItems).toBe('center')
-    expect(metrics.paddingTop).toBe(metrics.paddingBottom)
-  }
-  const workspaceColors = await page.evaluate(() => {
-    const activeTab = document.querySelector<HTMLElement>(
-      '.account-tab.is-active'
-    )
-    const layout = document.querySelector<HTMLElement>(
-      '.library-view-layout--accounts'
-    )
-    const subnav = document.querySelector<HTMLElement>('.account-subnav-shell')
-    const mainPanel = document.querySelector<HTMLElement>('.library-view-main')
-    return {
-      tab: activeTab ? getComputedStyle(activeTab).backgroundColor : '',
-      layout: layout ? getComputedStyle(layout).backgroundColor : '',
-      subnav: subnav ? getComputedStyle(subnav).backgroundColor : '',
-      main: mainPanel ? getComputedStyle(mainPanel).backgroundColor : ''
-    }
-  })
-  expect(workspaceColors.layout).toBe(workspaceColors.tab)
-  expect(workspaceColors.subnav).toBe(workspaceColors.tab)
-  expect(workspaceColors.main).toBe(workspaceColors.tab)
+  expect(Number.parseFloat(mainPanelStyles.borderTopWidth)).toBeGreaterThan(0)
+  expect(mainPanelStyles.borderTopStyle).toBe('solid')
+  expect(mainPanelStyles.boxShadow).not.toBe('none')
   const firstRow = page.locator('.account-row').first()
   await expect(firstRow.locator('.account-identity')).toHaveCSS('justify-content', 'flex-start')
   await expect(firstRow.locator('.account-username')).toHaveCSS('justify-content', 'flex-start')
@@ -1021,8 +997,8 @@ test('resizes, hides and restores the account subnav, and creates three group le
     }
   })
   expect(dividerMetrics.height).toBeCloseTo(dividerMetrics.parentHeight, 0)
-  expect(Number.parseFloat(dividerMetrics.borderRightWidth)).toBe(0)
-  expect(dividerMetrics.borderRightStyle).toBe('none')
+  expect(Number.parseFloat(dividerMetrics.borderRightWidth)).toBeGreaterThan(0)
+  expect(dividerMetrics.borderRightStyle).toBe('solid')
   await expect
     .poll(() =>
       page.locator('.library-content-scroll').evaluate(
@@ -2062,12 +2038,66 @@ test('closes a tab without deleting its encrypted AutoLogin snapshot', async () 
   expect(existsSync(renamedSnapshotPath)).toBe(true)
 })
 
+test('shows a global empty state after every account database is closed', async () => {
+  await createVault(page)
+  const [initialTab] = await page.evaluate(() => window.autologin.tabs.list())
+  await page
+    .getByRole('button', { name: `关闭“${initialTab.name}”数据库` })
+    .click()
+
+  const emptyState = page.locator('.library-database-empty-state')
+  await expect(emptyState).toBeVisible()
+  await expect(page.locator('.account-subnav-shell')).toHaveCount(0)
+  await expect(page.locator('.account-table-scroll')).toHaveCount(0)
+  await expect(emptyState.getByText('打开一个数据库开始使用')).toBeVisible()
+  await expect(
+    emptyState.getByRole('button', { name: '新建数据库' })
+  ).toBeVisible()
+  await expect(
+    emptyState.getByRole('button', { name: '打开本地数据库' })
+  ).toBeVisible()
+
+  await emptyState.getByRole('button', { name: '新建数据库' }).click()
+  await expect(page.locator('.toast')).toContainText('数据库已创建')
+  await expect(page.locator('.account-tab')).toHaveCount(1)
+  await expect(page.locator('.account-subnav-shell')).toBeVisible()
+  await expect(page.locator('.library-database-empty-state')).toHaveCount(0)
+})
+
+test('does not resurrect a database file deleted outside the app', async () => {
+  await createVault(page)
+  const deletedTab = await page.evaluate(() =>
+    window.autologin.tabs.create({ source: 'local' })
+  )
+  const deletedPath = join(
+    userDataDirectory,
+    'tabs',
+    deletedTab.databaseFileName ?? ''
+  )
+  await expect.poll(() => existsSync(deletedPath)).toBe(true)
+  rmSync(deletedPath, { force: true })
+
+  const nextTab = await page.evaluate(() =>
+    window.autologin.tabs.create({ source: 'local' })
+  )
+  const tabsAfterCreate = await page.evaluate(() =>
+    window.autologin.tabs.list()
+  )
+  expect(tabsAfterCreate.some((tab) => tab.id === deletedTab.id)).toBe(false)
+  expect(existsSync(deletedPath)).toBe(false)
+  expect(
+    existsSync(
+      join(userDataDirectory, 'tabs', nextTab.databaseFileName ?? '')
+    )
+  ).toBe(true)
+})
+
 test('defers an available update prompt until the vault is unlocked', async () => {
   await expect(page.getByRole('heading', { name: '创建你的本地保险库' })).toBeVisible()
   await application.evaluate(({ BrowserWindow }) => {
     BrowserWindow.getAllWindows()[0]?.webContents.send('app:update-state', {
       phase: 'available',
-      currentVersion: '0.9.9',
+      currentVersion: '0.9.10',
       latestVersion: '99.0.1',
       releaseName: 'AutoLogin v99.0.1',
       releaseNotes: '## 更新内容\n\n- 解锁后显示更新提示',
@@ -2080,6 +2110,22 @@ test('defers an available update prompt until the vault is unlocked', async () =
   const updateDialog = page.locator('.update-dialog')
   await expect(updateDialog).toBeVisible()
   await expect(updateDialog).toContainText('v99.0.1')
+  await application.evaluate(({ BrowserWindow }) => {
+    BrowserWindow.getAllWindows()[0]?.webContents.send('app:update-state', {
+      phase: 'downloading',
+      currentVersion: '0.9.10',
+      latestVersion: '99.0.1',
+      releaseName: 'AutoLogin v99.0.1',
+      releaseNotes: '## 更新内容\n\n- 增量更新失败提示',
+      interactive: true,
+      percent: 2,
+      transferred: 2 * 1024 * 1024,
+      total: 128 * 1024 * 1024,
+      downloadMode: 'full',
+      message: '增量更新失败，正在下载完整安装包…'
+    })
+  })
+  await expect(updateDialog).toContainText('增量更新失败，正在下载完整安装包…')
   await updateDialog.getByRole('button', { name: '稍后提醒' }).click()
   await expect(updateDialog).toHaveCount(0)
 })

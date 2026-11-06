@@ -151,7 +151,13 @@ export function UpdateProgress({
 }: {
   state: Pick<
     AppUpdateState,
-    'phase' | 'percent' | 'transferred' | 'total' | 'bytesPerSecond'
+    | 'phase'
+    | 'percent'
+    | 'transferred'
+    | 'total'
+    | 'bytesPerSecond'
+    | 'message'
+    | 'downloadMode'
   >
   onCancel?: () => void
   cancelling?: boolean
@@ -166,7 +172,8 @@ export function UpdateProgress({
         <span>
           {state.phase === 'downloaded'
             ? tr('更新下载完成', 'Update downloaded', '更新下載完成')
-            : tr('正在下载更新', 'Downloading update', '正在下載更新')}
+            : state.message ??
+              tr('正在下载更新', 'Downloading update', '正在下載更新')}
         </span>
         <strong>{Math.round(progress)}%</strong>
       </div>

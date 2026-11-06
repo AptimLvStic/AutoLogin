@@ -1,6 +1,6 @@
 {
   "name": "autologin",
-  "version": "0.9.9",
+  "version": "0.9.10",
   "description": "A calm, local-first login workspace for Windows.",
   "main": "./out/main/index.js",
   "author": "AutoLogin",
@@ -73,6 +73,10 @@
       {
         "from": "resources/app-update.yml",
         "to": "app-update.yml"
+      },
+      {
+        "from": "resources/update-config.json",
+        "to": "update-config.json"
       }
     ],
     "win": {
@@ -97,6 +101,7 @@
     ],
     "nsis": {
       "oneClick": false,
+      "differentialPackage": "store-asar",
       "allowToChangeInstallationDirectory": true,
       "include": "resources/installer.nsh",
       "createDesktopShortcut": true,

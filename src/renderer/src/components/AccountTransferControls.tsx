@@ -26,12 +26,18 @@ export function AccountTransferControls({
   tabId,
   onCreateTab,
   onImported,
-  notify
+  notify,
+  renderControls = true,
+  openDatabaseRequest = 0,
+  onDatabaseBusyChange
 }: {
   tabId: string
   onCreateTab: () => Promise<void>
   onImported: (result: DataImportResult) => void
   notify: (kind: 'success' | 'error' | 'info', message: string) => void
+  renderControls?: boolean
+  openDatabaseRequest?: number
+  onDatabaseBusyChange?: (busy: boolean) => void
 }): React.JSX.Element {
   const { tr } = useI18n()
   const [menuOpen, setMenuOpen] = useState(false)
@@ -56,6 +62,22 @@ export function AccountTransferControls({
   const groupRef = useRef<HTMLDivElement>(null)
   const createGroupRef = useRef<HTMLDivElement>(null)
   const exportGroupRef = useRef<HTMLDivElement>(null)
+  const lastOpenDatabaseRequestRef = useRef(0)
+
+  useEffect(() => {
+    onDatabaseBusyChange?.(importBusy || kdbxBusy || autologinBusy)
+  }, [autologinBusy, importBusy, kdbxBusy, onDatabaseBusyChange])
+
+  useEffect(() => {
+    if (
+      openDatabaseRequest <= 0 ||
+      lastOpenDatabaseRequestRef.current === openDatabaseRequest
+    ) {
+      return
+    }
+    lastOpenDatabaseRequestRef.current = openDatabaseRequest
+    void chooseDatabase()
+  }, [openDatabaseRequest])
 
   useEffect(() => {
     if (!menuOpen) return
@@ -366,6 +388,8 @@ export function AccountTransferControls({
 
   return (
     <>
+      {renderControls && (
+        <div className="account-transfer-controls">
       <div className="account-tabs__tool-group" ref={createGroupRef}>
         <button
           type="button"
@@ -524,6 +548,8 @@ export function AccountTransferControls({
           </div>
         )}
       </div>
+        </div>
+      )}
 
       {kdbxSelection && (
         <Modal

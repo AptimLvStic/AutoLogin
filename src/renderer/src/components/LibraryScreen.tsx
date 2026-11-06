@@ -356,6 +356,8 @@ export function LibraryScreen({
     [tabs]
   )
   const visibleTabs = view === 'bookmarks' ? bookmarkTabs : accountTabs
+  const showAccountDatabaseEmptyState =
+    view === 'accounts' && visibleTabs.length === 0
   const activeTab = useMemo(
     () => visibleTabs.find((tab) => tab.id === activeTabId) ?? null,
     [activeTabId, visibleTabs]
@@ -3153,7 +3155,13 @@ export function LibraryScreen({
                   <span>
                     {updateState.phase === 'downloaded'
                       ? tr('更新已就绪', 'Update ready', '更新已就緒')
-                      : tr('正在下载更新', 'Downloading update', '正在下載更新')}
+                      : updateState.downloadMode === 'full'
+                        ? tr(
+                            '正在下载完整安装包',
+                            'Downloading full installer',
+                            '正在下載完整安裝包'
+                          )
+                        : tr('正在下载更新', 'Downloading update', '正在下載更新')}
                   </span>
                   <strong>
                     {Math.round(
@@ -3918,7 +3926,11 @@ export function LibraryScreen({
           }${isLogView ? ' library-content-scroll--logs' : ''}${
             view === 'settings' ? ' library-content-scroll--settings' : ''
           }`}
-          onContextMenu={isAccountCollectionView ? openPageAccountMenu : undefined}
+          onContextMenu={
+            isAccountCollectionView && !showAccountDatabaseEmptyState
+              ? openPageAccountMenu
+              : undefined
+          }
         >
           {isAccountCollectionView && (
             <>
@@ -3984,6 +3996,14 @@ export function LibraryScreen({
                 </>
               }
             />
+            {showAccountDatabaseEmptyState ? (
+              <DatabaseWorkspaceEmptyState
+                creating={tabBusy}
+                onCreate={() => createTab('local')}
+                onImported={(tabId) => void handleDataImported(tabId)}
+                notify={notify}
+              />
+            ) : (
             <div
               ref={accountLayoutRef}
               className={`library-view-layout library-view-layout--accounts${
@@ -4844,6 +4864,7 @@ export function LibraryScreen({
               )}
               </div>
             </div>
+            )}
             </>
           )}
 
@@ -5445,6 +5466,86 @@ function EmptyState({
       <p>{description}</p>
       {action}
     </div>
+  )
+}
+
+function DatabaseWorkspaceEmptyState({
+  creating,
+  onCreate,
+  onImported,
+  notify
+}: {
+  creating: boolean
+  onCreate: () => Promise<void>
+  onImported: (tabId: string) => void
+  notify: (kind: 'success' | 'error' | 'info', message: string) => void
+}): React.JSX.Element {
+  const { tr } = useI18n()
+  const [openDatabaseRequest, setOpenDatabaseRequest] = useState(0)
+  const [openingDatabase, setOpeningDatabase] = useState(false)
+  const busy = creating || openingDatabase
+
+  return (
+    <section
+      className="empty-state library-database-empty-state"
+      aria-label={tr(
+        '没有打开的数据库',
+        'No database is open',
+        '沒有開啟的資料庫'
+      )}
+    >
+      <div className="empty-state__art" aria-hidden="true">
+        <span />
+        <span />
+        <span>
+          <Database size={27} strokeWidth={1.6} />
+        </span>
+      </div>
+      <span className="eyebrow">NO DATABASE OPEN</span>
+      <h2>
+        {tr(
+          '打开一个数据库开始使用',
+          'Open a database to get started',
+          '開啟資料庫開始使用'
+        )}
+      </h2>
+      <p>
+        {tr(
+          '所有数据库标签页都已关闭。新建本地数据库，或选择已有的 AutoLogin、KDBX 文件继续。',
+          'All database tabs are closed. Create a local database or open an existing AutoLogin or KDBX file.',
+          '所有資料庫分頁都已關閉。建立本機資料庫，或選擇既有的 AutoLogin、KDBX 檔案繼續。'
+        )}
+      </p>
+      <div className="library-database-empty-state__actions">
+        <button
+          type="button"
+          className="button button--primary"
+          onClick={() => void onCreate()}
+          disabled={busy}
+        >
+          <Plus size={17} />
+          {tr('新建数据库', 'New database', '新增資料庫')}
+        </button>
+        <button
+          type="button"
+          className="button button--ghost"
+          onClick={() => setOpenDatabaseRequest((value) => value + 1)}
+          disabled={busy}
+        >
+          <FolderOpen size={17} />
+          {tr('打开本地数据库', 'Open local database', '開啟本機資料庫')}
+        </button>
+      </div>
+      <AccountTransferControls
+        tabId=""
+        renderControls={false}
+        openDatabaseRequest={openDatabaseRequest}
+        onDatabaseBusyChange={setOpeningDatabase}
+        onCreateTab={onCreate}
+        onImported={(result) => onImported(result.tabId)}
+        notify={notify}
+      />
+    </section>
   )
 }
 

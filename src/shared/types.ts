@@ -632,6 +632,7 @@ export interface AppUpdateState {
   bytesPerSecond?: number
   transferred?: number
   total?: number
+  downloadMode?: 'differential' | 'full'
 }
 
 export interface AutologinApi {

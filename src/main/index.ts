@@ -160,6 +160,12 @@ import { migrateTabDatabaseFiles } from './tab-database-files'
 import { buildTabSnapshot, indexVaultDataByTab } from './tab-snapshots'
 import { removeMissingDatabaseTabs } from './missing-database-tabs'
 import {
+  createUpdateDownloadProgressTracker,
+  DIFFERENTIAL_FALLBACK_MESSAGE,
+  trackUpdateDownloadProgress
+} from './update-progress'
+import { resolveUpdateCdnBaseUrl } from './update-source'
+import {
   discoverManagedBrowserProfileIds,
   discoverManagedPartitionIds,
   SessionIndex
@@ -199,6 +205,8 @@ let updaterInitialized = false
 let startupUpdateCheckStarted = false
 let updateDownloadToken: CancellationToken | null = null
 let updateDownloadCancelled = false
+let updateDifferentialFallbackDetected = false
+let updateDownloadProgressTracker = createUpdateDownloadProgressTracker()
 let lastLoggedBatchId: string | null = null
 let diagnosticsRegistered = false
 const pendingKdbxSelections = new Map<
@@ -219,9 +227,15 @@ const pendingDatabaseSelections = new Map<
     expiresAt: number
   }
 >()
+const pendingNewDatabaseTabIds = new Set<string>()
 
 const REPOSITORY_URL = ['https:', '//github.com', '/AptimLvStic/AutoLogin'].join('')
 const RELEASES_URL = `${REPOSITORY_URL}/releases`
+const GITHUB_UPDATE_FEED = {
+  provider: 'github' as const,
+  owner: 'AptimLvStic',
+  repo: 'AutoLogin'
+}
 
 const gotLock = app.requestSingleInstanceLock()
 if (!gotLock) {
@@ -420,6 +434,9 @@ function initializeDataStores(): void {
     void closeLoginManagers()
     sendToRenderer('vault:locked')
   })
+  vault.setBeforeSaveListener((data) => {
+    pruneMissingDatabaseTabs(data)
+  })
   vault.setSaveListener((data) => syncTabSnapshotFiles(data))
   backupManager = new BackupManager(dataDirectory)
   sessionIndex = new SessionIndex(dataDirectory)
@@ -444,6 +461,13 @@ function syncTabSnapshotFiles(data: VaultData): void {
     if (!shouldWriteEncryptedTabSnapshot(tab)) {
       continue
     }
+    const databasePath = tabDatabasePath(tab)
+    if (
+      !pendingNewDatabaseTabIds.has(tab.id) &&
+      !existsSync(databasePath)
+    ) {
+      continue
+    }
     try {
       const snapshot = buildTabSnapshot(
         data,
@@ -452,9 +476,10 @@ function syncTabSnapshotFiles(data: VaultData): void {
         getTabGroupOrder(data, tab.id)
       )
       vault.writeEncryptedSnapshot(
-        tabDatabasePath(tab),
+        databasePath,
         snapshot
       )
+      pendingNewDatabaseTabIds.delete(tab.id)
     } catch (error) {
       appendAppLog(dataDirectory, {
         level: 'error',
@@ -475,11 +500,32 @@ function tabDatabasePath(tab: AccountTab): string {
   )
 }
 
+function pruneMissingDatabaseTabs(data: VaultData): void {
+  const result = removeMissingDatabaseTabs(
+    data,
+    (tab) =>
+      pendingNewDatabaseTabIds.has(tab.id) || existsSync(tabDatabasePath(tab))
+  )
+  if (result.removedTabs.length === 0) return
+
+  for (const accountId of result.removedAccountIds) {
+    sessionIndex.remove(accountId)
+    clearManagedSessionDirectories(dataDirectory, accountId)
+  }
+  appendAppLog(dataDirectory, {
+    level: 'warning',
+    category: 'data',
+    message: `已清理 ${result.removedTabs.length} 个文件已丢失的数据库标签`,
+    details: result.removedTabs.map((tab) => tab.name).join('、')
+  })
+}
+
 function purgeMissingDatabaseTabs(): void {
   const data = vault.requireData()
   const result = removeMissingDatabaseTabs(
     data,
-    (tab) => existsSync(tabDatabasePath(tab))
+    (tab) =>
+      pendingNewDatabaseTabIds.has(tab.id) || existsSync(tabDatabasePath(tab))
   )
   if (result.removedTabs.length === 0) return
   vault.save()
@@ -497,6 +543,7 @@ function purgeMissingDatabaseTabs(): void {
 }
 
 function reconcileTabDatabaseFiles(): void {
+  purgeMissingDatabaseTabs()
   const data = vault.requireData()
   let result
   try {
@@ -596,6 +643,11 @@ function registerIpc(): void {
       throw new Error(firstIssue(parsed.error))
     }
     const status = await vault.create(parsed.data)
+    for (const tab of vault.requireData().tabs) {
+      if (shouldWriteEncryptedTabSnapshot(tab)) {
+        pendingNewDatabaseTabIds.add(tab.id)
+      }
+    }
     appendAppLog(dataDirectory, {
       level: 'success',
       category: 'vault',
@@ -3113,7 +3165,13 @@ function createAccountTab(input?: {
       ACCOUNT_TAB_COLORS[0]
   )
   data.tabs.push(tab)
-  vault.save()
+  try {
+    vault.save()
+  } catch (error) {
+    data.tabs = data.tabs.filter((entry) => entry.id !== tab.id)
+    pendingNewDatabaseTabIds.delete(tab.id)
+    throw error
+  }
   appendAppLog(dataDirectory, {
     level: 'info',
     category: 'data',
@@ -3244,7 +3302,7 @@ function buildAccountTab(
   }
   const id = randomUUID()
   const now = new Date().toISOString()
-  return {
+  const tab: AccountTab = {
     id,
     name,
     color,
@@ -3254,6 +3312,10 @@ function buildAccountTab(
     createdAt: now,
     updatedAt: now
   }
+  if (shouldWriteEncryptedTabSnapshot(tab)) {
+    pendingNewDatabaseTabIds.add(tab.id)
+  }
+  return tab
 }
 
 function applyDataImport(
@@ -3317,6 +3379,7 @@ function applyAutologinImport(
   } = {}
 ): DataImportResult {
   const data = vault.requireData()
+  const existingTabIds = new Set(data.tabs.map((tab) => tab.id))
   const preferredTabName =
     options.exactFileName && options.fileName
       ? normalizeDatabaseName(databaseNameFromFileName(options.fileName))
@@ -3326,6 +3389,14 @@ function applyAutologinImport(
     allowSuffixOnConflict: !options.exactFileName
   })
   const targetTab = merged.data.tabs.find((tab) => tab.id === merged.result.tabId)
+  for (const tab of merged.data.tabs) {
+    if (
+      !existingTabIds.has(tab.id) &&
+      shouldWriteEncryptedTabSnapshot(tab)
+    ) {
+      pendingNewDatabaseTabIds.add(tab.id)
+    }
+  }
   if (options.sourcePath && targetTab) {
     ensureOpenedDatabaseFileStored(targetTab, options.sourcePath)
   }
@@ -3635,24 +3706,46 @@ async function openExternalUrl(value: string): Promise<void> {
 function initializeAutoUpdater(): void {
   if (updaterInitialized) return
   updaterInitialized = true
-  autoUpdater.setFeedURL({
-    provider: 'github',
-    owner: 'AptimLvStic',
-    repo: 'AutoLogin'
-  })
+  autoUpdater.setFeedURL(GITHUB_UPDATE_FEED)
+  autoUpdater.logger = {
+    info(message) {
+      appendUpdaterLog('info', message)
+    },
+    warn(message) {
+      appendUpdaterLog('warning', message)
+    },
+    error(message) {
+      appendUpdaterLog('error', message)
+      if (String(message).includes('Cannot download differentially, fallback to full download')) {
+        markDifferentialFallback()
+      }
+    }
+  }
   autoUpdater.autoDownload = false
   autoUpdater.autoInstallOnAppQuit = true
   autoUpdater.allowDowngrade = false
 
   autoUpdater.on('download-progress', (progress) => {
+    const fallbackDetected =
+      updateDifferentialFallbackDetected ||
+      trackUpdateDownloadProgress(updateDownloadProgressTracker, {
+        transferred: progress.transferred,
+        total: progress.total
+      })
+    if (fallbackDetected) {
+      updateDifferentialFallbackDetected = true
+    }
     publishUpdateState({
       ...updateState,
       phase: 'downloading',
-      message: '正在下载更新…',
+      message: fallbackDetected
+        ? DIFFERENTIAL_FALLBACK_MESSAGE
+        : '正在下载更新…',
       percent: progress.percent,
       bytesPerSecond: progress.bytesPerSecond,
       transferred: progress.transferred,
-      total: progress.total
+      total: progress.total,
+      downloadMode: fallbackDetected ? 'full' : 'differential'
     })
   })
   autoUpdater.on('update-downloaded', (info) => {
@@ -3676,6 +3769,98 @@ function initializeAutoUpdater(): void {
       message: updateErrorMessage(error)
     })
   })
+}
+
+function appendUpdaterLog(
+  level: 'info' | 'warning' | 'error',
+  message: unknown
+): void {
+  appendAppLog(dataDirectory, {
+    level,
+    category: 'update',
+    message: '应用更新器日志',
+    details: sanitizeLogDetails(String(message))
+  })
+}
+
+function markDifferentialFallback(): void {
+  if (updateDifferentialFallbackDetected) return
+  updateDifferentialFallbackDetected = true
+  appendAppLog(dataDirectory, {
+    level: 'warning',
+    category: 'update',
+    message: '增量更新失败，已降级为完整安装包下载'
+  })
+  if (updateState.phase === 'downloading') {
+    publishUpdateState({
+      ...updateState,
+      downloadMode: 'full',
+      message: DIFFERENTIAL_FALLBACK_MESSAGE
+    })
+  }
+}
+
+function configureUpdateFeed(source: 'cdn' | 'github'): void {
+  if (source === 'cdn') {
+    autoUpdater.setFeedURL({
+      provider: 'generic',
+      url: resolveUpdateCdnBaseUrl({
+        environmentUrl: process.env.AUTOLOGIN_UPDATE_CDN_URL,
+        configPath: join(process.resourcesPath, 'update-config.json')
+      })
+    })
+    return
+  }
+  autoUpdater.setFeedURL(GITHUB_UPDATE_FEED)
+}
+
+async function selectPrimaryUpdateSource(): Promise<'cdn' | 'github'> {
+  if (process.env.AUTOLOGIN_DISABLE_UPDATE_CDN === '1') {
+    configureUpdateFeed('github')
+    return 'github'
+  }
+
+  const cdnBaseUrl = resolveUpdateCdnBaseUrl({
+    environmentUrl: process.env.AUTOLOGIN_UPDATE_CDN_URL,
+    configPath: join(process.resourcesPath, 'update-config.json')
+  })
+  const controller = new AbortController()
+  const timer = setTimeout(() => controller.abort(), 6_000)
+  timer.unref()
+  try {
+    const response = await net.fetch(new URL('latest.yml', cdnBaseUrl).toString(), {
+      headers: {
+        'Cache-Control': 'no-cache',
+        'User-Agent': `AutoLogin/${app.getVersion()}`
+      },
+      signal: controller.signal
+    })
+    const contents = await response.text()
+    if (response.ok && /(?:^|\n)version:\s*\S+/.test(contents)) {
+      configureUpdateFeed('cdn')
+      appendAppLog(dataDirectory, {
+        level: 'info',
+        category: 'update',
+        message: '已使用 CDN 更新源',
+        details: cdnBaseUrl
+      })
+      return 'cdn'
+    }
+    appendUpdaterLog(
+      'warning',
+      `CDN 更新源不可用：HTTP ${response.status} ${cdnBaseUrl}`
+    )
+  } catch (error) {
+    appendUpdaterLog(
+      'warning',
+      `CDN 更新源连接失败：${error instanceof Error ? error.message : String(error)}`
+    )
+  } finally {
+    clearTimeout(timer)
+  }
+
+  configureUpdateFeed('github')
+  return 'github'
 }
 
 function scheduleStartupUpdateCheck(): void {
@@ -3719,68 +3904,38 @@ async function checkForUpdates(interactive = true): Promise<UpdateCheckResult> {
     message: '正在检查更新…'
   })
 
+  const primarySource = await selectPrimaryUpdateSource()
+  const sources: Array<'cdn' | 'github'> =
+    primarySource === 'cdn' ? ['cdn', 'github'] : ['github']
+
   try {
-    const result = await autoUpdater.checkForUpdates()
-    const info = result?.updateInfo
-    if (!info?.version) {
-      const message = '当前没有可用的发布版本'
-      publishUpdateState({
-        phase: 'up-to-date',
-        currentVersion,
-        interactive,
-        message
-      })
-      return { status: 'up-to-date', currentVersion, message }
-    }
-
-    const latestVersion = info.version.replace(/^v/i, '').trim()
-    if (!parseVersion(latestVersion)) {
-      throw new Error('更新版本号无效')
-    }
-
-    const metadata = await fetchReleaseMetadata(latestVersion, info.releaseNotes)
-    if (compareVersions(latestVersion, currentVersion) > 0) {
-      const nextState: AppUpdateState = {
-        phase: 'available',
-        currentVersion,
-        latestVersion,
-        releaseName: metadata.name ?? `AutoLogin v${latestVersion}`,
-        releaseDate: metadata.date,
-        releaseNotes: metadata.notes,
-        releaseUrl:
-          metadata.url ??
-          `${REPOSITORY_URL}/releases/tag/v${encodeURIComponent(latestVersion)}`,
-        interactive,
-        message: `发现新版本 v${latestVersion}`
-      }
-      publishUpdateState(nextState)
-      return {
-        status: 'available',
-        currentVersion,
-        latestVersion,
-        releaseUrl: nextState.releaseUrl,
-        message: nextState.message ?? ''
+    let lastError: unknown
+    for (const source of sources) {
+      try {
+        configureUpdateFeed(source)
+        return await checkForUpdatesWithActiveFeed(
+          currentVersion,
+          interactive
+        )
+      } catch (error) {
+        lastError = error
+        if (source === 'cdn') {
+          appendUpdaterLog(
+            'warning',
+            `CDN 更新检查失败，切换到 GitHub：${
+              error instanceof Error ? error.message : String(error)
+            }`
+          )
+          publishUpdateState({
+            phase: 'checking',
+            currentVersion,
+            interactive,
+            message: 'CDN 更新源不可用，正在切换备用源…'
+          })
+        }
       }
     }
-
-    const message = '当前已是最新版本'
-    publishUpdateState({
-      phase: 'up-to-date',
-      currentVersion,
-      latestVersion,
-      releaseName: metadata.name,
-      releaseDate: metadata.date,
-      releaseUrl: metadata.url ?? RELEASES_URL,
-      interactive,
-      message
-    })
-    return {
-      status: 'up-to-date',
-      currentVersion,
-      latestVersion,
-      releaseUrl: metadata.url ?? RELEASES_URL,
-      message
-    }
+    throw lastError
   } catch (error) {
     const message = updateErrorMessage(error)
     publishUpdateState({
@@ -3790,6 +3945,73 @@ async function checkForUpdates(interactive = true): Promise<UpdateCheckResult> {
       message: interactive ? message : undefined
     })
     return { status: 'unavailable', currentVersion, message }
+  }
+}
+
+async function checkForUpdatesWithActiveFeed(
+  currentVersion: string,
+  interactive: boolean
+): Promise<UpdateCheckResult> {
+  const result = await autoUpdater.checkForUpdates()
+  const info = result?.updateInfo
+  if (!info?.version) {
+    const message = '当前没有可用的发布版本'
+    publishUpdateState({
+      phase: 'up-to-date',
+      currentVersion,
+      interactive,
+      message
+    })
+    return { status: 'up-to-date', currentVersion, message }
+  }
+
+  const latestVersion = info.version.replace(/^v/i, '').trim()
+  if (!parseVersion(latestVersion)) {
+    throw new Error('更新版本号无效')
+  }
+
+  const metadata = await fetchReleaseMetadata(latestVersion, info.releaseNotes)
+  if (compareVersions(latestVersion, currentVersion) > 0) {
+    const nextState: AppUpdateState = {
+      phase: 'available',
+      currentVersion,
+      latestVersion,
+      releaseName: metadata.name ?? `AutoLogin v${latestVersion}`,
+      releaseDate: metadata.date,
+      releaseNotes: metadata.notes,
+      releaseUrl:
+        metadata.url ??
+        `${REPOSITORY_URL}/releases/tag/v${encodeURIComponent(latestVersion)}`,
+      interactive,
+      message: `发现新版本 v${latestVersion}`
+    }
+    publishUpdateState(nextState)
+    return {
+      status: 'available',
+      currentVersion,
+      latestVersion,
+      releaseUrl: nextState.releaseUrl,
+      message: nextState.message ?? ''
+    }
+  }
+
+  const message = '当前已是最新版本'
+  publishUpdateState({
+    phase: 'up-to-date',
+    currentVersion,
+    latestVersion,
+    releaseName: metadata.name,
+    releaseDate: metadata.date,
+    releaseUrl: metadata.url ?? RELEASES_URL,
+    interactive,
+    message
+  })
+  return {
+    status: 'up-to-date',
+    currentVersion,
+    latestVersion,
+    releaseUrl: metadata.url ?? RELEASES_URL,
+    message
   }
 }
 
@@ -3809,9 +4031,12 @@ async function downloadUpdate(): Promise<AppUpdateState> {
     phase: 'downloading',
     interactive: true,
     percent: 0,
-    message: '正在下载更新…'
+    message: '正在下载更新…',
+    downloadMode: undefined
   })
   updateDownloadCancelled = false
+  updateDifferentialFallbackDetected = false
+  updateDownloadProgressTracker = createUpdateDownloadProgressTracker()
   const token = new CancellationToken()
   updateDownloadToken = token
   try {
@@ -3826,7 +4051,8 @@ async function downloadUpdate(): Promise<AppUpdateState> {
           bytesPerSecond: undefined,
           transferred: undefined,
           total: undefined,
-          message: '更新下载已取消'
+          message: '更新下载已取消',
+          downloadMode: undefined
         })
       }
       return getUpdateState()
@@ -3868,7 +4094,8 @@ async function cancelUpdate(): Promise<AppUpdateState> {
     bytesPerSecond: undefined,
     transferred: undefined,
     total: undefined,
-    message: '更新下载已取消'
+    message: '更新下载已取消',
+    downloadMode: undefined
   })
   return getUpdateState()
 }

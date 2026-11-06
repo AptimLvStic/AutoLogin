@@ -60,15 +60,15 @@ jobs:
       - name: Publish GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: v0.9.13
-          name: AutoLogin v0.9.13
+          tag_name: v0.9.12
+          name: AutoLogin v0.9.12
           body_path: RELEASE_NOTES.md
           draft: false
           prerelease: false
           fail_on_unmatched_files: true
           files: |
-            outputs/AutoLogin-0.9.13-x64.exe
-            outputs/AutoLogin-0.9.13-x64.exe.blockmap
+            outputs/AutoLogin-0.9.12-x64.exe
+            outputs/AutoLogin-0.9.12-x64.exe.blockmap
             outputs/latest.yml
 
       - name: Stage CDN update feed
@@ -78,8 +78,8 @@ jobs:
           $updates = Join-Path $site "updates"
           New-Item -ItemType Directory -Path $updates -Force | Out-Null
           Copy-Item "outputs/latest.yml" (Join-Path $updates "latest.yml")
-          Copy-Item "outputs/AutoLogin-0.9.13-x64.exe" $updates
-          Copy-Item "outputs/AutoLogin-0.9.13-x64.exe.blockmap" $updates
+          Copy-Item "outputs/AutoLogin-0.9.12-x64.exe" $updates
+          Copy-Item "outputs/AutoLogin-0.9.12-x64.exe.blockmap" $updates
           New-Item -ItemType File -Path (Join-Path $site ".nojekyll") -Force | Out-Null
 
       - name: Configure GitHub Pages

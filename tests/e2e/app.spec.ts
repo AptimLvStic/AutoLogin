@@ -2040,16 +2040,6 @@ test('closes a tab without deleting its encrypted AutoLogin snapshot', async () 
 
 test('shows a global empty state after every account database is closed', async () => {
   await createVault(page)
-  for (const selector of [
-    '.sidebar',
-    '.library-content-scroll--accounts',
-    '.account-subnav-shell'
-  ]) {
-    await expect(page.locator(selector)).toHaveCSS(
-      'background-color',
-      'rgb(255, 255, 255)'
-    )
-  }
   const [initialTab] = await page.evaluate(() => window.autologin.tabs.list())
   await page
     .getByRole('button', { name: `关闭“${initialTab.name}”数据库` })

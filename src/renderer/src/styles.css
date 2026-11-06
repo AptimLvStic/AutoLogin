@@ -13003,8 +13003,7 @@ body.is-resizing-account-column {
 }
 
 .logs-page > .log-table-wrap > .log-table,
-.logs-page > .log-table-wrap > .app-log-table,
-.logs-page > .log-table-wrap > .access-log-table {
+.logs-page > .log-table-wrap > .app-log-table {
   min-height: 0;
   flex: 1 1 auto;
   overflow: auto;
@@ -13014,15 +13013,13 @@ body.is-resizing-account-column {
 }
 
 .logs-page > .log-table-wrap > .log-table::-webkit-scrollbar,
-.logs-page > .log-table-wrap > .app-log-table::-webkit-scrollbar,
-.logs-page > .log-table-wrap > .access-log-table::-webkit-scrollbar {
+.logs-page > .log-table-wrap > .app-log-table::-webkit-scrollbar {
   width: 8px;
   height: 8px;
 }
 
 .logs-page .log-table__header,
-.logs-page .app-log-table__header,
-.logs-page .access-log-table__header {
+.logs-page .app-log-table__header {
   position: sticky;
   z-index: 5;
   top: 0;
@@ -13063,93 +13060,8 @@ body.is-resizing-account-column {
   gap: 12px;
 }
 
-.access-log-table {
-  width: 100%;
-}
-
-.access-log-table__grid {
-  display: grid;
-  grid-template-columns:
-    26px 66px minmax(100px, 0.85fr) minmax(82px, 0.62fr)
-    minmax(180px, 1.5fr) 118px 92px;
-  align-items: center;
-  gap: 10px;
-}
-
-.access-log-table__header {
-  min-height: 36px;
-  padding: 0 12px;
-  color: var(--muted-light);
-  font-family: 'Manrope', 'Noto Sans SC', sans-serif;
-  font-size: calc(10px * var(--font-scale, 1));
-  font-weight: 700;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-}
-
-.access-log-table__row {
-  min-height: 58px;
-  padding: 8px 12px;
-  border-top: 1px solid var(--content-divider);
-  color: var(--muted);
-  font-size: calc(11px * var(--font-scale, 1));
-}
-
-.access-log-table__row.is-selected {
-  background: var(--accent-pale);
-}
-
-.access-log-table__row > strong {
-  overflow: hidden;
-  color: var(--ink-soft);
-  font-size: calc(12px * var(--font-scale, 1));
-  font-weight: 650;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.access-log-table__row > time {
-  color: var(--muted-light);
-  font-family: 'Manrope', sans-serif;
-  font-size: calc(10px * var(--font-scale, 1));
-  white-space: nowrap;
-}
-
-.access-log-url {
-  display: flex;
-  min-width: 0;
-  align-items: center;
-  gap: 6px;
-  overflow: hidden;
-  color: var(--muted);
-  font-size: calc(10.5px * var(--font-scale, 1));
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.access-log-url svg {
-  flex: 0 0 auto;
-}
-
-.access-log-table__row .text-button {
-  justify-self: start;
-  white-space: nowrap;
-}
-
 .log-detail-grid__wide {
   grid-column: 1 / -1;
-}
-
-@media (max-width: 1100px) {
-  .access-log-table__grid {
-    grid-template-columns:
-      26px 64px minmax(100px, 0.9fr) minmax(170px, 1.5fr)
-      112px 88px;
-  }
-
-  .access-log-table__grid > :nth-child(4) {
-    display: none;
-  }
 }
 
 @media (max-width: 760px) {
@@ -13162,15 +13074,6 @@ body.is-resizing-account-column {
     flex-basis: 140px;
   }
 
-  .access-log-table__grid {
-    grid-template-columns:
-      24px 60px minmax(90px, 1fr) minmax(145px, 1.35fr)
-      88px;
-  }
-
-  .access-log-table__grid > :nth-child(6) {
-    display: none;
-  }
 }
 
 /* v0.9.3 interaction, cursor and password generator refinements. */
@@ -14419,4 +14322,47 @@ html[data-color-mode='dark']
   > .library-view-main {
   border-color: rgba(255, 255, 255, 0.09);
   box-shadow: 0 1px 2px rgba(0, 0, 0, 0.34);
+}
+
+/* v0.9.9 seamless account workspace and vertically centered table headers. */
+.library-content-scroll--accounts > .account-tabs {
+  margin-bottom: 0;
+  padding-bottom: 0;
+  background: var(--workspace-bg, var(--canvas));
+}
+
+.library-content-scroll--accounts > .library-view-layout--accounts,
+.library-content-scroll--accounts .account-subnav-shell,
+.library-content-scroll--accounts .account-subnav-shell .account-subnav,
+.library-content-scroll--accounts
+  > .library-view-layout--accounts
+  > .library-view-main {
+  background: var(--card);
+}
+
+.library-content-scroll--accounts .account-subnav-shell {
+  border-right: 0;
+}
+
+.library-content-scroll--accounts
+  > .library-view-layout--accounts
+  > .library-view-main {
+  padding: 0 12px 12px;
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
+}
+
+.account-tab.is-active {
+  border: 0;
+  box-shadow: none;
+}
+
+.accounts-table__header > [data-column-key] {
+  display: flex;
+  min-height: 30px;
+  align-items: center;
+  padding-top: 0;
+  padding-bottom: 0;
+  line-height: 1.2;
 }

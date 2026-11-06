@@ -199,31 +199,9 @@ export interface AppLogDeleteResult {
   deleted: number
 }
 
-export type AccessLogStatus = 'success' | 'error'
-
-export interface AccessLogEntry {
-  id: string
-  timestamp: string
-  accountId: string
-  siteId: string
-  accountLabel: string
-  siteName: string
-  groupName: string
-  url: string
-  status: AccessLogStatus
+export interface BookmarkVisitResult {
+  status: 'success' | 'error'
   reason: string
-}
-
-export interface AccessLogQuery {
-  date?: string
-  siteId?: string
-  siteName?: string
-  groupName?: string
-  status?: AccessLogStatus
-}
-
-export interface AccessLogDeleteResult {
-  deleted: number
 }
 
 export interface VaultStatus {
@@ -585,8 +563,11 @@ export interface LocalDatabaseImportInput {
 
 export interface DataExportInput {
   tabId: string
+  format?: DataExportFormat
   password?: string
 }
+
+export type DataExportFormat = 'autologin' | 'csv' | 'kdbx'
 
 export interface DataImportResult {
   source: 'csv' | 'kdbx' | 'bookmarks' | 'autologin'
@@ -748,8 +729,6 @@ export interface AutologinApi {
     listAppLogs: (limit?: number) => Promise<AppLogEntry[]>
     deleteAppLogs: (ids: string[]) => Promise<AppLogDeleteResult>
     clearAppLogs: () => Promise<AppLogClearResult>
-    listAccessLogs: (query?: AccessLogQuery) => Promise<AccessLogEntry[]>
-    deleteAccessLogs: (ids: string[]) => Promise<AccessLogDeleteResult>
     restart: () => Promise<void>
     reportActivity: () => void
     clearAllData: () => Promise<void>
@@ -776,7 +755,7 @@ export interface AutologinApi {
     writeSecret: (value: string) => Promise<void>
   }
   bookmarks: {
-    visit: (accountId: string) => Promise<AccessLogEntry>
+    visit: (accountId: string) => Promise<BookmarkVisitResult>
   }
   windowControls: {
     updateTheme: (theme: {

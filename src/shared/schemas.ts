@@ -550,19 +550,6 @@ export const appLogDeleteSchema = z
   .max(100)
   .refine((ids) => new Set(ids).size === ids.length, { message: '日志标识不能重复' })
 
-export const accessLogQuerySchema = z
-  .object({
-    date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
-    siteId: idSchema.optional(),
-    siteName: z.string().trim().max(80).optional(),
-    groupName: z.string().trim().max(120).optional(),
-    status: z.enum(['success', 'error']).optional()
-  })
-  .strict()
-  .optional()
-
-export const accessLogDeleteSchema = appLogDeleteSchema
-
 export const proxyTestInputSchema = proxySettingsSchema
 
 export const kdbxSelectionImportSchema = z
@@ -583,6 +570,7 @@ export const clipboardSecretInputSchema = z
 export const dataExportInputSchema = z
   .object({
     tabId: idSchema,
+    format: z.enum(['autologin', 'csv', 'kdbx']).optional(),
     password: masterPasswordSchema.optional()
   })
   .strict()

@@ -559,6 +559,43 @@ test('searches accounts and renders left-aligned table columns with icon-only ac
     'text-align',
     'left'
   )
+  const headerMetrics = await page.locator('.account-list__header').evaluate((header) => {
+    const cells = [
+      ...header.querySelectorAll<HTMLElement>('[data-column-key]')
+    ]
+    return cells.map((cell) => {
+      const style = getComputedStyle(cell)
+      return {
+        alignItems: style.alignItems,
+        paddingTop: style.paddingTop,
+        paddingBottom: style.paddingBottom
+      }
+    })
+  })
+  expect(headerMetrics.length).toBeGreaterThan(0)
+  for (const metrics of headerMetrics) {
+    expect(metrics.alignItems).toBe('center')
+    expect(metrics.paddingTop).toBe(metrics.paddingBottom)
+  }
+  const workspaceColors = await page.evaluate(() => {
+    const activeTab = document.querySelector<HTMLElement>(
+      '.account-tab.is-active'
+    )
+    const layout = document.querySelector<HTMLElement>(
+      '.library-view-layout--accounts'
+    )
+    const subnav = document.querySelector<HTMLElement>('.account-subnav-shell')
+    const mainPanel = document.querySelector<HTMLElement>('.library-view-main')
+    return {
+      tab: activeTab ? getComputedStyle(activeTab).backgroundColor : '',
+      layout: layout ? getComputedStyle(layout).backgroundColor : '',
+      subnav: subnav ? getComputedStyle(subnav).backgroundColor : '',
+      main: mainPanel ? getComputedStyle(mainPanel).backgroundColor : ''
+    }
+  })
+  expect(workspaceColors.layout).toBe(workspaceColors.tab)
+  expect(workspaceColors.subnav).toBe(workspaceColors.tab)
+  expect(workspaceColors.main).toBe(workspaceColors.tab)
   const firstRow = page.locator('.account-row').first()
   await expect(firstRow.locator('.account-identity')).toHaveCSS('justify-content', 'flex-start')
   await expect(firstRow.locator('.account-username')).toHaveCSS('justify-content', 'flex-start')
@@ -984,8 +1021,8 @@ test('resizes, hides and restores the account subnav, and creates three group le
     }
   })
   expect(dividerMetrics.height).toBeCloseTo(dividerMetrics.parentHeight, 0)
-  expect(Number.parseFloat(dividerMetrics.borderRightWidth)).toBeGreaterThan(0)
-  expect(dividerMetrics.borderRightStyle).toBe('solid')
+  expect(Number.parseFloat(dividerMetrics.borderRightWidth)).toBe(0)
+  expect(dividerMetrics.borderRightStyle).toBe('none')
   await expect
     .poll(() =>
       page.locator('.library-content-scroll').evaluate(
@@ -1842,7 +1879,7 @@ test('downloads and persists an editable site icon', async () => {
   await expect(page.locator('.account-row').filter({ hasText: '图标测试站点' })).toBeVisible()
 })
 
-test('keeps bookmarks visit-only and exposes the access log page', async () => {
+test('keeps bookmarks visit-only and removes the retired access log page', async () => {
   await createVault(page)
   await page.evaluate(async (startUrl) => {
     const tab = await window.autologin.tabs.create({
@@ -1882,6 +1919,9 @@ test('keeps bookmarks visit-only and exposes the access log page', async () => {
   await expect(bookmarkRow.getByRole('button', { name: '访问' })).toBeVisible()
   await expect(bookmarkRow.getByRole('button', { name: '登录' })).toHaveCount(0)
   await expect(bookmarkRow).toContainText('书签')
+  await bookmarkRow.getByRole('button', { name: '访问' }).click()
+  await expect(page.locator('.toast')).toContainText('已在默认浏览器中访问')
+  expect(existsSync(join(userDataDirectory, 'logs', 'access.jsonl'))).toBe(false)
   await bookmarkRow.dblclick()
   const editor = page.locator('.account-drawer')
   await expect(editor).toBeVisible()
@@ -1891,15 +1931,12 @@ test('keeps bookmarks visit-only and exposes the access log page', async () => {
   await editor.getByRole('button', { name: '取消' }).click()
   await expect(editor).toHaveCount(0)
 
-  await openLogPage(page, '访问日志')
-  const accessLogsPage = page.locator('.access-logs-page')
-  await expect(accessLogsPage.getByRole('heading', { name: '访问日志' })).toBeVisible()
-  await expect(accessLogsPage.locator('.logs-tabs').getByRole('tab')).toHaveCount(3)
-  await expect(accessLogsPage.getByLabel('日期')).toBeVisible()
-  await expect(accessLogsPage.getByLabel('站点名称')).toBeVisible()
-  await expect(accessLogsPage.getByLabel('分组')).toBeVisible()
-  await expect(accessLogsPage.getByLabel('状态')).toBeVisible()
-  await expect(accessLogsPage.getByText('暂无数据')).toBeVisible()
+  await openLogPage(page, '登录日志')
+  const logsPage = page.locator('.logs-page')
+  await expect(logsPage.locator('.logs-tabs').getByRole('tab')).toHaveCount(2)
+  await expect(
+    logsPage.locator('.logs-tabs').getByRole('tab', { name: '访问日志' })
+  ).toHaveCount(0)
 
   const bookmarkAccountId = await page.evaluate(async () => {
     const [account] = await window.autologin.accounts.list()
@@ -2030,7 +2067,7 @@ test('defers an available update prompt until the vault is unlocked', async () =
   await application.evaluate(({ BrowserWindow }) => {
     BrowserWindow.getAllWindows()[0]?.webContents.send('app:update-state', {
       phase: 'available',
-      currentVersion: '0.9.8',
+      currentVersion: '0.9.9',
       latestVersion: '99.0.1',
       releaseName: 'AutoLogin v99.0.1',
       releaseNotes: '## 更新内容\n\n- 解锁后显示更新提示',
@@ -2058,7 +2095,7 @@ test('persists appearance, language and interface scale with separate resets', a
   })
 
   await expect(page.getByRole('button', { name: '导入账号' })).toBeVisible()
-  await expect(page.getByRole('button', { name: '导出加密配置' })).toBeVisible()
+  await expect(page.getByRole('button', { name: '导出', exact: true })).toBeVisible()
   await page.getByRole('button', { name: '导入账号' }).click()
   const importMenu = page.locator('.account-import-menu')
   await expect(
@@ -2076,13 +2113,24 @@ test('persists appearance, language and interface scale with separate resets', a
   const createMenu = page.locator('.account-create-menu')
   await expect(createMenu.getByRole('menuitem', { name: '新增本地数据库' })).toBeVisible()
   await expect(
-    createMenu.getByRole('menuitem', { name: '📁 打开本地数据库' })
+    createMenu.getByRole('menuitem', { name: '打开本地数据库' })
   ).toBeVisible()
   await expect(
     createMenu.getByRole('menuitem', { name: '打开 KDBX 数据库' })
   ).toHaveCount(0)
   await page.keyboard.press('Escape')
   await expect(createMenu).toHaveCount(0)
+  await page.getByRole('button', { name: '导出', exact: true }).click()
+  const exportMenu = page.locator('.account-export-menu')
+  for (const label of [
+    '导出 AutoLogin 格式',
+    '导出 CSV 格式',
+    '导出 KeePassXC 格式'
+  ]) {
+    await expect(exportMenu.getByRole('menuitem', { name: label })).toBeVisible()
+  }
+  await page.keyboard.press('Escape')
+  await expect(exportMenu).toHaveCount(0)
 
   const bookmarksNav = page
     .locator('.sidebar-nav')
@@ -2445,7 +2493,7 @@ test('persists appearance, language and interface scale with separate resets', a
   await openLogPage(page, '软件日志')
   const appLogsPage = page.locator('.app-logs-page')
   await expect(appLogsPage.getByRole('heading', { name: '软件日志' })).toBeVisible()
-  await expect(appLogsPage.locator('.logs-tabs').getByRole('tab')).toHaveCount(3)
+  await expect(appLogsPage.locator('.logs-tabs').getByRole('tab')).toHaveCount(2)
   await expect(
     appLogsPage.getByRole('tab', { name: '软件日志' })
   ).toHaveAttribute('aria-selected', 'true')
@@ -3164,7 +3212,7 @@ async function expectAccountDrawerControlsAligned(drawer: Locator): Promise<void
 
 async function openLogPage(
   targetPage: Page,
-  label: '登录日志' | '访问日志' | '软件日志'
+  label: '登录日志' | '软件日志'
 ): Promise<void> {
   const logsButton = targetPage.getByRole('button', { name: '日志', exact: true })
   await logsButton.click()

@@ -1,4 +1,11 @@
-import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs'
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync
+} from 'node:fs'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { afterEach, describe, expect, it } from 'vitest'
@@ -7,7 +14,8 @@ import {
   appendAppLog,
   clearAppLogs,
   deleteAppLogs,
-  readAppLogs
+  readAppLogs,
+  removeLegacyAccessLog
 } from '../../src/main/app-log'
 
 const directories: string[] = []
@@ -83,5 +91,17 @@ describe('app log storage', () => {
     const remaining = readAppLogs(directory)
     expect(remaining).toHaveLength(1)
     expect(remaining[0]?.message).toBe('second')
+  })
+
+  it('removes the retired access log data file', () => {
+    const directory = mkdtempSync(join(tmpdir(), 'autologin-app-log-'))
+    directories.push(directory)
+    const legacyPath = join(directory, 'logs', 'access.jsonl')
+    mkdirSync(join(directory, 'logs'), { recursive: true })
+    writeFileSync(legacyPath, '{"legacy":true}\n', 'utf8')
+
+    expect(removeLegacyAccessLog(directory)).toBe(true)
+    expect(existsSync(legacyPath)).toBe(false)
+    expect(removeLegacyAccessLog(directory)).toBe(false)
   })
 })

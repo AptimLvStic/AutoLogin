@@ -4,6 +4,7 @@ import {
   existsSync,
   mkdirSync,
   readFileSync,
+  rmSync,
   writeFileSync
 } from 'node:fs'
 import { dirname, join } from 'node:path'
@@ -13,6 +14,13 @@ const MAX_LOG_ENTRIES = 500
 
 export function appLogPath(dataDirectory: string): string {
   return join(dataDirectory, 'logs', 'app.jsonl')
+}
+
+export function removeLegacyAccessLog(dataDirectory: string): boolean {
+  const path = join(dataDirectory, 'logs', 'access.jsonl')
+  if (!existsSync(path)) return false
+  rmSync(path, { force: true })
+  return true
 }
 
 export function appendAppLog(

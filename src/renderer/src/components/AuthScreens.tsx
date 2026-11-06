@@ -34,9 +34,9 @@ function AuthShell({
           </h1>
           <p>
             {tr(
-              '在一个本地加密工作台中管理账号、书签、分组与访问记录；通过默认浏览器自动填充，复用已登录会话，备份、导入导出与日志都只留在本机。',
+              '在一个本地加密工作台中管理账号、书签与分组；通过默认浏览器自动填充，复用已登录会话，备份、导入导出与日志都只留在本机。',
               'Manage accounts, bookmarks, groups and access history in one encrypted local workspace. Auto-fill through your default browser, reuse signed-in sessions, and keep backups, imports, exports and logs on this device.',
-              '在一個本機加密工作台中管理帳號、書籤、分組與存取記錄；透過預設瀏覽器自動填入，重用已登入工作階段，備份、匯入匯出與日誌都只留在本機。'
+              '在一個本機加密工作台中管理帳號、書籤與分組；透過預設瀏覽器自動填入，重用已登入工作階段，備份、匯入匯出與日誌都只留在本機。'
             )}
           </p>
         </div>

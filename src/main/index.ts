@@ -26,8 +26,6 @@ import {
   accountTabCreateInputSchema,
   accountTabUpdateInputSchema,
   accountUpdateInputSchema,
-  accessLogDeleteSchema,
-  accessLogQuerySchema,
   appLogDeleteSchema,
   appLogQuerySchema,
   appSettingsPatchSchema,
@@ -83,7 +81,9 @@ import type {
   AppUpdateState,
   AppSettings,
   BackupRecord,
+  BookmarkVisitResult,
   DataImportResult,
+  DataExportFormat,
   DataLocationInfo,
   DeletedAccountWithSite,
   ExistingDatabaseSelection,
@@ -117,12 +117,13 @@ import type {
   VaultStatus
 } from '@shared/types'
 import { BackupManager } from './backups'
-import { appendAppLog, clearAppLogs, deleteAppLogs, readAppLogs } from './app-log'
 import {
-  appendAccessLog,
-  deleteAccessLogs,
-  readAccessLogs
-} from './access-log'
+  appendAppLog,
+  clearAppLogs,
+  deleteAppLogs,
+  readAppLogs,
+  removeLegacyAccessLog
+} from './app-log'
 import {
   CSV_TEMPLATE,
   mergeAutologinSnapshot,
@@ -157,6 +158,7 @@ import { ExternalBrowserHost } from './external-browser'
 import { isTrashItemExpired } from './trash-retention'
 import { migrateTabDatabaseFiles } from './tab-database-files'
 import { buildTabSnapshot, indexVaultDataByTab } from './tab-snapshots'
+import { removeMissingDatabaseTabs } from './missing-database-tabs'
 import {
   discoverManagedBrowserProfileIds,
   discoverManagedPartitionIds,
@@ -407,6 +409,13 @@ function registerDiagnosticLogging(): void {
 }
 
 function initializeDataStores(): void {
+  if (removeLegacyAccessLog(dataDirectory)) {
+    appendAppLog(dataDirectory, {
+      level: 'info',
+      category: 'migration',
+      message: '已删除旧版访问日志数据'
+    })
+  }
   vault = new VaultManager(dataDirectory, () => {
     void closeLoginManagers()
     sendToRenderer('vault:locked')
@@ -464,6 +473,27 @@ function tabDatabasePath(tab: AccountTab): string {
     tab.databaseFileName ??
       databaseFileNameFor(tab.name, databaseExtensionForTab(tab))
   )
+}
+
+function purgeMissingDatabaseTabs(): void {
+  const data = vault.requireData()
+  const result = removeMissingDatabaseTabs(
+    data,
+    (tab) => existsSync(tabDatabasePath(tab))
+  )
+  if (result.removedTabs.length === 0) return
+  vault.save()
+
+  for (const accountId of result.removedAccountIds) {
+    sessionIndex.remove(accountId)
+    clearManagedSessionDirectories(dataDirectory, accountId)
+  }
+  appendAppLog(dataDirectory, {
+    level: 'warning',
+    category: 'data',
+    message: `已清理 ${result.removedTabs.length} 个文件已丢失的数据库标签`,
+    details: result.removedTabs.map((tab) => tab.name).join('、')
+  })
 }
 
 function reconcileTabDatabaseFiles(): void {
@@ -1114,47 +1144,40 @@ function registerIpc(): void {
       throw new Error('复制密码失败')
     }
   })
-  ipcMain.handle('bookmarks:visit', async (event, accountId: unknown) => {
-    assertTrustedSender(event)
-    const id = requireId(accountId)
-    const data = vault.requireData()
-    const account = data.accounts.find((entry) => entry.id === id)
-    const site = account
-      ? data.sites.find((entry) => entry.id === account.siteId)
-      : null
-    const tab = account
-      ? data.tabs.find((entry) => entry.id === account.tabId)
-      : null
-    if (!account || !site || tab?.source !== 'bookmarks') {
-      throw new Error('书签不存在')
+  ipcMain.handle(
+    'bookmarks:visit',
+    async (event, accountId: unknown): Promise<BookmarkVisitResult> => {
+      assertTrustedSender(event)
+      const id = requireId(accountId)
+      const data = vault.requireData()
+      const account = data.accounts.find((entry) => entry.id === id)
+      const site = account
+        ? data.sites.find((entry) => entry.id === account.siteId)
+        : null
+      const tab = account
+        ? data.tabs.find((entry) => entry.id === account.tabId)
+        : null
+      if (!account || !site || tab?.source !== 'bookmarks') {
+        throw new Error('书签不存在')
+      }
+      let status: 'success' | 'error' = 'success'
+      let reason = '已在系统默认浏览器中打开'
+      try {
+        await openExternalUrl(site.startUrl)
+      } catch (error) {
+        status = 'error'
+        reason =
+          error instanceof Error ? error.message : '无法在系统默认浏览器中打开'
+      }
+      appendAppLog(dataDirectory, {
+        level: status === 'success' ? 'info' : 'error',
+        category: 'visit',
+        message: `书签访问${status === 'success' ? '成功' : '失败'}：${site.name}`,
+        details: safeLogUrl(site.startUrl)
+      })
+      return { status, reason }
     }
-    let status: 'success' | 'error' = 'success'
-    let reason = '已在系统默认浏览器中打开'
-    try {
-      await openExternalUrl(site.startUrl)
-    } catch (error) {
-      status = 'error'
-      reason =
-        error instanceof Error ? error.message : '无法在系统默认浏览器中打开'
-    }
-    const entry = appendAccessLog(dataDirectory, {
-      accountId: account.id,
-      siteId: site.id,
-      accountLabel: account.label,
-      siteName: site.name,
-      groupName: site.group?.trim() || '未分组',
-      url: site.startUrl,
-      status,
-      reason
-    })
-    appendAppLog(dataDirectory, {
-      level: status === 'success' ? 'info' : 'error',
-      category: 'visit',
-      message: `书签访问${status === 'success' ? '成功' : '失败'}：${site.name}`,
-      details: safeLogUrl(site.startUrl)
-    })
-    return entry
-  })
+  )
 
   ipcMain.handle('login:start', async (event, payload: unknown): Promise<LoginViewState> => {
     assertTrustedSender(event)
@@ -1325,14 +1348,15 @@ function registerIpc(): void {
       return { canceled: true }
     }
 
-    const format =
-      tab.source === 'csv'
+    const format: DataExportFormat | 'html' =
+      parsed.data.format ??
+      (tab.source === 'csv'
         ? 'csv'
         : tab.source === 'kdbx'
           ? 'kdbx'
           : tab.source === 'bookmarks'
             ? 'html'
-            : 'autologin'
+            : 'autologin')
     const filterNames: Record<typeof format, string> = {
       autologin: 'AutoLogin 加密配置',
       csv: 'CSV 账号文件',
@@ -1471,6 +1495,10 @@ function registerIpc(): void {
     if (selection.canceled || !path) {
       return null
     }
+    if (!existsSync(path)) {
+      throw new Error('所选数据库文件已被移动或删除，请重新选择')
+    }
+    purgeMissingDatabaseTabs()
     const normalizedPath = path.toLocaleLowerCase()
     const kind: LocalDatabaseKind = normalizedPath.endsWith('.kdbx')
       ? 'kdbx'
@@ -1521,6 +1549,11 @@ function registerIpc(): void {
       if (!selection) {
         throw new Error('数据库选择已过期，请重新选择文件')
       }
+      if (!existsSync(selection.path)) {
+        pendingDatabaseSelections.delete(parsed.data.token)
+        throw new Error('所选数据库文件已被移动或删除，请重新选择')
+      }
+      purgeMissingDatabaseTabs()
       const existing = findExistingDatabaseTab(
         selection.path,
         selection.kind
@@ -1854,22 +1887,6 @@ function registerIpc(): void {
     assertTrustedSender(event)
     const deleted = clearAppLogs(dataDirectory)
     return { deleted }
-  })
-  ipcMain.handle('app:list-access-logs', (event, payload: unknown) => {
-    assertTrustedSender(event)
-    const parsed = accessLogQuerySchema.safeParse(payload)
-    if (!parsed.success) {
-      throw new Error(firstIssue(parsed.error))
-    }
-    return readAccessLogs(dataDirectory, parsed.data)
-  })
-  ipcMain.handle('app:delete-access-logs', (event, payload: unknown) => {
-    assertTrustedSender(event)
-    const parsed = accessLogDeleteSchema.safeParse(payload)
-    if (!parsed.success) {
-      throw new Error(firstIssue(parsed.error))
-    }
-    return { deleted: deleteAccessLogs(dataDirectory, parsed.data) }
   })
   ipcMain.handle('app:restart', async (event) => {
     assertTrustedSender(event)

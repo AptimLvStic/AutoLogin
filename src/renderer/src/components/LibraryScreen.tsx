@@ -61,7 +61,6 @@ import { useI18n } from '../i18n'
 import { AccountDrawer } from './AccountDrawer'
 import { AccountTabs, DatabaseCreateIcon } from './AccountTabs'
 import { AccountTransferControls } from './AccountTransferControls'
-import { AccessLogsPage } from './AccessLogsPage'
 import { AppLogsPage } from './AppLogsPage'
 import {
   BookmarkExportButton,
@@ -80,7 +79,6 @@ type LibraryView =
   | 'bookmarks'
   | 'passwordGenerator'
   | 'loginLogs'
-  | 'accessLogs'
   | 'appLogs'
   | 'trash'
   | 'settings'
@@ -370,8 +368,7 @@ export function LibraryScreen({
     return counts
   }, [allAccounts])
   const isAccountCollectionView = view === 'accounts' || view === 'bookmarks'
-  const isLogView =
-    view === 'loginLogs' || view === 'accessLogs' || view === 'appLogs'
+  const isLogView = view === 'loginLogs' || view === 'appLogs'
   const bookmarkTabIds = useMemo(
     () => new Set(bookmarkTabs.map((tab) => tab.id)),
     [bookmarkTabs]
@@ -1499,7 +1496,7 @@ export function LibraryScreen({
     })
   }
 
-  function chooseLogView(next: 'loginLogs' | 'accessLogs' | 'appLogs'): void {
+  function chooseLogView(next: 'loginLogs' | 'appLogs'): void {
     switchView(next)
   }
 
@@ -3103,7 +3100,7 @@ export function LibraryScreen({
             </button>
             <button
               className={`sidebar-nav__item${
-                view === 'loginLogs' || view === 'accessLogs' || view === 'appLogs'
+                view === 'loginLogs' || view === 'appLogs'
                   ? ' is-active'
                   : ''
               }`}
@@ -3946,7 +3943,6 @@ export function LibraryScreen({
                     <AccountTransferControls
                       tabId={activeTabId}
                       onCreateTab={() => createTab('local')}
-                      tabSource={activeTab?.source ?? 'local'}
                       onImported={(result) =>
                         void handleDataImported(result.tabId)
                       }
@@ -4867,15 +4863,6 @@ export function LibraryScreen({
               sites={allSites}
               accounts={allAccounts}
               groups={groupDefinitions}
-              notify={notify}
-              onNavigate={chooseLogView}
-            />
-          )}
-
-          {view === 'accessLogs' && (
-            <AccessLogsPage
-              sites={bookmarkSites}
-              accounts={bookmarkAccounts}
               notify={notify}
               onNavigate={chooseLogView}
             />

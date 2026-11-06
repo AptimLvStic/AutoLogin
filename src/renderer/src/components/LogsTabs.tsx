@@ -1,7 +1,7 @@
-import { BookOpen, FileText, Globe2 } from 'lucide-react'
+import { BookOpen, FileText } from 'lucide-react'
 import { useI18n } from '../i18n'
 
-export type LogView = 'loginLogs' | 'accessLogs' | 'appLogs'
+export type LogView = 'loginLogs' | 'appLogs'
 
 export function LogsTabs({
   active,
@@ -27,16 +27,6 @@ export function LogsTabs({
       >
         <FileText size={14} />
         {tr('登录日志', 'Login history', '登入日誌')}
-      </button>
-      <button
-        type="button"
-        role="tab"
-        aria-selected={active === 'accessLogs'}
-        className={active === 'accessLogs' ? 'is-active' : ''}
-        onClick={() => onChange('accessLogs')}
-      >
-        <Globe2 size={14} />
-        {tr('访问日志', 'Access history', '存取日誌')}
       </button>
       <button
         type="button"

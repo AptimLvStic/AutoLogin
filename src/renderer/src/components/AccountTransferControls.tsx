@@ -12,9 +12,9 @@ import {
   Upload
 } from 'lucide-react'
 import type {
-  AccountTabSource,
   AutologinSelection,
   CsvImportMode,
+  DataExportFormat,
   DataImportResult,
   FileOperationResult,
   KdbxSelection
@@ -24,13 +24,11 @@ import { Modal } from './Modal'
 
 export function AccountTransferControls({
   tabId,
-  tabSource,
   onCreateTab,
   onImported,
   notify
 }: {
   tabId: string
-  tabSource: AccountTabSource
   onCreateTab: () => Promise<void>
   onImported: (result: DataImportResult) => void
   notify: (kind: 'success' | 'error' | 'info', message: string) => void
@@ -41,6 +39,7 @@ export function AccountTransferControls({
   const [importBusy, setImportBusy] = useState(false)
   const [templateBusy, setTemplateBusy] = useState(false)
   const [exportBusy, setExportBusy] = useState(false)
+  const [exportMenuOpen, setExportMenuOpen] = useState(false)
   const [kdbxSelection, setKdbxSelection] = useState<KdbxSelection | null>(null)
   const [databasePassword, setDatabasePassword] = useState('')
   const [kdbxError, setKdbxError] = useState('')
@@ -56,6 +55,7 @@ export function AccountTransferControls({
   const [exportPasswordError, setExportPasswordError] = useState('')
   const groupRef = useRef<HTMLDivElement>(null)
   const createGroupRef = useRef<HTMLDivElement>(null)
+  const exportGroupRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
     if (!menuOpen) return
@@ -97,6 +97,28 @@ export function AccountTransferControls({
       document.removeEventListener('keydown', closeOnEscape)
     }
   }, [createMenuOpen])
+
+  useEffect(() => {
+    if (!exportMenuOpen) return
+    const closeOnPointer = (event: PointerEvent): void => {
+      if (
+        event.target instanceof Node &&
+        exportGroupRef.current?.contains(event.target)
+      ) {
+        return
+      }
+      setExportMenuOpen(false)
+    }
+    const closeOnEscape = (event: KeyboardEvent): void => {
+      if (event.key === 'Escape') setExportMenuOpen(false)
+    }
+    document.addEventListener('pointerdown', closeOnPointer)
+    document.addEventListener('keydown', closeOnEscape)
+    return () => {
+      document.removeEventListener('pointerdown', closeOnPointer)
+      document.removeEventListener('keydown', closeOnEscape)
+    }
+  }, [exportMenuOpen])
 
   function acceptImport(result: DataImportResult): void {
     onImported(result)
@@ -268,11 +290,18 @@ export function AccountTransferControls({
     }
   }
 
-  async function exportTab(password?: string): Promise<FileOperationResult> {
+  async function exportTab(
+    format: DataExportFormat,
+    password?: string
+  ): Promise<FileOperationResult> {
     if (exportBusy) return { canceled: true }
     setExportBusy(true)
     try {
-      const result = await window.autologin.data.exportTab({ tabId, password })
+      const result = await window.autologin.data.exportTab({
+        tabId,
+        format,
+        password
+      })
       if (!result.canceled) {
         notify(
           'success',
@@ -297,16 +326,17 @@ export function AccountTransferControls({
     }
   }
 
-  function beginExport(): void {
+  function beginExport(format: DataExportFormat): void {
     if (exportBusy) return
-    if (tabSource === 'kdbx') {
+    setExportMenuOpen(false)
+    if (format === 'kdbx') {
       setExportPassword('')
       setExportPasswordConfirm('')
       setExportPasswordError('')
       setExportPasswordOpen(true)
       return
     }
-    void exportTab().catch(() => undefined)
+    void exportTab(format).catch(() => undefined)
   }
 
   async function exportKdbx(event: React.FormEvent): Promise<void> {
@@ -325,19 +355,14 @@ export function AccountTransferControls({
     }
     setExportPasswordError('')
     try {
-      const result = await exportTab(exportPassword)
+      const result = await exportTab('kdbx', exportPassword)
       if (!result.canceled) setExportPasswordOpen(false)
     } catch {
       // The shared export handler already reports the error.
     }
   }
 
-  const exportLabel =
-    tabSource === 'kdbx'
-      ? tr('导出 KDBX 数据库', 'Export KDBX database', '匯出 KDBX 資料庫')
-      : tabSource === 'csv'
-        ? tr('导出 CSV 账号', 'Export CSV accounts', '匯出 CSV 帳號')
-        : tr('导出加密配置', 'Export encrypted configuration', '匯出加密設定')
+  const exportLabel = tr('导出', 'Export', '匯出')
 
   return (
     <>
@@ -385,9 +410,9 @@ export function AccountTransferControls({
               <FolderOpen size={15} />
               <span>
                 {tr(
-                  '📁 打开本地数据库',
-                  '📁 Open local database',
-                  '📁 開啟本機資料庫'
+                  '打开本地数据库',
+                  'Open local database',
+                  '開啟本機資料庫'
                 )}
               </span>
             </button>
@@ -441,16 +466,64 @@ export function AccountTransferControls({
           </div>
         )}
       </div>
-      <button
-        type="button"
-        className="account-tabs__tool"
-        onClick={beginExport}
-        disabled={exportBusy || !tabId}
-        aria-label={exportLabel}
-        title={exportLabel}
-      >
-        {exportBusy ? <LoaderCircle size={15} className="spin" /> : <Download size={15} />}
-      </button>
+      <div className="account-tabs__tool-group" ref={exportGroupRef}>
+        <button
+          type="button"
+          className="account-tabs__tool"
+          onClick={() => setExportMenuOpen((open) => !open)}
+          disabled={exportBusy || !tabId}
+          aria-label={exportLabel}
+          title={exportLabel}
+          aria-haspopup="menu"
+          aria-expanded={exportMenuOpen}
+        >
+          {exportBusy ? (
+            <LoaderCircle size={15} className="spin" />
+          ) : (
+            <Download size={15} />
+          )}
+        </button>
+        {exportMenuOpen && (
+          <div className="account-import-menu account-export-menu" role="menu">
+            <button
+              type="button"
+              role="menuitem"
+              onClick={() => beginExport('autologin')}
+            >
+              <LockKeyhole size={15} />
+              <span>
+                {tr(
+                  '导出 AutoLogin 格式',
+                  'Export AutoLogin format',
+                  '匯出 AutoLogin 格式'
+                )}
+              </span>
+            </button>
+            <button
+              type="button"
+              role="menuitem"
+              onClick={() => beginExport('csv')}
+            >
+              <FileSpreadsheet size={15} />
+              <span>{tr('导出 CSV 格式', 'Export CSV format', '匯出 CSV 格式')}</span>
+            </button>
+            <button
+              type="button"
+              role="menuitem"
+              onClick={() => beginExport('kdbx')}
+            >
+              <KeyRound size={15} />
+              <span>
+                {tr(
+                  '导出 KeePassXC 格式',
+                  'Export KeePassXC format',
+                  '匯出 KeePassXC 格式'
+                )}
+              </span>
+            </button>
+          </div>
+        )}
+      </div>
 
       {kdbxSelection && (
         <Modal

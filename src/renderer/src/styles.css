@@ -13949,6 +13949,84 @@ body.is-resizing-account-column {
   display: none;
 }
 
+/* v0.9.7 database tab selection contrast and active accent indicator. */
+.account-tabs {
+  gap: 8px;
+  padding-top: 4px;
+  padding-bottom: 2px;
+  background: color-mix(in srgb, var(--card) 86%, var(--sidebar-bg));
+}
+
+.account-tabs__scroll {
+  gap: 4px;
+  padding: 0 2px 2px;
+}
+
+.account-tab {
+  min-height: 38px;
+  border: 1px solid transparent;
+  background: color-mix(in srgb, var(--ink) 5%, var(--card));
+  box-shadow: none;
+  color: var(--muted);
+  transition:
+    background-color 180ms ease,
+    border-color 180ms ease,
+    color 180ms ease,
+    box-shadow 180ms ease;
+}
+
+.account-tab:not(.is-active):hover {
+  border-color: color-mix(in srgb, var(--ink) 8%, transparent);
+  background: color-mix(in srgb, var(--ink) 8%, var(--card));
+  color: var(--ink-soft);
+}
+
+.account-tab.is-active {
+  border-color: color-mix(in srgb, var(--ink) 8%, var(--card-border));
+  background: var(--card);
+  box-shadow: 0 1px 2px rgba(31, 35, 40, 0.06);
+  color: var(--ink);
+}
+
+.account-tab.is-active .account-tab__name {
+  font-weight: 800;
+}
+
+.account-tab.is-active::after {
+  position: absolute;
+  right: 9px;
+  bottom: -1px;
+  left: 9px;
+  display: block;
+  height: 2px;
+  border-radius: 999px 999px 0 0;
+  background: var(--accent);
+  content: '';
+}
+
+html[data-color-mode='dark'] .account-tabs {
+  background: #17191e;
+}
+
+html[data-color-mode='dark'] .account-tab:not(.is-active) {
+  border-color: transparent;
+  background: color-mix(in srgb, var(--accent) 4%, #17191e);
+  color: var(--muted-light);
+}
+
+html[data-color-mode='dark'] .account-tab:not(.is-active):hover {
+  border-color: rgba(255, 255, 255, 0.08);
+  background: color-mix(in srgb, var(--accent) 9%, #202329);
+  color: var(--ink-soft);
+}
+
+html[data-color-mode='dark'] .account-tab.is-active {
+  border-color: color-mix(in srgb, var(--accent) 22%, transparent);
+  background: color-mix(in srgb, var(--accent) 13%, var(--card));
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.28);
+  color: #f7f8fa;
+}
+
 .accounts-table__header {
   font-size: calc(10.5px * var(--font-scale, 1));
 }

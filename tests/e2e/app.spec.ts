@@ -1943,12 +1943,47 @@ test('closes a tab without deleting its encrypted AutoLogin snapshot', async () 
   const firstTab = visibleAccountTabs.first()
   await firstTab.dispatchEvent('click')
   await expect(firstTab).toHaveClass(/is-active/)
+  expect(createdTab!.databaseFileName).toBe(`${createdTab!.name}.autologin`)
   const snapshotPath = join(
     userDataDirectory,
     'tabs',
-    createdTab!.databaseFileName ?? `tab-${createdTab!.id}.autologin`
+    createdTab!.databaseFileName!
   )
   await expect.poll(() => existsSync(snapshotPath)).toBe(true)
+  expect(
+    existsSync(join(userDataDirectory, 'tabs', `tab-${createdTab!.id}.autologin`))
+  ).toBe(false)
+  expect(
+    existsSync(join(userDataDirectory, 'tabs', 'tab-local.autologin'))
+  ).toBe(false)
+  const tabVisuals = await firstTab.evaluate((activeTab) => {
+    const inactiveTab = activeTab.parentElement?.querySelector<HTMLElement>(
+      '.account-tab:not(.is-active)'
+    )
+    const activeName =
+      activeTab.querySelector<HTMLElement>('.account-tab__name')
+    const inactiveName =
+      inactiveTab?.querySelector<HTMLElement>('.account-tab__name')
+    const indicator = getComputedStyle(activeTab, '::after')
+    return {
+      activeBackground: getComputedStyle(activeTab).backgroundColor,
+      inactiveBackground: inactiveTab
+        ? getComputedStyle(inactiveTab).backgroundColor
+        : '',
+      activeWeight: activeName ? getComputedStyle(activeName).fontWeight : '',
+      inactiveWeight: inactiveName
+        ? getComputedStyle(inactiveName).fontWeight
+        : '',
+      indicatorHeight: indicator.height,
+      indicatorColor: indicator.backgroundColor
+    }
+  })
+  expect(tabVisuals.inactiveBackground).not.toBe(tabVisuals.activeBackground)
+  expect(Number(tabVisuals.activeWeight)).toBeGreaterThan(
+    Number(tabVisuals.inactiveWeight)
+  )
+  expect(tabVisuals.indicatorHeight).toBe('2px')
+  expect(tabVisuals.indicatorColor).not.toBe('rgba(0, 0, 0, 0)')
 
   const nextLocalDatabase = await page.evaluate(() =>
     window.autologin.tabs.create({ source: 'local' })
@@ -1967,6 +2002,7 @@ test('closes a tab without deleting its encrypted AutoLogin snapshot', async () 
     'tabs',
     renamedTab.databaseFileName ?? ''
   )
+  expect(renamedTab.databaseFileName).toMatch(/\.autologin$/)
   await expect.poll(() => existsSync(renamedSnapshotPath)).toBe(true)
   expect(existsSync(snapshotPath)).toBe(false)
 
@@ -1994,7 +2030,7 @@ test('defers an available update prompt until the vault is unlocked', async () =
   await application.evaluate(({ BrowserWindow }) => {
     BrowserWindow.getAllWindows()[0]?.webContents.send('app:update-state', {
       phase: 'available',
-      currentVersion: '0.9.6',
+      currentVersion: '0.9.7',
       latestVersion: '99.0.1',
       releaseName: 'AutoLogin v99.0.1',
       releaseNotes: '## 更新内容\n\n- 解锁后显示更新提示',

@@ -35,7 +35,7 @@ export default function App(): React.JSX.Element {
   const [accounts, setAccounts] = useState<AccountWithSite[]>([])
   const [sites, setSites] = useState<Site[]>([])
   const [settings, setSettings] = useState<AppSettings>(DEFAULT_SETTINGS)
-  const [appVersion, setAppVersion] = useState('0.9.6')
+  const [appVersion, setAppVersion] = useState('0.9.7')
   const [loginTarget, setLoginTarget] = useState<LoginTarget | null>(null)
   const [batchState, setBatchState] = useState<LoginBatchState | null>(null)
   const [updateState, setUpdateState] = useState<AppUpdateState | null>(null)
@@ -56,6 +56,12 @@ export default function App(): React.JSX.Element {
     }
     setToast({ id: Date.now(), kind, message })
     toastTimer.current = window.setTimeout(() => setToast(null), 4200)
+  }, [])
+
+  useEffect(() => {
+    return () => {
+      if (toastTimer.current) window.clearTimeout(toastTimer.current)
+    }
   }, [])
 
   const loadData = useCallback(async (): Promise<void> => {

@@ -45,7 +45,6 @@ import {
   TRASH_RETENTION_OPTIONS,
   UNGROUPED_GROUP_KEY,
   type AccountTab,
-  type AccountTabSource,
   type AccountWithSite,
   type AppSettings,
   type AppUpdateState,
@@ -60,6 +59,7 @@ import {
 import { matchesKeyboardShortcut } from '@shared/shortcuts'
 import { useI18n } from '../i18n'
 import { AccountDrawer } from './AccountDrawer'
+import { AccountTabs, DatabaseCreateIcon } from './AccountTabs'
 import { AccountTransferControls } from './AccountTransferControls'
 import { AccessLogsPage } from './AccessLogsPage'
 import { AppLogsPage } from './AppLogsPage'
@@ -358,6 +358,17 @@ export function LibraryScreen({
     [tabs]
   )
   const visibleTabs = view === 'bookmarks' ? bookmarkTabs : accountTabs
+  const activeTab = useMemo(
+    () => visibleTabs.find((tab) => tab.id === activeTabId) ?? null,
+    [activeTabId, visibleTabs]
+  )
+  const tabAccountCounts = useMemo(() => {
+    const counts = new Map<string, number>()
+    for (const account of allAccounts) {
+      counts.set(account.tabId, (counts.get(account.tabId) ?? 0) + 1)
+    }
+    return counts
+  }, [allAccounts])
   const isAccountCollectionView = view === 'accounts' || view === 'bookmarks'
   const isLogView =
     view === 'loginLogs' || view === 'accessLogs' || view === 'appLogs'
@@ -1035,7 +1046,9 @@ export function LibraryScreen({
 
   useEffect(() => {
     if (!groupCreateState) return
-    window.requestAnimationFrame(() => groupCreateInputRef.current?.focus())
+    const focusFrame = window.requestAnimationFrame(() =>
+      groupCreateInputRef.current?.focus()
+    )
     const closeOnPointer = (event: PointerEvent): void => {
       if (
         event.target instanceof Element &&
@@ -1055,6 +1068,7 @@ export function LibraryScreen({
     document.addEventListener('pointerdown', closeOnPointer)
     document.addEventListener('keydown', closeOnEscape)
     return () => {
+      window.cancelAnimationFrame(focusFrame)
       document.removeEventListener('pointerdown', closeOnPointer)
       document.removeEventListener('keydown', closeOnEscape)
     }
@@ -1140,7 +1154,10 @@ export function LibraryScreen({
 
   useEffect(() => {
     if (!searchExpanded) return
-    window.requestAnimationFrame(() => searchRef.current?.focus())
+    const focusFrame = window.requestAnimationFrame(() =>
+      searchRef.current?.focus()
+    )
+    return () => window.cancelAnimationFrame(focusFrame)
   }, [searchExpanded])
 
   useEffect(() => {
@@ -3908,125 +3925,69 @@ export function LibraryScreen({
         >
           {isAccountCollectionView && (
             <>
-            <div
-              className="account-tabs"
-              role="tablist"
-              aria-label={
-                view === 'bookmarks'
-                  ? tr('书签标签页', 'Bookmark tabs', '書籤標籤頁')
-                  : tr('账号标签页', 'Account tabs', '帳號標籤頁')
-              }
-            >
-              <div className="account-tabs__scroll">
-                {visibleTabs.map((tab) => {
-                  const tabCount = allAccounts.filter(
-                    (account) => account.tabId === tab.id
-                  ).length
-                  return (
-                    <div
-                      className={`account-tab${
-                        tab.id === activeTabId ? ' is-active' : ''
-                      }`}
-                      key={tab.id}
-                      style={{ '--tab-color': tab.color } as React.CSSProperties}
-                      onContextMenu={(event) => openTabMenu(event, tab)}
-                      onClick={() => {
-                        if (view === 'bookmarks') {
-                          setBookmarkTabId(tab.id)
-                        } else {
-                          setAccountTabId(tab.id)
-                        }
-                      }}
-                      title={tr(
-                        '单击切换，右键重命名或设置颜色',
-                        'Click to switch, right-click to rename or recolor',
-                        '單擊切換，右鍵重新命名或設定顏色'
-                      )}
-                    >
+            <AccountTabs
+              tabs={visibleTabs}
+              activeTabId={activeTabId}
+              bookmarkMode={view === 'bookmarks'}
+              busy={tabBusy}
+              accountCounts={tabAccountCounts}
+              onSelect={(tab) => {
+                if (view === 'bookmarks') {
+                  setBookmarkTabId(tab.id)
+                } else {
+                  setAccountTabId(tab.id)
+                }
+              }}
+              onOpenMenu={openTabMenu}
+              onClose={(tab) => void closeTab(tab)}
+              controls={
+                <>
+                  {view === 'accounts' && (
+                    <AccountTransferControls
+                      tabId={activeTabId}
+                      onCreateTab={() => createTab('local')}
+                      tabSource={activeTab?.source ?? 'local'}
+                      onImported={(result) =>
+                        void handleDataImported(result.tabId)
+                      }
+                      notify={notify}
+                    />
+                  )}
+                  {view === 'bookmarks' && (
+                    <>
                       <button
                         type="button"
-                        role="tab"
-                        aria-selected={tab.id === activeTabId}
-                        className="account-tab__select"
-                      >
-                        <span className="account-tab__marker" aria-hidden="true" />
-                        <span className="account-tab__name">{tab.name}</span>
-                        <span className="account-tab__count">{tabCount}</span>
-                        <span className={`account-tab__source is-${tab.source}`}>
-                          {accountTabSourceLabel(tab.source, tr)}
-                        </span>
-                      </button>
-                      <button
-                        type="button"
-                        className="account-tab__close"
-                        aria-label={
-                          tab.source === 'bookmarks'
-                            ? tr(
-                                `关闭“${tab.name}”标签页`,
-                                `Close “${tab.name}” tab`,
-                                `關閉「${tab.name}」標籤頁`
-                              )
-                            : tr(
-                                `关闭“${tab.name}”数据库`,
-                                `Close “${tab.name}” database`,
-                                `關閉「${tab.name}」資料庫`
-                              )
-                        }
-                        title={
-                          tab.source === 'bookmarks'
-                            ? tr('关闭标签页', 'Close tab', '關閉標籤頁')
-                            : tr('关闭数据库', 'Close database', '關閉資料庫')
-                        }
+                        className="account-tabs__add"
+                        onClick={() => void createTab('bookmarks')}
                         disabled={tabBusy}
-                        onClick={(event) => {
-                          event.stopPropagation()
-                          void closeTab(tab)
-                        }}
+                        aria-label={tr(
+                          '新增书签标签页',
+                          'Add bookmark tab',
+                          '新增書籤標籤頁'
+                        )}
+                        title={tr(
+                          '新增书签标签页',
+                          'Add bookmark tab',
+                          '新增書籤標籤頁'
+                        )}
                       >
-                        <X size={12} />
+                        <DatabaseCreateIcon busy={tabBusy} />
                       </button>
-                    </div>
-                  )
-                })}
-              </div>
-              {view === 'accounts' && (
-                <>
-                  <AccountTransferControls
-                    tabId={activeTabId}
-                    onCreateTab={() => createTab('local')}
-                    tabSource={
-                      visibleTabs.find((tab) => tab.id === activeTabId)?.source ??
-                      'local'
-                    }
-                    onImported={(result) => void handleDataImported(result.tabId)}
-                    notify={notify}
-                  />
+                      <BookmarkImportButton
+                        onImported={(result) =>
+                          void handleDataImported(result.tabId)
+                        }
+                        notify={notify}
+                      />
+                      <BookmarkExportButton
+                        tabId={activeTabId}
+                        notify={notify}
+                      />
+                    </>
+                  )}
                 </>
-              )}
-              {view === 'bookmarks' && (
-                <>
-                  <button
-                    type="button"
-                    className="account-tabs__add"
-                    onClick={() => void createTab('bookmarks')}
-                    disabled={tabBusy}
-                    aria-label={tr('新增书签标签页', 'Add bookmark tab', '新增書籤標籤頁')}
-                    title={tr('新增书签标签页', 'Add bookmark tab', '新增書籤標籤頁')}
-                  >
-                    {tabBusy ? (
-                      <LoaderCircle size={15} className="spin" />
-                    ) : (
-                      <Plus size={15} />
-                    )}
-                  </button>
-                  <BookmarkImportButton
-                    onImported={(result) => void handleDataImported(result.tabId)}
-                    notify={notify}
-                  />
-                  <BookmarkExportButton tabId={activeTabId} notify={notify} />
-                </>
-              )}
-            </div>
+              }
+            />
             <div
               ref={accountLayoutRef}
               className={`library-view-layout library-view-layout--accounts${
@@ -5537,12 +5498,6 @@ function displayGroup(account: AccountWithSite, tr: Translate): string {
   return account.site.group?.trim() || tr('未分组', 'Ungrouped', '未分組')
 }
 
-function accountTabSourceLabel(source: AccountTabSource, tr: Translate): string {
-  if (source === 'csv') return 'CSV'
-  if (source === 'kdbx') return 'KDBX'
-  if (source === 'bookmarks') return tr('浏览器书签', 'Bookmarks', '瀏覽器書籤')
-  return tr('本地', 'Local', '本機')
-}
 
 function groupParentPath(path: string): string | null {
   const parts = path.split(GROUP_PATH_SEPARATOR).filter(Boolean)

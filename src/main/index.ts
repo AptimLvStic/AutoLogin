@@ -1,6 +1,6 @@
 import { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, net, session, shell } from 'electron'
 import { existsSync, mkdirSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs'
-import { basename, dirname, extname, join, resolve } from 'node:path'
+import { basename, dirname, join, resolve } from 'node:path'
 import { randomUUID } from 'node:crypto'
 import type { IpcMainEvent, IpcMainInvokeEvent } from 'electron'
 import { autoUpdater } from 'electron-updater'
@@ -50,6 +50,13 @@ import {
   GROUP_PATH_SEPARATOR,
   UNGROUPED_GROUP_KEY
 } from '@shared/types'
+import {
+  databaseExtensionForSource,
+  databaseExtensionForTab,
+  databaseFileNameFor,
+  isDatabaseNameFileSafe,
+  normalizeDatabaseName
+} from '@shared/database-files'
 import type {
   AccountBatchIconFetchResult,
   AccountBatchIconInput,
@@ -133,6 +140,8 @@ import {
 } from './browser-discovery'
 import { ExternalBrowserHost } from './external-browser'
 import { isTrashItemExpired } from './trash-retention'
+import { migrateTabDatabaseFiles } from './tab-database-files'
+import { buildTabSnapshot, indexVaultDataByTab } from './tab-snapshots'
 import {
   discoverManagedBrowserProfileIds,
   discoverManagedPartitionIds,
@@ -396,28 +405,15 @@ function syncTabSnapshotFiles(data: VaultData): void {
     return
   }
 
+  const dataByTab = indexVaultDataByTab(data)
   for (const tab of data.tabs) {
     try {
-      const snapshot: VaultData = {
-        ...structuredClone(data),
-        tabs: [structuredClone(tab)],
-        sites: structuredClone(data.sites.filter((site) => site.tabId === tab.id)),
-        accounts: structuredClone(
-          data.accounts.filter((account) => account.tabId === tab.id)
-        ),
-        groupDefinitions: structuredClone(
-          data.groupDefinitions.filter((group) => group.tabId === tab.id)
-        ),
-        deletedAccounts: structuredClone(
-          data.deletedAccounts.filter((record) => record.tabId === tab.id)
-        ),
-        favoriteGroups: [],
-        settings: {
-          ...structuredClone(data.settings),
-          groupOrder: [...getTabGroupOrder(data, tab.id)],
-          groupOrders: { [tab.id]: [...getTabGroupOrder(data, tab.id)] }
-        }
-      }
+      const snapshot = buildTabSnapshot(
+        data,
+        tab,
+        dataByTab.get(tab.id),
+        getTabGroupOrder(data, tab.id)
+      )
       vault.writeEncryptedSnapshot(
         tabDatabasePath(tab),
         snapshot
@@ -437,8 +433,41 @@ function tabDatabasePath(tab: AccountTab): string {
   return join(
     dataDirectory,
     'tabs',
-    tab.databaseFileName ?? `tab-${tab.id}.autologin`
+    tab.databaseFileName ??
+      databaseFileNameFor(tab.name, databaseExtensionForTab(tab))
   )
+}
+
+function reconcileTabDatabaseFiles(): void {
+  const data = vault.requireData()
+  let result
+  try {
+    result = migrateTabDatabaseFiles(data, join(dataDirectory, 'tabs'))
+  } catch (error) {
+    appendAppLog(dataDirectory, {
+      level: 'error',
+      category: 'data',
+      message: '数据库文件迁移失败',
+      details: sanitizeLogDetails(
+        error instanceof Error ? error.message : String(error)
+      )
+    })
+    syncTabSnapshotFiles(data)
+    return
+  }
+  for (const issue of result.issues) {
+    appendAppLog(dataDirectory, {
+      level: 'error',
+      category: 'data',
+      message: `数据库文件迁移失败：${issue.tabName}`,
+      details: sanitizeLogDetails(issue.message)
+    })
+  }
+  if (result.changed) {
+    vault.save()
+    return
+  }
+  syncTabSnapshotFiles(data)
 }
 
 function nextLocalDatabaseName(data: VaultData): string {
@@ -449,63 +478,6 @@ function nextLocalDatabaseName(data: VaultData): string {
     highest = Math.max(highest, Number(match[1]) || 0)
   }
   return `本地数据库 ${highest + 1}`
-}
-
-function databaseExtensionForTab(tab: AccountTab): string {
-  const existingExtension = tab.databaseFileName
-    ? extname(tab.databaseFileName).toLocaleLowerCase()
-    : ''
-  return existingExtension || databaseExtensionForSource(tab.source)
-}
-
-function databaseExtensionForSource(
-  source: AccountTab['source'],
-  originalFileName?: string
-): string {
-  const originalExtension = extname(originalFileName ?? '').toLocaleLowerCase()
-  if (source === 'kdbx' && originalExtension === '.kdbx') return '.kdbx'
-  if (source === 'csv' && originalExtension === '.csv') return '.csv'
-  if (source === 'bookmarks' && (originalExtension === '.html' || originalExtension === '.htm')) {
-    return originalExtension
-  }
-  if (source === 'autologin' && originalExtension === '.autologin') return '.autologin'
-  if (source === 'kdbx') return '.kdbx'
-  if (source === 'csv') return '.csv'
-  if (source === 'bookmarks') return '.html'
-  return '.autologin'
-}
-
-function uniqueDatabaseFileName(
-  data: VaultData,
-  tabId: string,
-  requestedName: string,
-  extension: string
-): string {
-  const tabsDirectory = join(dataDirectory, 'tabs')
-  const usedNames = new Set(
-    data.tabs
-      .filter((tab) => tab.id !== tabId)
-      .map((tab) =>
-        (tab.databaseFileName ?? `tab-${tab.id}.autologin`).toLocaleLowerCase()
-      )
-  )
-  const safeBase =
-    requestedName
-      .normalize('NFKC')
-      .replace(/[<>:"/\\|?*\u0000-\u001f]/g, '-')
-      .replace(/[. ]+$/g, '')
-      .trim()
-      .slice(0, 80) || 'database'
-  let sequence = 1
-  let candidate = `${safeBase}${extension}`
-  while (
-    usedNames.has(candidate.toLocaleLowerCase()) ||
-    existsSync(join(tabsDirectory, candidate))
-  ) {
-    sequence += 1
-    candidate = `${safeBase} ${sequence}${extension}`
-  }
-  return candidate
 }
 
 function ensureLoginManagers(): void {
@@ -575,7 +547,7 @@ function registerIpc(): void {
     ensureLoginManagers()
     applyInterfaceScale(vault.getSettings().interfaceScale)
     await applySystemProxy(vault.getSettings().proxy)
-    syncTabSnapshotFiles(vault.requireData())
+    reconcileTabDatabaseFiles()
     return status
   })
   ipcMain.handle('vault:unlock', async (event, password: unknown) => {
@@ -594,7 +566,7 @@ function registerIpc(): void {
     ensureLoginManagers()
     applyInterfaceScale(vault.getSettings().interfaceScale)
     await applySystemProxy(vault.getSettings().proxy)
-    syncTabSnapshotFiles(vault.requireData())
+    reconcileTabDatabaseFiles()
     return status
   })
   ipcMain.handle('vault:lock', (event) => {
@@ -2962,6 +2934,9 @@ function updateAccountTab(tabId: string, input: AccountTabUpdateInput): AccountT
   let renamedTo: string | null = null
   if (input.name !== undefined) {
     const name = input.name.trim()
+    if (!isDatabaseNameFileSafe(name)) {
+      throw new Error('数据库名称包含无效文件名字符或格式')
+    }
     if (
       data.tabs.some(
         (entry) =>
@@ -2973,14 +2948,17 @@ function updateAccountTab(tabId: string, input: AccountTabUpdateInput): AccountT
     }
     if (name !== tab.name) {
       const oldPath = tabDatabasePath(tab)
-      const nextFileName = uniqueDatabaseFileName(
-        data,
-        tab.id,
+      const nextFileName = databaseFileNameFor(
         name,
         databaseExtensionForTab(tab)
       )
       const nextPath = join(dataDirectory, 'tabs', nextFileName)
-      if (existsSync(oldPath) && oldPath !== nextPath) {
+      const samePath =
+        oldPath.toLocaleLowerCase() === nextPath.toLocaleLowerCase()
+      if (existsSync(nextPath) && !samePath) {
+        throw new Error('目标数据库文件已存在')
+      }
+      if (existsSync(oldPath) && !samePath) {
         mkdirSync(dirname(nextPath), { recursive: true })
         renameSync(oldPath, nextPath)
         renamedFrom = oldPath
@@ -3041,11 +3019,29 @@ function buildAccountTab(
 ): AccountTab {
   const baseName = requestedName.trim().slice(0, 40) || '新标签'
   const taken = new Set(data.tabs.map((tab) => tab.name.toLocaleLowerCase()))
+  const extension = databaseExtensionForSource(source, originalFileName)
+  let databaseFileName = databaseFileNameFor(
+    normalizeDatabaseName(baseName),
+    extension
+  )
   let name = baseName
   let sequence = 2
-  while (taken.has(name.toLocaleLowerCase())) {
+  name = normalizeDatabaseName(name)
+  while (
+    taken.has(name.toLocaleLowerCase()) ||
+    data.tabs.some(
+      (tab) =>
+        (
+          tab.databaseFileName ??
+          databaseFileNameFor(tab.name, databaseExtensionForTab(tab))
+        ).toLocaleLowerCase() === databaseFileName.toLocaleLowerCase()
+    ) ||
+    existsSync(join(dataDirectory, 'tabs', databaseFileName))
+  ) {
     const suffix = ` ${sequence}`
     name = `${baseName.slice(0, 40 - suffix.length).trimEnd()}${suffix}`
+    name = normalizeDatabaseName(name)
+    databaseFileName = databaseFileNameFor(name, extension)
     sequence += 1
   }
   const id = randomUUID()
@@ -3055,7 +3051,7 @@ function buildAccountTab(
     name,
     color,
     source,
-    databaseFileName: `tab-${id}${databaseExtensionForSource(source, originalFileName)}`,
+    databaseFileName,
     hidden: false,
     createdAt: now,
     updatedAt: now

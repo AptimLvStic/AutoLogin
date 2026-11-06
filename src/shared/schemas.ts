@@ -1,4 +1,5 @@
 import { z } from 'zod'
+import { isDatabaseNameFileSafe } from './database-files'
 import {
   ACCOUNT_TAB_COLORS,
   ACCOUNT_TAB_SOURCES,
@@ -56,6 +57,10 @@ const groupNameSchema = z
 const groupPathSchema = z.string().trim().min(1).max(80)
 const tabIdSchema = idSchema.default(DEFAULT_ACCOUNT_TAB_ID)
 const tabNameSchema = z.string().trim().min(1, '标签页名称不能为空').max(40)
+const tabFileSafeNameSchema = tabNameSchema.refine(
+  isDatabaseNameFileSafe,
+  '数据库名称必须是有效的 Windows 文件名'
+)
 const tabColorSchema = z.string().regex(/^#[0-9a-fA-F]{6}$/, '标签页颜色无效')
 const tabDatabaseFileNameSchema = z
   .string()
@@ -462,7 +467,7 @@ export const accountMoveInputSchema = z
 
 export const accountTabCreateInputSchema = z
   .object({
-    name: tabNameSchema.optional(),
+    name: tabFileSafeNameSchema.optional(),
     color: tabColorSchema.optional(),
     source: z.enum(['local', 'bookmarks']).optional()
   })
@@ -471,7 +476,7 @@ export const accountTabCreateInputSchema = z
 
 export const accountTabUpdateInputSchema = z
   .object({
-    name: tabNameSchema.optional(),
+    name: tabFileSafeNameSchema.optional(),
     color: tabColorSchema.optional()
   })
   .strict()

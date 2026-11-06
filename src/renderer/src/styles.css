@@ -14348,3 +14348,10 @@ html[data-color-mode='dark']
 .library-database-empty-state__actions .button {
   margin-top: 0;
 }
+
+/* Align navigation surfaces with the account workspace card background. */
+.sidebar,
+.library-content-scroll--accounts,
+.library-content-scroll--accounts .account-subnav-shell {
+  background: var(--card);
+}

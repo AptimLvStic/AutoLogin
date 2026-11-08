@@ -1425,8 +1425,8 @@ export function SettingsPage({
               <div className="settings-about-grid">
                 <span>{tr('版本', 'Version', '版本')}</span>
                 <strong>v{about?.version ?? appVersion}</strong>
-                <span>Electron</span>
-                <strong>{about?.electronVersion ?? '—'}</strong>
+                <span>{about?.runtimeName ?? 'Tauri'}</span>
+                <strong>{about?.runtimeVersion || '—'}</strong>
                 <span>{tr('平台', 'Platform', '平台')}</span>
                 <strong>{about ? platformLabel(about.platform) : 'Windows'}</strong>
               </div>

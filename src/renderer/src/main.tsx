@@ -9,5 +9,7 @@ import '@fontsource/noto-sans-sc/chinese-simplified-700.css'
 import { createRoot } from 'react-dom/client'
 import App from './App'
 import './styles.css'
+import { installTauriAutologinApi } from './tauri-api'
 
+installTauriAutologinApi()
 createRoot(document.getElementById('root')!).render(<App />)

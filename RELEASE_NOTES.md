@@ -1,20 +1,22 @@
-# AutoLogin v0.9.12
+# AutoLogin v0.10.0
 
-发布日期：2026-11-06
+发布日期：2026-11-08
 
-## 更新内容
+## 架构更新
 
-- 账号页和书签页在零标签状态下隐藏顶部右侧的新增、导入、导出按钮。
-- 书签页空状态改为独立的书签文案、图标和操作入口，不再复用账号数据库文案。
-- 书签页空状态提供“新建书签标签页”和“导入浏览器书签”，账号页继续提供数据库新建与打开入口。
+- 桌面外壳迁移到 Tauri 2：Rust 负责窗口、单实例、Node sidecar 生命周期、JSON-RPC 路由、开发者工具和更新安装。
+- 保留现有 React 界面与 Node 业务 sidecar，以继续提供保险库、账号、书签、日志、回收站、导入导出和浏览器录制能力。
+- 安装版不再携带 Electron 运行时；旧版 `%APPDATA%\AutoLogin` 数据目录、自定义数据位置和浏览器会话继续兼容。
+- 更新检查切换到 Tauri 兼容实现，支持下载进度、取消下载、安装更新和软件日志。
 
-## 更新源
+## 发布信息
 
-- 默认 CDN：`https://aptimlvstic.github.io/AutoLogin/updates/`
-- 可通过 `resources/update-config.json` 的 `cdnBaseUrl` 或环境变量 `AUTOLOGIN_UPDATE_CDN_URL` 替换为自有 HTTPS CDN。
-- 设置 `AUTOLOGIN_DISABLE_UPDATE_CDN=1` 可强制使用 GitHub Releases。
+- Tauri 仓库：`https://github.com/AptimLvStic/Tauri`
+- 默认 CDN：`https://aptimlvstic.github.io/Tauri/updates/`
+- GitHub Releases 回退：`https://github.com/AptimLvStic/Tauri/releases`
+- 安装包：`AutoLogin_0.10.0_x64-setup.exe`
 
-## 安装
+## 注意
 
-- 使用 `AutoLogin-0.9.12-x64.exe` 安装。
-- 自动更新依赖发布资产中的 `latest.yml`、`AutoLogin-0.9.12-x64.exe.blockmap` 和同版本安装包。
+- 当前安装包未配置 Authenticode 签名，Windows SmartScreen 可能显示未识别发布者提示。
+- 发布资产必须同时包含安装包与 `latest.yml`，否则应用内自动更新无法工作。

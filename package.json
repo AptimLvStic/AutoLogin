@@ -1,25 +1,37 @@
 {
   "name": "autologin",
-  "version": "0.9.12",
+  "version": "0.10.0",
   "description": "A calm, local-first login workspace for Windows.",
   "main": "./out/main/index.js",
   "author": "AutoLogin",
   "license": "UNLICENSED",
   "private": true,
   "scripts": {
-    "dev": "electron-vite dev",
-    "typecheck": "tsc --noEmit -p tsconfig.node.json && tsc --noEmit -p tsconfig.web.json",
-    "build": "npm run typecheck && electron-vite build",
-    "preview": "electron-vite preview",
+    "dev": "tauri dev",
+    "dev:before": "npm run build:backend && npm run prepare:sidecar && npm run dev:renderer",
+    "dev:renderer": "vite --config vite.config.ts",
+    "dev:electron": "electron-vite dev",
+    "typecheck": "npm run typecheck:tauri",
+    "typecheck:tauri": "tsc --noEmit -p tsconfig.tauri.json && tsc --noEmit -p tsconfig.web.json",
+    "typecheck:electron": "tsc --noEmit -p tsconfig.node.json && tsc --noEmit -p tsconfig.web.json",
+    "build": "tauri build",
+    "build:before": "npm run typecheck:tauri && npm run build:renderer && npm run build:backend && npm run prepare:sidecar",
+    "build:renderer": "vite build --config vite.config.ts",
+    "build:backend": "node scripts/build-backend.mjs",
+    "prepare:sidecar": "node scripts/prepare-sidecar.mjs",
+    "build:electron": "npm run typecheck:electron && electron-vite build",
+    "preview": "vite preview --config vite.config.ts",
     "test": "vitest run --configLoader runner",
-    "test:e2e": "npm run build && playwright test",
-    "package": "npm run build && electron-builder --win nsis --x64",
-    "package:dir": "npm run build && electron-builder --dir"
+    "test:e2e": "npm run build:electron && playwright test",
+    "package": "npm run build",
+    "package:electron": "npm run build:electron && electron-builder --win nsis --x64",
+    "package:electron:dir": "npm run build:electron && electron-builder --dir"
   },
   "devDependencies": {
     "@fontsource/manrope": "5.3.0",
     "@fontsource/noto-sans-sc": "5.3.1",
     "@playwright/test": "1.64.1",
+    "@tauri-apps/cli": "^2.12.4",
     "@testing-library/jest-dom": "6.9.1",
     "@testing-library/react": "16.3.3",
     "@types/node": "26.6.6",
@@ -95,7 +107,7 @@
       {
         "provider": "github",
         "owner": "AptimLvStic",
-        "repo": "AutoLogin",
+        "repo": "Tauri",
         "releaseType": "release"
       }
     ],
@@ -111,9 +123,11 @@
     }
   },
   "dependencies": {
+    "@tauri-apps/api": "^2.12.4",
     "builder-util-runtime": "^9.7.0",
     "csv-parse": "^7.0.3",
     "electron-updater": "^6.8.11",
-    "kdbxweb": "^2.1.1"
+    "kdbxweb": "^2.1.1",
+    "undici": "^7.30.2"
   }
 }

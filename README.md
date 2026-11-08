@@ -2,7 +2,7 @@
 
 AutoLogin 是一款面向 Windows 10/11 x64 的本地优先登录工作台。它把常用网站的登录入口、多个账号和独立浏览器会话集中到一个桌面应用中，通过 Windows 默认浏览器打开网站，并在可识别时自动填充、自动提交；遇到验证码、短信验证或二次验证时停止提交，交由用户人工完成。
 
-当前版本为 `0.9.12`，不包含云同步、账号系统、遥测或 TOTP/2FA 自动化，也不会绕过任何第三方验证码或风控。应用内自动更新已启用，并优先通过项目 CDN 更新源检查与下载，CDN 不可用时自动回退 GitHub Releases。
+当前版本为 `0.10.0`。桌面外壳已迁移到 Tauri 2，现有 React 界面与本地 Node sidecar 继续承载登录、加密存储、导入导出和浏览器自动化能力；安装包不再携带 Electron 运行时。软件不包含云同步、账号系统、遥测或 TOTP/2FA 自动化，也不会绕过任何第三方验证码或风控。应用内自动更新优先通过项目 CDN 检查与下载，CDN 不可用时回退到 `AptimLvStic/Tauri` 的 GitHub Releases。
 
 ## 功能
 
@@ -61,12 +61,12 @@ AutoLogin 是一款面向 Windows 10/11 x64 的本地优先登录工作台。它
 
 ## 安全设计
 
-- 主进程独占主密码、派生密钥和账号密码明文。
+- Node sidecar 主进程独占主密码、派生密钥和账号密码明文，React 界面只能通过固定的 Tauri JSON-RPC 白名单访问业务能力。
 - Argon2id 参数为 64 MiB 内存、3 次迭代、并行度 1，输出 256 位密钥。
 - 完整保险库使用 AES-256-GCM 加密，随机 16 字节盐和 12 字节 nonce。
 - 保险库采用临时文件、`fsync` 和原子替换写入，并保留一份加密 `.bak`。
-- 渲染器启用 `contextIsolation`、`sandbox` 和 CSP，禁用 Node.js。
-- IPC 使用固定白名单和 Zod 校验，并校验调用来源。
+- React 渲染器运行在 Tauri WebView 中，不启用 Node.js 集成，并通过 CSP 限制脚本、连接和资源来源。
+- Tauri IPC 使用固定命令白名单、Zod 校验和独立的 sidecar 请求队列。
 - 自动填充代理运行在默认浏览器的隔离 CDP world 中，目标网页无法访问 Electron、Node.js 或 `window.autologin`。
 - AutoLogin 管理的默认 Chromium 会忽略证书链错误，以支持使用 IP 地址、自签名证书或私有 CA 的内网站点；该设置仅作用于 AutoLogin 的隔离浏览器配置，不改变系统默认浏览器或其他浏览器窗口。
 - 浏览器调试连接仅绑定 `127.0.0.1` 的随机端口，并且只在活动登录会话期间存在。
@@ -111,6 +111,8 @@ NSIS 卸载程序默认保留上述用户数据。卸载前如需彻底删除，
 - Windows 10 22H2 或 Windows 11 x64。
 - Node.js 22 或更新版本。
 - npm。
+- Rust stable、Visual Studio C++ Build Tools 和 Windows 10/11 SDK。
+- Microsoft Edge WebView2 Runtime。
 
 安装依赖并启动开发环境：
 
@@ -119,7 +121,7 @@ npm install
 npm run dev
 ```
 
-类型检查与生产构建：
+类型检查与生产构建（生成 Tauri NSIS 安装包）：
 
 ```powershell
 npm run typecheck
@@ -134,7 +136,7 @@ npm run build
 npm test
 ```
 
-Electron E2E 使用本地测试站点，不访问公网：
+保留的 Electron 兼容层 E2E 使用本地测试站点，不访问公网：
 
 ```powershell
 $env:AUTOLOGIN_E2E_NO_SANDBOX='1'
@@ -177,22 +179,21 @@ npm run test:e2e
 
 ## 打包
 
-生成 NSIS x64 安装包：
+生成 Tauri NSIS x64 安装包：
 
 ```powershell
-$env:ELECTRON_BUILDER_CACHE=(Resolve-Path 'work\electron-builder-cache').Path
 npm run package
 ```
 
-输出目录为 `outputs/`。当前仓库没有 Authenticode 证书，因此只能交付未签名测试安装包。正式公开下载前应配置代码签名：
+输出目录为 `src-tauri/target/release/bundle/nsis/`。当前仓库没有 Authenticode 证书，因此只能交付未签名测试安装包。正式公开下载前应配置 Windows 代码签名：
 
 ```powershell
-$env:CSC_LINK='C:\secure\codesign.pfx'
-$env:CSC_KEY_PASSWORD='<证书密码>'
+$env:TAURI_SIGNING_PRIVATE_KEY='<Tauri updater private key>'
+$env:TAURI_SIGNING_PRIVATE_KEY_PASSWORD='<密钥密码>'
 npm run package
 ```
 
-不要把证书、密码或私钥提交到仓库。
+当前更新器下载完整安装包，不依赖差分更新或 `.blockmap`。不要把证书、密码或私钥提交到仓库。
 
 ## 已知限制
 
@@ -202,7 +203,7 @@ npm run package
 - 不承诺兼容所有登录页面，尤其是多因素、强反自动化或阻止调试连接的网站。
 - KeePassXC 导入仅支持使用主密码的 `.kdbx` 数据库，不支持密钥文件、附件或 TOTP 字段。
 - CSV 导入文件包含明文账号密码，AutoLogin 不会复制该文件，用户需自行安全保管或删除。
-- 自动更新依赖已发布的 `latest.yml`、`.blockmap` 与同版本 NSIS 安装包；缺失任一文件时检查或增量下载会失败。
+- 自动更新依赖已发布的 `latest.yml` 与同版本 NSIS 安装包；缺失任一文件时检查或下载会失败。
 - 自动更新只在已安装的打包版本中启用；开发模式和不含更新配置的目录运行版本会显示不可用。
 - GitHub API 的更新说明请求使用匿名额度；超出额度时仍可依赖更新元数据，手动检查可能显示失败并可稍后重试。
 - 网站 Cookie 不受主密码直接加密；忘记主密码时可通过“清除全部数据”移除会话。
@@ -211,10 +212,12 @@ npm run package
 ## 目录
 
 ```text
-src/main/        Electron 主进程、保险库、登录会话
+src/main/        Node sidecar 业务层、保险库、登录会话
 src/preload/     主窗口 IPC bridge 和页面自动填充代理源码
 src/renderer/    React 界面
 src/shared/      类型、Zod schema、URL 安全工具
+src/tauri/       Tauri sidecar 入口与 Electron 兼容 shim
+src-tauri/       Rust 桌面外壳、JSON-RPC 路由、窗口和打包配置
 tests/unit/      Vitest 单元测试
 tests/e2e/       Playwright Electron E2E 与本地夹具
 resources/       应用图标

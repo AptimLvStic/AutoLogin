@@ -1,6 +1,9 @@
 node_modules/
 out/
 dist/
+dist-backend/
+src-tauri/target/
+src-tauri/resources/bin/node.exe
 outputs/*
 !outputs/.gitkeep
 work/

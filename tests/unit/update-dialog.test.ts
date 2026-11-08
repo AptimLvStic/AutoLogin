@@ -37,7 +37,7 @@ describe('UpdateDialog Markdown', () => {
             '- **应用内更新**',
             '- 侧边栏折叠',
             '',
-            '[发布页](https://github.com/AptimLvStic/AutoLogin/releases)',
+            '[发布页](https://github.com/AptimLvStic/Tauri/releases)',
             '[危险链接](javascript:alert)'
           ].join('\n')
         })
@@ -49,7 +49,7 @@ describe('UpdateDialog Markdown', () => {
     expect(container.querySelector('strong')?.textContent).toBe('应用内更新')
     const links = [...container.querySelectorAll('a')]
     expect(links).toHaveLength(1)
-    expect(links[0]?.href).toBe('https://github.com/AptimLvStic/AutoLogin/releases')
+    expect(links[0]?.href).toBe('https://github.com/AptimLvStic/Tauri/releases')
     expect(container.textContent).toContain('危险链接')
   })
 

@@ -229,12 +229,16 @@ const pendingDatabaseSelections = new Map<
 >()
 const pendingNewDatabaseTabIds = new Set<string>()
 
-const REPOSITORY_URL = ['https:', '//github.com', '/AptimLvStic/AutoLogin'].join('')
+const REPOSITORY_URL =
+  process.env.AUTOLOGIN_REPOSITORY_URL?.trim() ||
+  ['https:', '//github.com', '/AptimLvStic/Tauri'].join('')
 const RELEASES_URL = `${REPOSITORY_URL}/releases`
+const UPDATE_OWNER = process.env.AUTOLOGIN_UPDATE_OWNER?.trim() || 'AptimLvStic'
+const UPDATE_REPO = process.env.AUTOLOGIN_UPDATE_REPO?.trim() || 'Tauri'
 const GITHUB_UPDATE_FEED = {
   provider: 'github' as const,
-  owner: 'AptimLvStic',
-  repo: 'AutoLogin'
+  owner: UPDATE_OWNER,
+  repo: UPDATE_REPO
 }
 
 const gotLock = app.requestSingleInstanceLock()
@@ -1823,7 +1827,11 @@ function registerIpc(): void {
     assertTrustedSender(event)
     return {
       version: app.getVersion(),
-      electronVersion: process.versions.electron ?? '',
+      runtimeName: process.versions.electron ? 'Electron' : 'Tauri',
+      runtimeVersion:
+        process.versions.electron ??
+        process.env.AUTOLOGIN_RUNTIME_VERSION?.trim() ??
+        '',
       platform: process.platform,
       repositoryUrl: REPOSITORY_URL,
       dataDirectory
@@ -4134,7 +4142,7 @@ async function fetchReleaseMetadata(
   timer.unref()
   try {
     const response = await net.fetch(
-      `https://api.github.com/repos/AptimLvStic/AutoLogin/releases/tags/v${encodeURIComponent(version)}`,
+      `https://api.github.com/repos/${UPDATE_OWNER}/${UPDATE_REPO}/releases/tags/v${encodeURIComponent(version)}`,
       {
         headers: {
           Accept: 'application/vnd.github+json',

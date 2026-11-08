@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs'
 
 export const DEFAULT_UPDATE_CDN_BASE_URL =
-  'https://aptimlvstic.github.io/AutoLogin/updates/'
+  'https://aptimlvstic.github.io/Tauri/updates/'
 
 export function normalizeUpdateBaseUrl(value: unknown): string | null {
   if (typeof value !== 'string' || !value.trim()) return null

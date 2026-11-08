@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { LoaderCircle, LockKeyhole } from 'lucide-react'
+import { invoke, isTauri } from '@tauri-apps/api/core'
+import { LoaderCircle, LockKeyhole, Minus, Square, X } from 'lucide-react'
 import type {
   AccountWithSite,
   AppSettings,
@@ -28,6 +29,11 @@ interface LoginTarget {
 const DEFAULT_SETTINGS: AppSettings = {
   ...DEFAULT_APP_SETTINGS,
   customTheme: { ...DEFAULT_APP_SETTINGS.customTheme }
+}
+
+function runWindowAction(action: 'minimize' | 'toggle-maximize' | 'close'): void {
+  if (!isTauri()) return
+  void invoke('window_action', { action })
 }
 
 export default function App(): React.JSX.Element {
@@ -62,6 +68,17 @@ export default function App(): React.JSX.Element {
     return () => {
       if (toastTimer.current) window.clearTimeout(toastTimer.current)
     }
+  }, [])
+
+  useEffect(() => {
+    if (!isTauri()) return
+    const openDevTools = (event: KeyboardEvent): void => {
+      if (event.key !== 'F12') return
+      event.preventDefault()
+      void invoke('open_devtools')
+    }
+    window.addEventListener('keydown', openDevTools)
+    return () => window.removeEventListener('keydown', openDevTools)
   }, [])
 
   const loadData = useCallback(async (): Promise<void> => {
@@ -435,9 +452,39 @@ export default function App(): React.JSX.Element {
   return (
     <I18nProvider language={settings.language}>
     <>
-      <div className="window-titlebar" aria-hidden="true">
-        <img className="window-titlebar__logo" src={logoUrl} alt="" />
-        <span>AutoLogin</span>
+      <div
+        className="window-titlebar"
+        data-tauri-drag-region
+        onDoubleClick={() => runWindowAction('toggle-maximize')}
+      >
+        <img className="window-titlebar__logo" src={logoUrl} alt="" data-tauri-drag-region />
+        <span data-tauri-drag-region>AutoLogin</span>
+        {isTauri() && (
+          <div className="window-titlebar__controls">
+            <button
+              type="button"
+              aria-label="最小化"
+              onClick={() => runWindowAction('minimize')}
+            >
+              <Minus size={14} />
+            </button>
+            <button
+              type="button"
+              aria-label="最大化或还原"
+              onClick={() => runWindowAction('toggle-maximize')}
+            >
+              <Square size={12} />
+            </button>
+            <button
+              type="button"
+              className="window-titlebar__close"
+              aria-label="关闭"
+              onClick={() => runWindowAction('close')}
+            >
+              <X size={14} />
+            </button>
+          </div>
+        )}
       </div>
       {authState === 'boot' && (
         <main className="boot-screen">

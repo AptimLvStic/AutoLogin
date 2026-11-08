@@ -595,7 +595,8 @@ export interface BackupRecord {
 
 export interface AboutInfo {
   version: string
-  electronVersion: string
+  runtimeName: 'Tauri' | 'Electron'
+  runtimeVersion: string
   platform: string
   repositoryUrl: string
   dataDirectory: string

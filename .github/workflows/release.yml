@@ -1,12 +1,10 @@
-name: Build and publish Windows release
+name: Build and publish Tauri Windows release
 
 on:
   workflow_dispatch:
   push:
-    branches:
-      - main
-    paths:
-      - .github/workflows/release.yml
+    tags:
+      - "v*"
 
 permissions:
   contents: write
@@ -15,6 +13,7 @@ permissions:
 
 jobs:
   release:
+    if: github.repository == 'AptimLvStic/Tauri'
     runs-on: windows-latest
     environment:
       name: github-pages
@@ -23,6 +22,8 @@ jobs:
     steps:
       - name: Check out source
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Set up Node.js
         uses: actions/setup-node@v4
@@ -30,45 +31,72 @@ jobs:
           node-version: 22
           cache: npm
 
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Rust build
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
       - name: Install dependencies
         run: npm ci
 
       - name: Run unit tests
-        run: npm test -- --run
+        run: npm test
 
-      - name: Install Electron runtime
-        run: node node_modules/electron/install.js
-
-      - name: Build application
+      - name: Build Tauri application and NSIS installer
         run: npm run build
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ""
+          CSC_IDENTITY_AUTO_DISCOVERY: "false"
 
-      - name: Package installer
+      - name: Create updater metadata
         shell: pwsh
         run: |
-          $log = Join-Path $env:RUNNER_TEMP "electron-builder.log"
-          npx electron-builder --win nsis --x64 --publish never 2>&1 | Tee-Object -FilePath $log
-          $exitCode = $LASTEXITCODE
-          if ($exitCode -ne 0) {
-            Get-Content $log -Tail 80 | ForEach-Object {
-              Write-Output "::error title=electron-builder::$_"
-            }
-            exit $exitCode
+          $package = Get-Content package.json -Raw | ConvertFrom-Json
+          $version = $package.version
+          $installer = Get-ChildItem "src-tauri/target/release/bundle/nsis/*-setup.exe" |
+            Sort-Object LastWriteTime -Descending |
+            Select-Object -First 1
+          if (-not $installer) {
+            throw "Tauri NSIS installer was not generated."
           }
-        env:
-          CSC_IDENTITY_AUTO_DISCOVERY: "false"
+
+          $hash = [Convert]::ToBase64String(
+            [Security.Cryptography.SHA512]::Create().ComputeHash(
+              [IO.File]::ReadAllBytes($installer.FullName)
+            )
+          )
+          $releaseDate = (Get-Date).ToUniversalTime().ToString("o")
+          $latest = @(
+            "version: $version"
+            "files:"
+            "  - url: $($installer.Name)"
+            "    sha512: $hash"
+            "    size: $($installer.Length)"
+            "path: $($installer.Name)"
+            "sha512: $hash"
+            "releaseDate: '$releaseDate'"
+          ) -join "`n"
+
+          New-Item -ItemType Directory -Path outputs -Force | Out-Null
+          Copy-Item $installer.FullName (Join-Path outputs $installer.Name) -Force
+          Set-Content -Path outputs/latest.yml -Value $latest -Encoding utf8NoBOM
+          "TAURI_RELEASE_VERSION=$version" | Out-File -FilePath $env:GITHUB_ENV -Append
+          "TAURI_INSTALLER_NAME=$($installer.Name)" | Out-File -FilePath $env:GITHUB_ENV -Append
 
       - name: Publish GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: v0.9.12
-          name: AutoLogin v0.9.12
+          tag_name: v${{ env.TAURI_RELEASE_VERSION }}
+          name: AutoLogin v${{ env.TAURI_RELEASE_VERSION }}
           body_path: RELEASE_NOTES.md
           draft: false
           prerelease: false
           fail_on_unmatched_files: true
           files: |
-            outputs/AutoLogin-0.9.12-x64.exe
-            outputs/AutoLogin-0.9.12-x64.exe.blockmap
+            outputs/${{ env.TAURI_INSTALLER_NAME }}
             outputs/latest.yml
 
       - name: Stage CDN update feed
@@ -78,8 +106,7 @@ jobs:
           $updates = Join-Path $site "updates"
           New-Item -ItemType Directory -Path $updates -Force | Out-Null
           Copy-Item "outputs/latest.yml" (Join-Path $updates "latest.yml")
-          Copy-Item "outputs/AutoLogin-0.9.12-x64.exe" $updates
-          Copy-Item "outputs/AutoLogin-0.9.12-x64.exe.blockmap" $updates
+          Copy-Item "outputs/$env:TAURI_INSTALLER_NAME" $updates
           New-Item -ItemType File -Path (Join-Path $site ".nojekyll") -Force | Out-Null
 
       - name: Configure GitHub Pages

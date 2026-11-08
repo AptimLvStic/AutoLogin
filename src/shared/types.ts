@@ -595,10 +595,7 @@ export interface BackupRecord {
 
 export interface AboutInfo {
   version: string
-  runtimeName: 'Tauri' | 'Electron'
-  runtimeVersion: string
   platform: string
-  repositoryUrl: string
   dataDirectory: string
 }
 
@@ -718,8 +715,6 @@ export interface AutologinApi {
     downloadUpdate: () => Promise<AppUpdateState>
     cancelUpdate: () => Promise<AppUpdateState>
     installUpdate: () => Promise<void>
-    openRepository: () => Promise<void>
-    openReleases: () => Promise<void>
     getDataLocation: () => Promise<DataLocationInfo>
     chooseDataLocation: () => Promise<DataLocationInfo | null>
     restoreDefaultDataLocation: () => Promise<DataLocationInfo>

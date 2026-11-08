@@ -562,7 +562,6 @@ export default function App(): React.JSX.Element {
           onDownload={() => void downloadUpdate()}
           onCancel={cancelUpdate}
           onInstall={() => void installUpdate()}
-          onOpenRelease={() => void window.autologin.app.openReleases()}
           onRetry={() => void retryUpdate()}
         />
       )}

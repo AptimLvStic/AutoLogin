@@ -1827,13 +1827,7 @@ function registerIpc(): void {
     assertTrustedSender(event)
     return {
       version: app.getVersion(),
-      runtimeName: process.versions.electron ? 'Electron' : 'Tauri',
-      runtimeVersion:
-        process.versions.electron ??
-        process.env.AUTOLOGIN_RUNTIME_VERSION?.trim() ??
-        '',
       platform: process.platform,
-      repositoryUrl: REPOSITORY_URL,
       dataDirectory
     }
   })
@@ -1856,14 +1850,6 @@ function registerIpc(): void {
   ipcMain.handle('app:install-update', async (event): Promise<void> => {
     assertTrustedSender(event)
     await installUpdate()
-  })
-  ipcMain.handle('app:open-repository', async (event) => {
-    assertTrustedSender(event)
-    await openExternalUrl(REPOSITORY_URL)
-  })
-  ipcMain.handle('app:open-releases', async (event) => {
-    assertTrustedSender(event)
-    await openExternalUrl(RELEASES_URL)
   })
   ipcMain.handle('app:get-data-location', (event): DataLocationInfo => {
     assertTrustedSender(event)

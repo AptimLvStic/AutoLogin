@@ -1,7 +1,8 @@
 {
   "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
   "productName": "AutoLogin",
-  "version": "0.10.0",
+  "mainBinaryName": "AutoLogin",
+  "version": "0.10.1",
   "identifier": "com.autologin.desktop",
   "build": {
     "frontendDist": "../dist",

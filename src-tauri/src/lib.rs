@@ -14,6 +14,10 @@ use tokio::sync::oneshot;
 
 type BackendResult = Result<Value, String>;
 
+fn simplified_path(path: PathBuf) -> PathBuf {
+    dunce::simplified(&path).to_path_buf()
+}
+
 struct BackendClient {
     stdin: Mutex<ChildStdin>,
     child: Mutex<Child>,
@@ -24,14 +28,16 @@ struct BackendClient {
 impl BackendClient {
     fn start(app: tauri::AppHandle) -> Result<Self, String> {
         let (node_path, script_path, resource_root) = backend_paths(&app)?;
-        let default_user_data_dir = app
-            .path()
-            .data_dir()
-            .map_err(|error| format!("无法读取应用数据目录：{error}"))?
-            .join("AutoLogin");
+        let default_user_data_dir = simplified_path(
+            app.path()
+                .data_dir()
+                .map_err(|error| format!("无法读取应用数据目录：{error}"))?
+                .join("AutoLogin"),
+        );
         let user_data_dir = if cfg!(debug_assertions) {
             std::env::var_os("AUTOLOGIN_USER_DATA_DIR")
                 .map(PathBuf::from)
+                .map(simplified_path)
                 .unwrap_or_else(|| default_user_data_dir.clone())
         } else {
             default_user_data_dir
@@ -39,12 +45,15 @@ impl BackendClient {
         let pointer_dir = if cfg!(debug_assertions) {
             std::env::var_os("AUTOLOGIN_DATA_LOCATION_POINTER_DIR")
                 .map(PathBuf::from)
+                .map(simplified_path)
                 .unwrap_or_else(|| user_data_dir.clone())
         } else {
             user_data_dir.clone()
         };
-        let executable = std::env::current_exe()
-            .map_err(|error| format!("无法读取应用可执行文件路径：{error}"))?;
+        let executable = simplified_path(
+            std::env::current_exe()
+                .map_err(|error| format!("无法读取应用可执行文件路径：{error}"))?,
+        );
         let app_version = app.package_info().version.to_string();
 
         let mut command = Command::new(&node_path);
@@ -55,7 +64,6 @@ impl BackendClient {
             .stderr(Stdio::piped())
             .env("AUTOLOGIN_RESOURCE_DIR", &resource_root)
             .env("AUTOLOGIN_APP_VERSION", app_version)
-            .env("AUTOLOGIN_RUNTIME_VERSION", tauri::VERSION)
             .env(
                 "AUTOLOGIN_IS_PACKAGED",
                 if cfg!(debug_assertions) { "0" } else { "1" },
@@ -86,19 +94,19 @@ impl BackendClient {
 
         let mut child = command
             .spawn()
-            .map_err(|error| format!("无法启动 AutoLogin Tauri 后端：{error}"))?;
+            .map_err(|error| format!("无法启动本地服务：{error}"))?;
         let stdin = child
             .stdin
             .take()
-            .ok_or_else(|| "Tauri 后端标准输入不可用".to_string())?;
+            .ok_or_else(|| "本地服务输入通道不可用".to_string())?;
         let stdout = child
             .stdout
             .take()
-            .ok_or_else(|| "Tauri 后端标准输出不可用".to_string())?;
+            .ok_or_else(|| "本地服务输出通道不可用".to_string())?;
         let stderr = child
             .stderr
             .take()
-            .ok_or_else(|| "Tauri 后端标准错误不可用".to_string())?;
+            .ok_or_else(|| "本地服务错误通道不可用".to_string())?;
         let pending = Arc::new(Mutex::new(
             HashMap::<u64, oneshot::Sender<BackendResult>>::new(),
         ));
@@ -112,18 +120,18 @@ impl BackendClient {
                     break;
                 };
                 let Ok(message) = serde_json::from_str::<Value>(&line) else {
-                    eprintln!("[tauri-backend] {line}");
+                    eprintln!("[local-service] {line}");
                     continue;
                 };
                 handle_backend_message(&response_app, &response_pending, message);
             }
-            fail_pending(&response_pending, "Tauri 后端已退出");
+            fail_pending(&response_pending, "本地服务已退出，请重新启动应用");
         });
 
         std::thread::spawn(move || {
             let reader = BufReader::new(stderr);
             for line in reader.lines().map_while(Result::ok) {
-                eprintln!("[tauri-backend] {line}");
+                eprintln!("[local-service] {line}");
             }
         });
 
@@ -140,7 +148,7 @@ impl BackendClient {
         let (sender, receiver) = oneshot::channel();
         self.pending
             .lock()
-            .map_err(|_| "Tauri 后端请求表已损坏".to_string())?
+            .map_err(|_| "本地服务请求状态不可用".to_string())?
             .insert(id, sender);
 
         let payload = json!({
@@ -153,15 +161,18 @@ impl BackendClient {
             let mut stdin = self
                 .stdin
                 .lock()
-                .map_err(|_| "Tauri 后端输入流已损坏".to_string())?;
+                .map_err(|_| "本地服务输入通道不可用".to_string())?;
             writeln!(stdin, "{payload}")
                 .and_then(|_| stdin.flush())
-                .map_err(|error| format!("无法写入 Tauri 后端请求：{error}"))?;
+                .map_err(|error| {
+                    eprintln!("[local-service] write failed: {error}");
+                    "本地服务连接已断开，请重新启动应用".to_string()
+                })?;
         }
 
         receiver
             .await
-            .map_err(|_| "Tauri 后端响应通道已关闭".to_string())?
+            .map_err(|_| "本地服务响应通道已关闭".to_string())?
     }
 
     fn shutdown(&self) {
@@ -181,16 +192,17 @@ fn backend_paths(app: &tauri::AppHandle) -> Result<(PathBuf, PathBuf, PathBuf), 
             .parent()
             .ok_or_else(|| "无法定位 AutoLogin 项目目录".to_string())?;
         return Ok((
-            manifest.join("resources/bin/node.exe"),
-            project_root.join("dist-backend/backend.cjs"),
-            project_root.join("resources"),
+            simplified_path(manifest.join("resources/bin/node.exe")),
+            simplified_path(project_root.join("dist-backend/backend.cjs")),
+            simplified_path(project_root.join("resources")),
         ));
     }
 
-    let resource_root = app
-        .path()
-        .resource_dir()
-        .map_err(|error| format!("无法读取 Tauri 资源目录：{error}"))?;
+    let resource_root = simplified_path(
+        app.path()
+            .resource_dir()
+            .map_err(|error| format!("无法读取应用资源目录：{error}"))?,
+    );
     Ok((
         resource_root.join("bin/node.exe"),
         resource_root.join("backend/backend.cjs"),
@@ -233,7 +245,7 @@ fn handle_backend_message(
         Err(message
             .get("error")
             .and_then(Value::as_str)
-            .unwrap_or("Tauri 后端操作失败")
+            .unwrap_or("本地服务操作失败")
             .to_string())
     };
     let _ = sender.send(result);
@@ -347,7 +359,7 @@ pub fn run() {
             Ok(())
         })
         .build(tauri::generate_context!())
-        .expect("error while building AutoLogin Tauri application");
+        .expect("failed to start AutoLogin");
 
     app.run(|app_handle, event| {
         if matches!(event, RunEvent::Exit | RunEvent::ExitRequested { .. }) {

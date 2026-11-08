@@ -1,7 +1,7 @@
 [package]
 name = "autologin-tauri"
-version = "0.10.0"
-description = "AutoLogin Tauri desktop application"
+version = "0.10.1"
+description = "AutoLogin desktop application"
 authors = ["AutoLogin"]
 license = "UNLICENSED"
 repository = ""
@@ -18,6 +18,7 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 tauri-build = { version = "2.7.4", features = [] }
 
 [dependencies]
+dunce = "1.0.5"
 serde_json = "1.0"
 serde = { version = "1.0", features = ["derive"] }
 tauri = { version = "2.12.5", features = ["devtools"] }

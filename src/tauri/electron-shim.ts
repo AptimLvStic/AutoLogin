@@ -133,7 +133,7 @@ export async function dispatchBackendRequest(
     return undefined
   }
 
-  throw new Error(`未知的 Tauri 后端命令：${channel}`)
+  throw new Error(`未知的本地服务命令：${channel}`)
 }
 
 export function backendHandlerCount(): number {
@@ -312,7 +312,7 @@ export class BrowserWindow {
 export const ipcMain = {
   handle: (channel: string, handler: IpcHandler): void => {
     if (ipcHandlers.has(channel)) {
-      throw new Error(`Tauri IPC handler already registered: ${channel}`)
+      throw new Error(`本地服务命令重复注册：${channel}`)
     }
     ipcHandlers.set(channel, handler)
   },

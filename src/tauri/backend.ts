@@ -49,7 +49,7 @@ async function waitForBackend(): Promise<void> {
     if (backendHandlerCount() > 0) return
     await new Promise((resolvePromise) => setTimeout(resolvePromise, 25))
   }
-  throw new Error('Tauri 后端未完成初始化')
+  throw new Error('本地服务未完成初始化')
 }
 
 async function main(): Promise<void> {
@@ -67,7 +67,7 @@ async function main(): Promise<void> {
     try {
       request = JSON.parse(line) as BackendRequest
     } catch {
-      console.error('Ignoring malformed Tauri request')
+      console.error('Ignoring malformed local service request')
       return
     }
     if (request.type !== 'call' || typeof request.channel !== 'string') {
@@ -91,12 +91,12 @@ async function main(): Promise<void> {
   })
 
   input.on('close', () => {
-    originalConsole.info('Tauri backend input closed')
+    originalConsole.info('Local service input closed')
     process.exit(0)
   })
 }
 
 void main().catch((error) => {
-  console.error('Tauri backend failed to start', error)
+  console.error('Local service failed to start', error)
   process.exit(1)
 })

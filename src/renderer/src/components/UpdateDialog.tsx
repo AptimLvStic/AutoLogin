@@ -2,7 +2,6 @@ import { useState } from 'react'
 import {
   CheckCircle2,
   Download,
-  ExternalLink,
   LoaderCircle,
   RefreshCw,
   TriangleAlert,
@@ -18,7 +17,6 @@ export function UpdateDialog({
   onDownload,
   onCancel,
   onInstall,
-  onOpenRelease,
   onRetry
 }: {
   state: AppUpdateState
@@ -26,7 +24,6 @@ export function UpdateDialog({
   onDownload: () => void
   onCancel: () => Promise<void>
   onInstall: () => void
-  onOpenRelease: () => void
   onRetry: () => void
 }): React.JSX.Element {
   const { tr, formatDate } = useI18n()
@@ -114,10 +111,6 @@ export function UpdateDialog({
       <div className="update-dialog__actions">
         <button type="button" className="button button--ghost" onClick={onLater}>
           {tr('稍后提醒', 'Later', '稍後提醒')}
-        </button>
-        <button type="button" className="text-button" onClick={onOpenRelease}>
-          {tr('打开发布页', 'Open release page', '開啟發佈頁')}
-          <ExternalLink size={13} />
         </button>
         <span className="update-dialog__action-spacer" />
         {state.phase === 'available' && (

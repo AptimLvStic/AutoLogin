@@ -80,7 +80,6 @@ describe('UpdateDialog Markdown', () => {
       onDownload,
       onCancel: vi.fn(async () => undefined),
       onInstall: vi.fn(),
-      onOpenRelease: vi.fn(),
       onRetry: vi.fn()
     }
     act(() => {
@@ -159,7 +158,6 @@ describe('UpdateDialog Markdown', () => {
               onDownload: vi.fn(),
               onCancel,
               onInstall: vi.fn(),
-              onOpenRelease: vi.fn(),
               onRetry: vi.fn()
             })
           }

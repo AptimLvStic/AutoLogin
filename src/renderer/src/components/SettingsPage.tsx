@@ -5,7 +5,6 @@ import {
   ChevronRight,
   Database,
   Download,
-  ExternalLink,
   FolderOpen,
   Info,
   Keyboard,
@@ -1407,9 +1406,9 @@ export function SettingsPage({
             icon={<Info size={18} />}
             title={tr('版本与发布', 'Version and releases', '版本與發佈')}
             description={tr(
-              '查看版本、源代码和 GitHub 发布信息。',
-              'View version, source code and GitHub releases.',
-              '查看版本、原始碼和 GitHub 發佈資訊。'
+              '查看当前版本和更新信息。',
+              'View the current version and update information.',
+              '查看目前版本和更新資訊。'
             )}
           >
             <div className="settings-card">
@@ -1425,19 +1424,10 @@ export function SettingsPage({
               <div className="settings-about-grid">
                 <span>{tr('版本', 'Version', '版本')}</span>
                 <strong>v{about?.version ?? appVersion}</strong>
-                <span>{about?.runtimeName ?? 'Tauri'}</span>
-                <strong>{about?.runtimeVersion || '—'}</strong>
                 <span>{tr('平台', 'Platform', '平台')}</span>
                 <strong>{about ? platformLabel(about.platform) : 'Windows'}</strong>
               </div>
               <div className="settings-inline-actions">
-                <button
-                  className="text-button"
-                  onClick={() => void window.autologin.app.openRepository()}
-                >
-                  {tr('源代码仓库', 'Source repository', '原始碼儲存庫')}{' '}
-                  <ExternalLink size={13} />
-                </button>
                 <button
                   className="text-button"
                   onClick={() => void window.autologin.app.openPrivacy()}
@@ -1452,9 +1442,9 @@ export function SettingsPage({
                 icon={<RefreshCw size={17} />}
                 title={tr('检查更新', 'Check for updates', '檢查更新')}
                 description={tr(
-                  '从 GitHub Releases 获取版本信息，不会上传任何本地数据。',
-                  'Read version information from GitHub Releases without uploading local data.',
-                  '從 GitHub Releases 取得版本資訊，不會上傳任何本機資料。'
+                  '从官方更新源获取版本信息，不会上传任何本地数据。',
+                  'Read version information from the official update source without uploading local data.',
+                  '從官方更新來源取得版本資訊，不會上傳任何本機資料。'
                 )}
               />
               <div className="settings-update-row">
@@ -1472,12 +1462,6 @@ export function SettingsPage({
                   {checkingUpdates
                     ? tr('正在检查…', 'Checking…', '正在檢查…')
                     : tr('检查更新', 'Check now', '檢查更新')}
-                </button>
-                <button
-                  className="button button--ghost"
-                  onClick={() => void window.autologin.app.openReleases()}
-                >
-                  {tr('打开发布页', 'Open releases', '開啟發佈頁')}
                 </button>
               </div>
               {updateResult && (
@@ -1501,14 +1485,6 @@ export function SettingsPage({
                       </small>
                     )}
                   </span>
-                  {updateResult.status === 'available' && (
-                    <button
-                      className="text-button"
-                      onClick={() => void window.autologin.app.openReleases()}
-                    >
-                      {tr('查看发布', 'View release', '查看發佈')}
-                    </button>
-                  )}
                 </div>
               )}
               {updateState &&

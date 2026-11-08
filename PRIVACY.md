@@ -37,7 +37,7 @@ AutoLogin 默认在 `%APPDATA%\AutoLogin` 中保存数据，也可在设置中�
 
 ## 网站会话
 
-单账号登录使用 `%APPDATA%\AutoLogin\BrowserProfiles\<accountId>` 中独立的浏览器配置目录。批量登录使用 `%APPDATA%\AutoLogin\BrowserProfiles\batch` 共享配置目录，并在同一个 Chromium 窗口的多个标签页中打开所选站点。Cookie、缓存和网站本地存储由 Windows 默认的 Chromium 浏览器与 Windows 用户级机制保护，不受保险库主密码直接加密。
+单账号登录使用 `%APPDATA%\AutoLogin\BrowserProfiles\<accountId>` 中独立的浏览器配置目录。批量登录使用 `%APPDATA%\AutoLogin\BrowserProfiles\batch` 共享配置目录，并在同一个浏览器窗口的多个标签页中打开所选站点。Cookie、缓存和网站本地存储由 Windows 默认浏览器与 Windows 用户级机制保护，不受保险库主密码直接加密。
 
 AutoLogin 通过 Windows 注册表识别默认浏览器，并使用仅绑定 `127.0.0.1` 的随机本地调试端口连接该浏览器。该端口只在活动登录会话期间存在，不会监听局域网地址。Firefox 和 Internet Explorer 暂不支持自动填充。
 
@@ -93,7 +93,7 @@ AutoLogin 在用户主动打开站点时通过 Windows 默认浏览器连接目�
 
 AutoLogin 不绕过验证码、短信验证、二次验证或网站风控。遇到验证流程时会停止自动提交，并把焦点交给默认浏览器中的用户。
 
-自动填充代理运行在默认浏览器的隔离 CDP world 中，目标网页无法访问 Electron 或 Node.js API。自动填充只在站点允许来源内执行；页面跳转到新来源时会暂停并要求用户确认。应用禁止 `file:`、`data:` 和 `javascript:` 页面地址。
+自动填充代理运行在默认浏览器的隔离环境中，目标网页无法访问应用内部 API。自动填充只在站点允许来源内执行；页面跳转到新来源时会暂停并要求用户确认。应用禁止 `file:`、`data:` 和 `javascript:` 页面地址。
 
 ## 联系与变更
 

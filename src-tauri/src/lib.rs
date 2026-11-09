@@ -11,6 +11,7 @@ use std::{
 };
 use tauri::{Emitter, Manager, RunEvent, State, WebviewWindow};
 use tokio::sync::oneshot;
+use tokio::time::{Duration, timeout};
 
 type BackendResult = Result<Value, String>;
 
@@ -166,13 +167,28 @@ impl BackendClient {
                 .and_then(|_| stdin.flush())
                 .map_err(|error| {
                     eprintln!("[local-service] write failed: {error}");
+                    if let Ok(mut pending) = self.pending.lock() {
+                        pending.remove(&id);
+                    }
                     "本地服务连接已断开，请重新启动应用".to_string()
                 })?;
         }
 
-        receiver
-            .await
-            .map_err(|_| "本地服务响应通道已关闭".to_string())?
+        let wait_for = backend_timeout(&channel);
+        match timeout(wait_for, receiver).await {
+            Ok(result) => {
+                result.map_err(|_| "本地服务响应通道已关闭".to_string())?
+            }
+            Err(_) => {
+                if let Ok(mut pending) = self.pending.lock() {
+                    pending.remove(&id);
+                }
+                Err(format!(
+                    "本地操作超时（{} 秒），请重试或重新启动应用",
+                    wait_for.as_secs()
+                ))
+            }
+        }
     }
 
     fn shutdown(&self) {
@@ -184,6 +200,25 @@ impl BackendClient {
 }
 
 struct BackendState(Arc<BackendClient>);
+
+fn backend_timeout(channel: &str) -> Duration {
+    if channel.contains(":choose-")
+        || matches!(
+            channel,
+            "data:export-vault"
+                | "data:export-csv-template"
+                | "data:import-csv"
+                | "data:import-database"
+                | "data:import-kdbx"
+                | "data:import-autologin"
+                | "data:import-bookmarks"
+        )
+    {
+        Duration::from_secs(10 * 60)
+    } else {
+        Duration::from_secs(30)
+    }
+}
 
 fn backend_paths(app: &tauri::AppHandle) -> Result<(PathBuf, PathBuf, PathBuf), String> {
     if cfg!(debug_assertions) {
@@ -315,6 +350,61 @@ async fn backend_call(
     state.0.request(channel, args).await
 }
 
+#[cfg(windows)]
+fn open_path_native(path: &std::path::Path) -> Result<(), String> {
+    use std::{ffi::c_void, os::windows::ffi::OsStrExt, ptr::null_mut};
+
+    #[link(name = "shell32")]
+    unsafe extern "system" {
+        fn ShellExecuteW(
+            hwnd: *mut c_void,
+            operation: *const u16,
+            file: *const u16,
+            parameters: *const u16,
+            directory: *const u16,
+            show_command: i32,
+        ) -> *mut c_void;
+    }
+
+    let operation: Vec<u16> = "open\0".encode_utf16().collect();
+    let file: Vec<u16> = path
+        .as_os_str()
+        .encode_wide()
+        .chain(std::iter::once(0))
+        .collect();
+    let result = unsafe {
+        ShellExecuteW(
+            null_mut(),
+            operation.as_ptr(),
+            file.as_ptr(),
+            std::ptr::null(),
+            std::ptr::null(),
+            1,
+        )
+    };
+    let result_code = result as isize;
+    if result_code <= 32 {
+        return Err(format!("无法调用系统资源管理器（错误码 {result_code}）"));
+    }
+    Ok(())
+}
+
+#[tauri::command]
+fn open_path(path: String) -> Result<(), String> {
+    let path = PathBuf::from(path);
+    if !path.exists() {
+        return Err("文件不存在".to_string());
+    }
+    #[cfg(windows)]
+    {
+        open_path_native(&path)
+    }
+    #[cfg(not(windows))]
+    {
+        Err("当前平台不支持打开本地文件夹".to_string())
+    }
+}
+
 #[tauri::command]
 fn window_action(window: WebviewWindow, action: String) -> Result<(), String> {
     match action.as_str() {
@@ -349,6 +439,7 @@ pub fn run() {
         }))
         .invoke_handler(tauri::generate_handler![
             backend_call,
+            open_path,
             window_action,
             open_devtools
         ])

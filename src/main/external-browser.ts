@@ -62,11 +62,13 @@ export interface ExternalBrowserHostOptions {
   profileDirectory: string
   headless: boolean
   proxy?: ProxySettings
+  initialUrl?: string
 }
 
 interface ExternalBrowserPageOptions {
   onEvent: (event: ExternalBrowserEvent) => void
   onClosed: () => void
+  initialUrl?: string
 }
 
 interface TargetInfo {
@@ -156,16 +158,21 @@ export class ExternalBrowserHost {
       '--no-first-run',
       '--no-default-browser-check',
       '--disable-background-mode',
-      '--disable-background-timer-throttling',
-      '--disable-backgrounding-occluded-windows',
-      '--disable-renderer-backgrounding',
       // The managed profile is isolated to AutoLogin. This allows legacy
       // intranet sites with self-signed or private-CA certificates to load.
       '--ignore-certificate-errors',
       ...proxyArguments(options.proxy),
-      ...(options.headless ? ['--headless=new', '--disable-gpu'] : []),
+      ...(options.headless
+        ? [
+            '--headless=new',
+            '--disable-gpu',
+            '--disable-background-timer-throttling',
+            '--disable-backgrounding-occluded-windows',
+            '--disable-renderer-backgrounding'
+          ]
+        : []),
       '--new-window',
-      'about:blank'
+      options.initialUrl ?? 'about:blank'
     ]
     const child = spawn(options.browser.executablePath, args, {
       stdio: 'ignore',
@@ -190,7 +197,7 @@ export class ExternalBrowserHost {
     await previous
     try {
       const client = this.requireClient()
-      const targetId = await this.acquireTarget()
+      const targetId = await this.acquireTarget(options.initialUrl)
       const attached = await client.send<AttachTargetResult>(
         'Target.attachToTarget',
         { targetId, flatten: true }
@@ -245,6 +252,10 @@ export class ExternalBrowserHost {
     this.notifyCloseOnce()
   }
 
+  isClosed(): boolean {
+    return this.closed || this.closing
+  }
+
   async closePage(page: ExternalBrowserPage): Promise<void> {
     this.detachPage(page)
     const client = this.client
@@ -281,7 +292,7 @@ export class ExternalBrowserHost {
     await this.requireClient().send('Target.setDiscoverTargets', { discover: true })
   }
 
-  private async acquireTarget(): Promise<string> {
+  private async acquireTarget(initialUrl?: string): Promise<string> {
     const client = this.requireClient()
     if (!this.initialTargetId) {
       const response = await client.send<{ targetInfos?: TargetInfo[] }>('Target.getTargets')
@@ -289,7 +300,13 @@ export class ExternalBrowserHost {
         (target) => target.type === 'page' && !this.targetToPage.has(target.targetId)
       )
       const target =
-        availablePages.find((entry) => entry.url === 'about:blank') ?? availablePages[0]
+        (initialUrl
+          ? availablePages.find((entry) => entry.url === initialUrl)
+            ?? availablePages.find((entry) => isHttpUrl(entry.url))
+          : undefined) ??
+        (!initialUrl
+          ? availablePages.find((entry) => entry.url === 'about:blank') ?? availablePages[0]
+          : undefined)
       if (target) {
         this.initialTargetId = target.targetId
         return target.targetId
@@ -297,10 +314,25 @@ export class ExternalBrowserHost {
     }
 
     const created = await client.send<{ targetId: string }>('Target.createTarget', {
-      url: 'about:blank',
+      url: initialUrl ?? 'about:blank',
       newWindow: false,
       background: true
     })
+    if (!this.initialTargetId && initialUrl) {
+      const response = await client.send<{ targetInfos?: TargetInfo[] }>('Target.getTargets')
+      const blankTarget = (response.targetInfos ?? []).find(
+        (target) =>
+          target.type === 'page' &&
+          target.url === 'about:blank' &&
+          target.targetId !== created.targetId
+      )
+      if (blankTarget) {
+        this.initialTargetId = created.targetId
+        await client
+          .send('Target.closeTarget', { targetId: blankTarget.targetId }, undefined, 2_000)
+          .catch(() => undefined)
+      }
+    }
     return created.targetId
   }
 
@@ -424,7 +456,19 @@ export class ExternalBrowserPage {
       },
       this.sessionId
     )
-    await this.waitForAgentContext(5_000).catch(() => null)
+    // Background automation stays responsive without disabling Chromium throttling globally.
+    await this.setAutomationActive(true)
+    const contextId = await this.waitForAgentContext(5_000).catch(() => null)
+    if (contextId !== null) {
+      const current = await this.evaluateSnapshot(contextId).catch(() => null)
+      if (current) {
+        this.snapshot = {
+          url: current.url || this.snapshot.url,
+          title: current.title,
+          loading: current.readyState !== 'complete'
+        }
+      }
+    }
   }
 
   getSnapshot(): ExternalBrowserSnapshot {
@@ -500,6 +544,20 @@ export class ExternalBrowserPage {
 
   async focus(): Promise<void> {
     await this.requireClient().send('Page.bringToFront', {}, this.sessionId)
+  }
+
+  async setAutomationActive(active: boolean): Promise<void> {
+    if (this.closed) {
+      return
+    }
+    await this.requireClient()
+      .send(
+        'Emulation.setFocusEmulationEnabled',
+        { enabled: active },
+        this.sessionId,
+        3_000
+      )
+      .catch(() => undefined)
   }
 
   async close(): Promise<void> {

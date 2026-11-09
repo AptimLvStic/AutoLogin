@@ -241,6 +241,28 @@ describe('data transfer', () => {
       username: '',
       password: ''
     })
+
+    const vault = emptyVault()
+    vault.tabs.push({
+      id: 'bookmarks',
+      name: 'Chrome 书签',
+      color: '#D97706',
+      source: 'bookmarks',
+      hidden: false,
+      createdAt: '1970-01-01T00:00:00.000Z',
+      updatedAt: '1970-01-01T00:00:00.000Z'
+    })
+    const merged = mergeImportedLogins(vault, 'bookmarks', parsed, 'bookmarks')
+    expect(
+      merged.data.groupDefinitions.map(({ tabId, path }) => ({ tabId, path }))
+    ).toEqual([
+      { tabId: 'bookmarks', path: '工作' },
+      { tabId: 'bookmarks', path: '工作 / 客户' }
+    ])
+    expect(merged.data.settings.groupOrders).toEqual({
+      bookmarks: ['工作', '工作 / 客户']
+    })
+    expect(merged.data.settings.groupOrder).toEqual([])
   })
 
   it('imports KeePassXC entries from an Argon2d KDBX database', async () => {

@@ -29,7 +29,8 @@ export function AccountTransferControls({
   notify,
   renderControls = true,
   openDatabaseRequest = 0,
-  onDatabaseBusyChange
+  onDatabaseBusyChange,
+  creatingTab = false
 }: {
   tabId: string
   onCreateTab: () => Promise<void>
@@ -38,6 +39,7 @@ export function AccountTransferControls({
   renderControls?: boolean
   openDatabaseRequest?: number
   onDatabaseBusyChange?: (busy: boolean) => void
+  creatingTab?: boolean
 }): React.JSX.Element {
   const { tr } = useI18n()
   const [menuOpen, setMenuOpen] = useState(false)
@@ -65,8 +67,8 @@ export function AccountTransferControls({
   const lastOpenDatabaseRequestRef = useRef(0)
 
   useEffect(() => {
-    onDatabaseBusyChange?.(importBusy || kdbxBusy || autologinBusy)
-  }, [autologinBusy, importBusy, kdbxBusy, onDatabaseBusyChange])
+    onDatabaseBusyChange?.(creatingTab || importBusy || kdbxBusy || autologinBusy)
+  }, [autologinBusy, creatingTab, importBusy, kdbxBusy, onDatabaseBusyChange])
 
   useEffect(() => {
     if (
@@ -180,7 +182,10 @@ export function AccountTransferControls({
     setImportBusy(true)
     try {
       const selection = await window.autologin.data.chooseDatabase()
-      if (!selection) return
+      if (!selection) {
+        notify('info', tr('已取消打开数据库', 'Opening the database was cancelled.', '已取消開啟資料庫'))
+        return
+      }
       if (selection.kind === 'existing') {
         onImported({
           source: selection.source,
@@ -299,6 +304,8 @@ export function AccountTransferControls({
             `CSV 範本已儲存：${result.fileName ?? ''}`
           )
         )
+      } else {
+        notify('info', tr('已取消保存 CSV 模板', 'CSV template save cancelled.', '已取消儲存 CSV 範本'))
       }
     } catch (error) {
       notify(
@@ -333,6 +340,8 @@ export function AccountTransferControls({
             `已匯出：${result.fileName ?? ''}`
           )
         )
+      } else {
+        notify('info', tr('已取消导出', 'Export cancelled.', '已取消匯出'))
       }
       return result
     } catch (error) {
@@ -395,7 +404,7 @@ export function AccountTransferControls({
           type="button"
           className="account-tabs__add"
           onClick={() => setCreateMenuOpen((open) => !open)}
-          disabled={importBusy || kdbxBusy || autologinBusy}
+          disabled={creatingTab || importBusy || kdbxBusy || autologinBusy}
           aria-label={tr(
             '新增标签页或打开数据库',
             'Add tab or open database',
@@ -409,7 +418,7 @@ export function AccountTransferControls({
           aria-haspopup="menu"
           aria-expanded={createMenuOpen}
         >
-          {importBusy || kdbxBusy || autologinBusy ? (
+          {creatingTab || importBusy || kdbxBusy || autologinBusy ? (
             <LoaderCircle size={15} className="spin" />
           ) : (
             <Plus size={15} />
@@ -448,7 +457,7 @@ export function AccountTransferControls({
           type="button"
           className="account-tabs__tool"
           onClick={() => setMenuOpen((open) => !open)}
-          disabled={importBusy || templateBusy}
+          disabled={importBusy || templateBusy || creatingTab}
           aria-label={tr('导入账号', 'Import accounts', '匯入帳號')}
           title={tr('导入账号', 'Import accounts', '匯入帳號')}
           aria-haspopup="menu"

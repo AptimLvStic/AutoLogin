@@ -155,13 +155,14 @@ describe('database files', () => {
       '财务数据.csv',
       '书签.html'
     ])
-    for (const fileName of [
-      '本地账号.autologin',
-      '工作账号.kdbx',
-      '财务数据.csv',
-      '书签.html'
-    ]) {
-      expect(existsSync(join(tabsDirectory, fileName))).toBe(true)
+    const expectedFiles: Array<[string, string]> = [
+      ['autologin', '本地账号.autologin'],
+      ['kdbx', '工作账号.kdbx'],
+      ['csv', '财务数据.csv'],
+      ['bookmarks', '书签.html']
+    ]
+    for (const [folder, fileName] of expectedFiles) {
+      expect(existsSync(join(tabsDirectory, folder, fileName))).toBe(true)
     }
     expect(
       existsSync(join(tabsDirectory, 'tab-local.autologin'))

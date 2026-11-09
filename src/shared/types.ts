@@ -652,6 +652,7 @@ export interface AutologinApi {
     create: (input?: AccountTabCreateInput) => Promise<AccountTab>
     update: (tabId: string, input: AccountTabUpdateInput) => Promise<AccountTab>
     delete: (tabId: string) => Promise<void>
+    purge: (tabId: string) => Promise<void>
     reveal: (tabId: string) => Promise<void>
   }
   groups: {

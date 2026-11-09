@@ -6,6 +6,7 @@ import {
   LoaderCircle,
   RefreshCw,
   SearchX,
+  TriangleAlert,
   Trash2
 } from 'lucide-react'
 import type { AppLogEntry, AppLogLevel } from '@shared/types'
@@ -31,6 +32,7 @@ export function AppLogsPage({
   const { tr, formatDate } = useI18n()
   const [logs, setLogs] = useState<AppLogEntry[]>([])
   const [loading, setLoading] = useState(true)
+  const [loadError, setLoadError] = useState('')
   const [date, setDate] = useState('')
   const [status, setStatus] = useState<AppLogStatusFilter>('all')
   const [pageSize, setPageSize] = useState<LogPageSize>(20)
@@ -83,9 +85,13 @@ export function AppLogsPage({
 
   async function load(): Promise<void> {
     setLoading(true)
+    setLoadError('')
     try {
       setLogs(await window.autologin.app.listAppLogs(500))
     } catch (error) {
+      setLoadError(
+        error instanceof Error ? error.message : tr('读取软件日志失败', 'Could not read app logs.', '讀取軟體日誌失敗')
+      )
       notify(
         'error',
         error instanceof Error
@@ -297,6 +303,16 @@ export function AppLogsPage({
           <div className="logs-empty">
             <LoaderCircle size={22} className="spin" />
             <span>{tr('正在读取软件日志', 'Reading app logs', '正在讀取軟體日誌')}</span>
+          </div>
+        ) : loadError ? (
+          <div className="logs-empty">
+            <TriangleAlert size={24} />
+            <strong>{tr('读取日志失败', 'Could not read logs', '讀取日誌失敗')}</strong>
+            <span>{loadError}</span>
+            <button className="button button--soft" onClick={() => void load()}>
+              <RefreshCw size={15} />
+              {tr('重试', 'Retry', '重試')}
+            </button>
           </div>
         ) : visible.length === 0 ? (
           <div className="logs-empty">

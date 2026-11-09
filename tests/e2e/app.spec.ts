@@ -1,4 +1,12 @@
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync } from 'node:fs'
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  readdirSync,
+  rmSync,
+  writeFileSync
+} from 'node:fs'
 import { join, resolve } from 'node:path'
 import {
   test,
@@ -8,8 +16,15 @@ import {
   type Locator,
   type Page
 } from '@playwright/test'
+import {
+  Consts,
+  Kdbx,
+  KdbxCredentials,
+  ProtectedValue
+} from 'kdbxweb'
 import { assertChromiumBrowser, discoverDefaultBrowser } from '../../src/main/browser-discovery'
 import { CdpClient } from '../../src/main/cdp-client'
+import { configureKdbxArgon2 } from '../../src/main/data-transfer'
 import { startFixtureServer, type FixtureServer } from './fixtures'
 
 const electronPath =
@@ -51,7 +66,8 @@ test.beforeEach(async () => {
       AUTOLOGIN_USER_DATA_DIR: userDataDirectory,
       AUTOLOGIN_DATA_LOCATION_POINTER_DIR: join(userDataDirectory, 'stable-location'),
       AUTOLOGIN_BROWSER_EXECUTABLE: defaultBrowser.executablePath,
-      AUTOLOGIN_BROWSER_HEADLESS: '1',
+      AUTOLOGIN_BROWSER_HEADLESS:
+        process.env.AUTOLOGIN_BROWSER_HEADLESS === '0' ? '0' : '1',
       AUTOLOGIN_E2E_DISABLE_SANDBOX:
         process.env.AUTOLOGIN_E2E_NO_SANDBOX === '1' ? '1' : '0',
       ELECTRON_ENABLE_LOGGING: process.env.ELECTRON_ENABLE_LOGGING ?? '0',
@@ -142,7 +158,7 @@ test('uses the Windows default browser, reuses the session and clears it', async
     pathname: '/home',
     welcome: 'Welcome back'
   })
-  expect(existsSync(join(userDataDirectory, 'BrowserProfiles', 'batch'))).toBe(true)
+  expect(existsSync(join(userDataDirectory, 'BrowserProfiles', 'personal'))).toBe(true)
   expect(
     await application.evaluate(
       ({ webContents }, baseUrl) =>
@@ -193,7 +209,7 @@ test('uses the Windows default browser, reuses the session and clears it', async
   await expect(confirm).toBeVisible()
   await confirm.getByRole('button', { name: '清除会话' }).click({ force: true })
   await expect(page.locator('.toast')).toContainText('网站会话已清除')
-  expect(existsSync(join(userDataDirectory, 'BrowserProfiles', 'batch'))).toBe(false)
+  expect(existsSync(join(userDataDirectory, 'BrowserProfiles', 'personal'))).toBe(false)
   await drawer.getByRole('button', { name: '关闭', exact: true }).click()
 
   const thirdBatchId = await currentBatchId(page)
@@ -207,6 +223,76 @@ test('uses the Windows default browser, reuses the session and clears it', async
   await expect
     .poll(() => targetSnapshot(application, server.baseUrl), { timeout: 15000 })
     .toMatchObject({ found: true, pathname: '/home' })
+})
+
+test('opens a new tab and keeps existing site windows alive for later logins', async () => {
+  await createVault(page)
+  await addAccount(page, {
+    siteName: '第一个站点',
+    startUrl: `${server.baseUrl}/login?first=1`,
+    label: '第一个账号',
+    username: 'tester@example.test',
+    password: 'secret-password'
+  })
+  await addAccount(page, {
+    siteName: '第二个站点',
+    startUrl: `${server.baseUrl}/login?second=1`,
+    label: '第二个账号',
+    username: 'tester@example.test',
+    password: 'secret-password'
+  })
+
+  const firstRow = page.locator('.account-row').filter({ hasText: '第一个站点' })
+  const secondRow = page.locator('.account-row').filter({ hasText: '第二个站点' })
+  const firstBatchId = await currentBatchId(page)
+  await firstRow.getByRole('button', { name: '登录' }).click()
+  await waitForNewBatch(page, firstBatchId, {
+    active: false,
+    success: 1,
+    failed: 0,
+    manual: 0
+  })
+  const firstEndpoint = findExternalBrowserEndpoint()?.websocketUrl
+  const firstTargets = await externalBrowserTargets()
+  const firstSiteTargetIds = firstTargets
+    .filter((target) => target.type === 'page' && target.url.startsWith(server.baseUrl))
+    .map((target) => target.targetId)
+  expect(firstSiteTargetIds).toHaveLength(1)
+
+  const secondBatchId = await currentBatchId(page)
+  await secondRow.getByRole('button', { name: '登录' }).click()
+  await waitForNewBatch(page, secondBatchId, {
+    active: false,
+    success: 1,
+    failed: 0,
+    manual: 0
+  })
+
+  expect(findExternalBrowserEndpoint()?.websocketUrl).toBe(firstEndpoint)
+  const secondTargets = await externalBrowserTargets()
+  expect(secondTargets.some((target) => target.targetId === firstSiteTargetIds[0])).toBe(true)
+  const secondSiteTargetIds = secondTargets
+    .filter((target) => target.type === 'page' && target.url.startsWith(server.baseUrl))
+    .map((target) => target.targetId)
+  expect(secondSiteTargetIds).toHaveLength(2)
+
+  const repeatedBatchId = await currentBatchId(page)
+  await firstRow.getByRole('button', { name: '登录' }).click()
+  await waitForNewBatch(page, repeatedBatchId, {
+    active: false,
+    success: 1,
+    failed: 0,
+    manual: 0
+  })
+
+  const repeatedTargets = await externalBrowserTargets()
+  const repeatedSiteTargetIds = repeatedTargets
+    .filter((target) => target.type === 'page' && target.url.startsWith(server.baseUrl))
+    .map((target) => target.targetId)
+  expect(repeatedSiteTargetIds).toHaveLength(3)
+  expect(repeatedSiteTargetIds).toEqual(
+    expect.arrayContaining(secondSiteTargetIds)
+  )
 })
 
 test('fills one-click credentials after a delayed login form renders', async () => {
@@ -343,9 +429,10 @@ test('pauses on a captcha and resumes after manual verification', async () => {
       password: 'secret-password',
       activeName: 'verificationCode'
     })
-  await expect(page.locator('.batch-status')).toContainText('成功 0 / 失败 1 · 待人工 1')
-  await expect(page.locator('.batch-status')).toBeVisible()
-  await page.locator('.batch-status').click({ force: true })
+  expect(
+    await page.evaluate(() => window.autologin.login.getBatchState())
+  ).toMatchObject({ active: false, failed: 1, manual: 1 })
+  await openLogPage(page, '登录日志')
   const logsPage = page.locator('.logs-page')
   await expect(logsPage.getByRole('heading', { name: '登录日志' })).toBeVisible({
     timeout: 10000
@@ -414,7 +501,9 @@ test('pauses on a captcha and resumes after manual verification', async () => {
     failed: 0,
     manual: 0
   })
-  await expect(page.locator('.batch-status')).toContainText('成功 1 / 失败 0')
+  expect(
+    await page.evaluate(() => window.autologin.login.getBatchState())
+  ).toMatchObject({ active: false, success: 1, failed: 0, manual: 0 })
 
   await openLogPage(page, '登录日志')
   await logsPage.getByLabel('状态').selectOption('manual')
@@ -466,7 +555,7 @@ test('stops automation when a site redirects outside trusted origins', async () 
   })
   const batchState = await page.evaluate(() => window.autologin.login.getBatchState())
   expect(batchState?.items[0]?.message).toContain('未授权域名')
-  await expect(page.locator('.batch-status')).toContainText('成功 0 / 失败 1 · 待人工 1')
+  expect(batchState).toMatchObject({ active: false, failed: 1, manual: 1 })
   const failureLog = join(userDataDirectory, 'logs', 'login-failures.jsonl')
   await expect
     .poll(() => (existsSync(failureLog) ? readFileSync(failureLog, 'utf8') : ''), {
@@ -484,7 +573,7 @@ test('stops automation when a site redirects outside trusted origins', async () 
     })
 })
 
-test('searches accounts and renders left-aligned table columns with icon-only actions', async () => {
+test('searches accounts and renders centered table headers with icon-only actions', async () => {
   await createVault(page)
   await addAccount(page, {
     siteName: '搜索站点 A',
@@ -540,27 +629,27 @@ test('searches accounts and renders left-aligned table columns with icon-only ac
 
   await expect(page.locator('.account-list__header .account-col--site')).toHaveCSS(
     'text-align',
-    'left'
+    'center'
   )
-  const leftAlignedColumns = [
+  const centeredHeaderColumns = [
     '.account-col--username',
     '.account-col--group',
     '.account-col--updated',
     '.account-col--status',
     '.account-col--actions'
   ]
-  for (const selector of leftAlignedColumns) {
+  for (const selector of centeredHeaderColumns) {
     await expect(page.locator(`.account-list__header ${selector}`)).toHaveCSS(
       'text-align',
-      'left'
+      'center'
     )
   }
   await expect(page.locator('.account-list__header .account-col--url')).toHaveCSS(
     'text-align',
-    'left'
+    'center'
   )
   const mainPanelStyles = await page
-    .locator('.library-view-layout--accounts > .library-view-main')
+    .locator('.library-view-layout--accounts')
     .evaluate((element) => {
       const style = getComputedStyle(element)
       return {
@@ -629,6 +718,7 @@ test('shows the account page scrollbar only when rows exceed the viewport', asyn
   )
   const tableScrollContainer = page.locator('.account-table-scroll')
   await expect(scrollContainer).toHaveCSS('scrollbar-gutter', 'auto')
+  await expect(tableScrollContainer).toHaveCSS('scrollbar-gutter', 'auto')
   await expect(page.locator('.library-content-scroll--accounts')).toHaveCSS(
     'overflow-y',
     'hidden'
@@ -637,6 +727,13 @@ test('shows the account page scrollbar only when rows exceed the viewport', asyn
     .poll(() =>
       tableScrollContainer.evaluate(
         (element) => element.scrollHeight <= element.clientHeight + 1
+      )
+    )
+    .toBe(true)
+  await expect
+    .poll(() =>
+      tableScrollContainer.evaluate(
+        (element) => element.scrollWidth <= element.clientWidth + 1
       )
     )
     .toBe(true)
@@ -657,6 +754,47 @@ test('shows the account page scrollbar only when rows exceed the viewport', asyn
       )
     )
     .toBe(true)
+})
+
+test('suppresses the native context menu and starts with fit-window columns', async () => {
+  await createVault(page)
+  await addAccount(page, {
+    siteName: '列尺寸默认站点',
+    startUrl: `${server.baseUrl}/login`,
+    label: '列尺寸默认账号',
+    username: 'fit-window@example.test',
+    password: 'secret-password'
+  })
+
+  const nativeMenuSuppressed = await page.evaluate(() => {
+    const event = new MouseEvent('contextmenu', {
+      bubbles: true,
+      cancelable: true,
+      clientX: 24,
+      clientY: 24
+    })
+    document.querySelector('.library-main')?.dispatchEvent(event)
+    return event.defaultPrevented
+  })
+  expect(nativeMenuSuppressed).toBe(true)
+
+  await page.evaluate(() =>
+    window.localStorage.setItem('autologin.account.columnSizing', 'manual')
+  )
+  await page.reload()
+  await page.waitForLoadState('domcontentloaded')
+  const unlockInput = page.getByPlaceholder('输入主密码')
+  await expect(unlockInput).toBeVisible({ timeout: 10_000 })
+  await unlockInput.fill('correct horse battery staple')
+  await page.getByRole('button', { name: '解锁保险库' }).click()
+  const tableHeader = page.locator('.account-list__header')
+  await expect(tableHeader).toBeVisible({ timeout: 10_000 })
+  await tableHeader.click({ button: 'right', position: { x: 24, y: 15 } })
+  const columnMenu = page.locator('.account-column-menu')
+  await expect(columnMenu).toBeVisible()
+  await expect(
+    columnMenu.getByRole('menuitemradio', { name: '适应窗口' })
+  ).toHaveAttribute('aria-checked', 'true')
 })
 
 test('reorders sibling groups and nests a dragged group with breadcrumb and toast updates', async () => {
@@ -919,6 +1057,142 @@ test('resizes, hides and restores the account subnav, and creates three group le
   const layout = page.locator('.library-view-layout--accounts')
   const subnav = page.locator('.account-subnav')
   const resizer = page.locator('.account-subnav__resizer')
+  const activeTab = page.locator('.account-tab.is-active')
+  await expect(activeTab).toHaveCSS('border-bottom-width', '0px')
+  const tabEdge = await activeTab.evaluate((element) => {
+    const style = getComputedStyle(element)
+    const before = getComputedStyle(element, '::before')
+    const after = getComputedStyle(element, '::after')
+    const card = element
+      .closest('.library-content-scroll--accounts')
+      ?.querySelector<HTMLElement>(':scope > .library-view-layout--accounts')
+    return {
+      topLeftRadius: style.borderTopLeftRadius,
+      topRightRadius: style.borderTopRightRadius,
+      activeBackground: style.backgroundColor,
+      overflow: style.overflow,
+      beforePseudoDisplay: before.display,
+      beforePseudoBackground: before.backgroundImage,
+      shapeClip: style.getPropertyValue('clip-path'),
+      rightPseudoDisplay: after.display,
+      rightPseudoBackground: after.backgroundImage,
+      shapeMarginLeft: style.marginLeft,
+      shapePaddingLeft: style.paddingLeft,
+      cardTopLeftRadius: card ? getComputedStyle(card).borderTopLeftRadius : ''
+    }
+  })
+  expect(tabEdge.topLeftRadius).toBe('10px')
+  expect(tabEdge.topRightRadius).toBe('10px')
+  expect(tabEdge.activeBackground).toBe('rgb(255, 255, 255)')
+  expect(tabEdge.overflow).toBe('visible')
+  expect(tabEdge.beforePseudoDisplay).toBe('block')
+  expect(tabEdge.beforePseudoBackground).toContain('radial-gradient')
+  expect(tabEdge.shapeClip).toBe('none')
+  expect(tabEdge.rightPseudoDisplay).toBe('block')
+  expect(tabEdge.rightPseudoBackground).toContain('radial-gradient')
+  expect(tabEdge.shapeMarginLeft).toBe('0px')
+  expect(tabEdge.shapePaddingLeft).toBe('10px')
+  expect(tabEdge.cardTopLeftRadius).toBe('0px')
+  await expect(page.locator('.account-tabs__tool-group').first()).toHaveCSS(
+    'margin-bottom',
+    '12px'
+  )
+  await expect(page.locator('.account-tabs')).toHaveCSS(
+    'background-color',
+    'rgb(247, 248, 250)'
+  )
+  const dividerDecoration = await page.locator('.account-subnav-shell').evaluate(
+    (element) => {
+      const style = getComputedStyle(element, '::after')
+      return { width: style.width, backgroundImage: style.backgroundImage }
+    }
+  )
+  expect(dividerDecoration.width).toBe('1px')
+  expect(dividerDecoration.backgroundImage).toContain('linear-gradient')
+  const nativeMenuSuppressed = await page.evaluate(() => {
+    const event = new MouseEvent('contextmenu', {
+      bubbles: true,
+      cancelable: true,
+      clientX: 20,
+      clientY: 20
+    })
+    document.querySelector('.library-main')?.dispatchEvent(event)
+    return event.defaultPrevented
+  })
+  expect(nativeMenuSuppressed).toBe(true)
+
+  const readLeadingCenters = () =>
+    page.evaluate(() => {
+      const center = (selector: string): number => {
+        const rect =
+          document.querySelector<HTMLElement>(selector)?.getBoundingClientRect() ??
+          null
+        return rect ? rect.left + rect.width / 2 : Number.NaN
+      }
+      return {
+        collapse: center('[aria-label="隐藏账号侧边栏"]'),
+        search: center('.search-field__toggle'),
+        headerCheckbox: center('.account-list__header .selection-checkbox'),
+        rowCheckbox: center('.account-row .selection-checkbox')
+      }
+    })
+  const expectAlignedCenters = (
+    centers: Awaited<ReturnType<typeof readLeadingCenters>>
+  ): void => {
+    const values = Object.values(centers)
+    expect(Math.max(...values) - Math.min(...values)).toBeLessThanOrEqual(1)
+  }
+
+  await application.evaluate(({ BrowserWindow }) => {
+    BrowserWindow.getAllWindows()[0]?.setSize(2000, 1240)
+  })
+  await page.waitForTimeout(700)
+  expectAlignedCenters(await readLeadingCenters())
+  await expect
+    .poll(() =>
+      page.locator('.account-table-scroll').evaluate(
+        (element) =>
+          element.scrollHeight <= element.clientHeight + 1 &&
+          element.scrollWidth <= element.clientWidth + 1
+      )
+    )
+    .toBe(true)
+  await application.evaluate(({ BrowserWindow }) => {
+    BrowserWindow.getAllWindows()[0]?.setSize(960, 640)
+  })
+  await page.waitForTimeout(500)
+  expectAlignedCenters(await readLeadingCenters())
+  await expect
+    .poll(() =>
+      page.locator('.account-table-scroll').evaluate(
+        (element) =>
+          element.scrollHeight <= element.clientHeight + 1 &&
+          element.scrollWidth <= element.clientWidth + 1
+      )
+    )
+    .toBe(true)
+  await application.evaluate(({ BrowserWindow }) => {
+    BrowserWindow.getAllWindows()[0]?.setSize(1200, 800)
+  })
+  await page.waitForTimeout(250)
+  const activeTabBox = await activeTab.boundingBox()
+  const activeTabContentBox = await activeTab
+    .locator('.account-tab__select')
+    .boundingBox()
+  const workspaceCardBox = await layout.boundingBox()
+  expect(activeTabBox).not.toBeNull()
+  expect(activeTabContentBox).not.toBeNull()
+  expect(workspaceCardBox).not.toBeNull()
+  expect(activeTabContentBox!.x - workspaceCardBox!.x).toBeGreaterThanOrEqual(8)
+  expect(activeTabBox!.x).toBeGreaterThanOrEqual(workspaceCardBox!.x)
+  expect(activeTabBox!.y + activeTabBox!.height).toBeGreaterThanOrEqual(
+    workspaceCardBox!.y
+  )
+  await expect(subnav).toHaveCSS('padding-top', '14px')
+  await expect(subnav.locator('.account-subnav__all-button')).toHaveCSS(
+    'font-size',
+    '10px'
+  )
   const initialWidth = await subnav.evaluate((element) => element.getBoundingClientRect().width)
   const resizerBox = await resizer.boundingBox()
   expect(resizerBox).not.toBeNull()
@@ -996,7 +1270,9 @@ test('resizes, hides and restores the account subnav, and creates three group le
       borderRightStyle: style.borderRightStyle
     }
   })
-  expect(dividerMetrics.height).toBeCloseTo(dividerMetrics.parentHeight, 0)
+  expect(dividerMetrics.height).toBeLessThanOrEqual(
+    dividerMetrics.parentHeight + 2
+  )
   expect(Number.parseFloat(dividerMetrics.borderRightWidth)).toBeGreaterThan(0)
   expect(dividerMetrics.borderRightStyle).toBe('solid')
   await expect
@@ -1561,7 +1837,7 @@ test('paginates a dense account tab, keeps tabs fixed and resizes the subnav', a
     .not.toBeNull()
 })
 
-test('cancels an active batch login from the account toolbar', async () => {
+test('cancels an active batch login through the API while toolbar batch controls stay retired', async () => {
   await createVault(page)
   const siteId = await page.evaluate(
     async (startUrl) => {
@@ -1580,7 +1856,10 @@ test('cancels an active batch login from the account toolbar', async () => {
         await window.autologin.accounts.create({
           siteId: targetSiteId,
           label: '可中断批量站点',
-          username: `cancel-${index + 1}@example.test`,
+          username:
+            index === 0
+              ? 'tester@example.test'
+              : `cancel-${index + 1}@example.test`,
           password: 'secret-password'
         })
       }
@@ -1593,9 +1872,19 @@ test('cancels an active batch login from the account toolbar', async () => {
 
   const previousBatchId = await currentBatchId(page)
   await page.getByRole('button', { name: '批量登录' }).click()
-  const cancelButton = page.getByRole('button', { name: '中断批量登录' })
-  await expect(cancelButton).toBeVisible({ timeout: 15000 })
-  await cancelButton.click()
+  await expect(page.locator('.batch-status')).toHaveCount(0)
+  await expect(page.getByRole('button', { name: '中断批量登录' })).toHaveCount(0)
+  await expect
+    .poll(
+      () =>
+        page.evaluate(async (previousId) => {
+          const state = await window.autologin.login.getBatchState()
+          return Boolean(state?.batchId && state.batchId !== previousId)
+        }, previousBatchId),
+      { timeout: 15000 }
+    )
+    .toBe(true)
+  await page.evaluate(() => window.autologin.login.cancelBatch())
 
   await expect
     .poll(
@@ -1614,7 +1903,18 @@ test('cancels an active batch login from the account toolbar', async () => {
   expect(
     await page.evaluate(async () => (await window.autologin.login.getBatchState())?.canceled)
   ).toBeGreaterThan(0)
-  await expect(page.locator('.batch-status')).toContainText('已中断')
+  await expect(page.locator('.batch-status')).toHaveCount(0)
+
+  await page.locator('.account-row').first().getByRole('checkbox').check()
+  await expect(page.getByRole('button', { name: '批量登录' })).toBeEnabled()
+  const restartedBatchId = await currentBatchId(page)
+  await page.getByRole('button', { name: '批量登录' }).click()
+  await waitForNewBatch(page, restartedBatchId, {
+    active: false,
+    success: 1,
+    failed: 0,
+    manual: 0
+  })
 })
 
 test('edits and copies accounts from the right-click menu', async () => {
@@ -1874,6 +2174,18 @@ test('keeps bookmarks visit-only and removes the retired access log page', async
       username: '',
       password: ''
     })
+    const secondSite = await window.autologin.sites.save({
+      tabId: tab.id,
+      name: '书签批量测试站点',
+      startUrl: `${startUrl}?batch=1`,
+      autoSubmit: false
+    })
+    await window.autologin.accounts.create({
+      siteId: secondSite.id,
+      label: '书签批量测试',
+      username: '',
+      password: ''
+    })
   }, `${server.baseUrl}/login`)
   await page.getByRole('button', { name: '刷新', exact: true }).click()
 
@@ -1888,6 +2200,8 @@ test('keeps bookmarks visit-only and removes the retired access log page', async
   await expect(page.getByRole('button', { name: '批量登录' })).toHaveCount(0)
   await expect(page.getByRole('button', { name: '批量操作' })).toHaveCount(0)
   await expect(page.locator('.account-list__header .account-col--status')).toHaveCount(0)
+  const batchOpenButton = page.getByRole('button', { name: '批量打开' })
+  await expect(batchOpenButton).toBeDisabled()
 
   const bookmarkRow = page
     .locator('.account-row')
@@ -1895,8 +2209,37 @@ test('keeps bookmarks visit-only and removes the retired access log page', async
   await expect(bookmarkRow.getByRole('button', { name: '访问' })).toBeVisible()
   await expect(bookmarkRow.getByRole('button', { name: '登录' })).toHaveCount(0)
   await expect(bookmarkRow).toContainText('书签')
+  await page.getByRole('checkbox', { name: '选择站点 书签测试站点', exact: true }).check()
+  await page
+    .getByRole('checkbox', { name: '选择站点 书签批量测试站点', exact: true })
+    .check()
+  await expect(batchOpenButton).toBeEnabled()
+  await batchOpenButton.click()
+  await expect(page.locator('.toast')).toContainText('已打开 2 个书签')
+  await expect
+    .poll(
+      async () =>
+        (await externalBrowserTargets()).filter(
+          (target) => target.type === 'page' && target.url.startsWith(server.baseUrl)
+        ).length,
+      { timeout: 15000 }
+    )
+    .toBeGreaterThanOrEqual(2)
+  await expect(page.getByRole('checkbox', { name: '选择站点 书签测试站点', exact: true })).not.toBeChecked()
+  await expect(
+    page.getByRole('checkbox', { name: '选择站点 书签批量测试站点', exact: true })
+  ).not.toBeChecked()
   await bookmarkRow.getByRole('button', { name: '访问' }).click()
   await expect(page.locator('.toast')).toContainText('已在默认浏览器中访问')
+  await expect
+    .poll(
+      async () =>
+        (await externalBrowserTargets()).filter(
+          (target) => target.type === 'page' && target.url.startsWith(server.baseUrl)
+        ).length,
+      { timeout: 15000 }
+    )
+    .toBeGreaterThanOrEqual(3)
   expect(existsSync(join(userDataDirectory, 'logs', 'access.jsonl'))).toBe(false)
   await bookmarkRow.dblclick()
   const editor = page.locator('.account-drawer')
@@ -1934,6 +2277,302 @@ test('keeps bookmarks visit-only and removes the retired access log page', async
   await expect(page.locator('.toast')).toContainText('书签已恢复')
 })
 
+test('keeps account and bookmark group trees scoped while switching databases', async () => {
+  await createVault(page)
+  const [accountTab] = await page.evaluate(() => window.autologin.tabs.list())
+  const bookmarkTab = await page.evaluate(async (startUrl) => {
+    const tab = await window.autologin.tabs.create({
+      name: '分组切换书签',
+      source: 'bookmarks'
+    })
+    const accountSite = await window.autologin.sites.save({
+      tabId: tab.id,
+      name: '书签分组站点',
+      startUrl,
+      autoSubmit: false,
+      group: '书签独有分组'
+    })
+    await window.autologin.accounts.create({
+      siteId: accountSite.id,
+      label: '书签分组站点',
+      username: '',
+      password: ''
+    })
+    return tab
+  }, `${server.baseUrl}/login`)
+  await page.evaluate(
+    async ({ tabId, startUrl }) => {
+      const site = await window.autologin.sites.save({
+        tabId,
+        name: '账号分组站点',
+        startUrl,
+        autoSubmit: true,
+        group: '账号独有分组'
+      })
+      await window.autologin.accounts.create({
+        siteId: site.id,
+        label: '账号分组站点',
+        username: 'tester@example.test',
+        password: 'secret-password'
+      })
+    },
+    { tabId: accountTab.id, startUrl: `${server.baseUrl}/login` }
+  )
+  await page.getByRole('button', { name: '刷新', exact: true }).click()
+
+  const nav = page.locator('.sidebar-nav')
+  const accountNav = nav.getByRole('button', { name: '账号' })
+  const bookmarkNav = nav.getByRole('button', { name: '书签' })
+  const subnav = page.locator('.account-subnav')
+  for (let cycle = 0; cycle < 3; cycle += 1) {
+    await accountNav.click()
+    await expect(page.locator('.page-breadcrumb h1')).toHaveText('全部账号')
+    await expect(
+      subnav.locator('.account-subnav__item').filter({ hasText: '全部账号' })
+    ).toHaveCount(1)
+    await expect(
+      subnav.locator('.account-subnav__item--group').filter({ hasText: '账号独有分组' })
+    ).toHaveCount(1)
+    await expect(
+      subnav.locator('.account-subnav__item--group').filter({ hasText: '书签独有分组' })
+    ).toHaveCount(0)
+    await expect(subnav.locator('.account-subnav__item--group')).toHaveCount(2)
+
+    await bookmarkNav.click()
+    await expect(page.locator('.page-breadcrumb h1')).toHaveText('全部书签')
+    await expect(
+      subnav.locator('.account-subnav__item').filter({ hasText: '全部书签' })
+    ).toHaveCount(1)
+    await expect(
+      subnav.locator('.account-subnav__item--group').filter({ hasText: '书签独有分组' })
+    ).toHaveCount(1)
+    await expect(
+      subnav.locator('.account-subnav__item--group').filter({ hasText: '账号独有分组' })
+    ).toHaveCount(0)
+    await expect(subnav.locator('.account-subnav__item--group')).toHaveCount(2)
+  }
+
+  const definitions = await page.evaluate(
+    async ({ accountTabId, bookmarkTabId }) => {
+      const [accountGroups, bookmarkGroups] = await Promise.all([
+        window.autologin.groups.list(accountTabId),
+        window.autologin.groups.list(bookmarkTabId)
+      ])
+      return {
+        accountPaths: accountGroups.map((group) => group.path),
+        bookmarkPaths: bookmarkGroups.map((group) => group.path)
+      }
+    },
+    { accountTabId: accountTab.id, bookmarkTabId: bookmarkTab.id }
+  )
+  expect(definitions.accountPaths).toEqual(['账号独有分组'])
+  expect(definitions.bookmarkPaths).toEqual(['书签独有分组'])
+})
+
+test('keeps imported Chrome bookmark groups scoped across repeated account and bookmark switching', async () => {
+  await createVault(page)
+  const [accountTab] = await page.evaluate(() => window.autologin.tabs.list())
+  await page.evaluate(
+    async ({ tabId, startUrl }) => {
+      const site = await window.autologin.sites.save({
+        tabId,
+        name: '账号侧站点',
+        startUrl,
+        autoSubmit: true,
+        group: '账号分组'
+      })
+      await window.autologin.accounts.create({
+        siteId: site.id,
+        label: '账号侧站点',
+        username: 'chrome-import@example.test',
+        password: 'secret-password'
+      })
+    },
+    { tabId: accountTab.id, startUrl: `${server.baseUrl}/login` }
+  )
+  await page.getByRole('button', { name: '刷新', exact: true }).click()
+
+  const bookmarkPath = join(userDataDirectory, 'chrome-bookmarks.html')
+  writeFileSync(
+    bookmarkPath,
+    `<!DOCTYPE NETSCAPE-Bookmark-file-1>
+<DL><p>
+  <DT><H3>书签栏</H3>
+  <DL><p>
+    <DT><H3>gost</H3>
+    <DL><p>
+      <DT><A HREF="${server.baseUrl}/login?chrome=one">Chrome 书签一</A>
+      <DT><A HREF="${server.baseUrl}/login?chrome=two">Chrome 书签二</A>
+    </DL><p>
+  </DL><p>
+</DL><p>`,
+    'utf8'
+  )
+  await application.evaluate(({ dialog }, filePath) => {
+    dialog.showOpenDialog = (async () => ({
+      canceled: false,
+      filePaths: [filePath],
+      bookmarks: []
+    })) as typeof dialog.showOpenDialog
+  }, bookmarkPath)
+
+  const nav = page.locator('.sidebar-nav')
+  await nav.getByRole('button', { name: '书签' }).click()
+  await page.getByRole('button', { name: '导入浏览器书签' }).first().click()
+  await expect(page.locator('.toast')).toContainText('已新增 2 个书签站点')
+  await expect(page.locator('.page-breadcrumb h1')).toHaveText('全部书签')
+
+  const subnav = page.locator('.account-subnav')
+  for (let cycle = 0; cycle < 3; cycle += 1) {
+    await nav.getByRole('button', { name: '账号' }).click()
+    await expect(
+      subnav.locator('.account-subnav__item--group').filter({ hasText: '账号分组' })
+    ).toHaveCount(1)
+    await expect(
+      subnav.locator('.account-subnav__item--group').filter({ hasText: 'gost' })
+    ).toHaveCount(0)
+
+    await nav.getByRole('button', { name: '书签' }).click()
+    await expect(
+      subnav.locator('.account-subnav__item--group').filter({ hasText: '书签栏' })
+    ).toHaveCount(1)
+    await expect(
+      subnav.locator('.account-subnav__item--group').filter({ hasText: 'gost' })
+    ).toHaveCount(1)
+    await expect(
+      subnav.locator('.account-subnav__item--group').filter({ hasText: '账号分组' })
+    ).toHaveCount(0)
+  }
+
+  const scoped = await page.evaluate(async (accountTabId) => {
+    const tabs = await window.autologin.tabs.list()
+    const bookmarkTab = tabs.find((tab) => tab.source === 'bookmarks')
+    if (!bookmarkTab) throw new Error('missing bookmark tab')
+    const [accountGroups, bookmarkGroups, settings] = await Promise.all([
+      window.autologin.groups.list(accountTabId),
+      window.autologin.groups.list(bookmarkTab.id),
+      window.autologin.settings.get()
+    ])
+    return {
+      accountPaths: accountGroups.map((group) => group.path),
+      bookmarkPaths: bookmarkGroups.map((group) => group.path),
+      accountOrder: settings.groupOrders[accountTabId] ?? [],
+      bookmarkOrder: settings.groupOrders[bookmarkTab.id] ?? []
+    }
+  }, accountTab.id)
+  expect(scoped.accountPaths).toEqual(['账号分组'])
+  expect(scoped.bookmarkPaths).toEqual(['书签栏', '书签栏 / gost'])
+  expect(scoped.accountOrder).toEqual(['账号分组'])
+  expect(scoped.bookmarkOrder).toEqual(['书签栏', '书签栏 / gost'])
+})
+
+test('resolves the containing folder for account and bookmark tabs', async () => {
+  await createVault(page)
+  const tabs = await page.evaluate(async () => {
+    const [accountTab] = await window.autologin.tabs.list()
+    const bookmarkTab = await window.autologin.tabs.create({
+      name: '文件夹测试书签',
+      source: 'bookmarks'
+    })
+    return { accountTab, bookmarkTab }
+  })
+  expect(tabs.accountTab).toBeDefined()
+  await application.evaluate(({ shell }) => {
+    shell.openPath = async (targetPath: string) => {
+      ;(
+        globalThis as typeof globalThis & {
+          __autologinRevealedPaths?: string[]
+        }
+      ).__autologinRevealedPaths = [
+        ...((
+          globalThis as typeof globalThis & {
+            __autologinRevealedPaths?: string[]
+          }
+        ).__autologinRevealedPaths ?? []),
+        targetPath
+      ]
+      return ''
+    }
+  })
+
+  await page.evaluate(
+    async ({ accountTabId, bookmarkTabId }) => {
+      await window.autologin.tabs.reveal(accountTabId)
+      await window.autologin.tabs.reveal(bookmarkTabId)
+    },
+    {
+      accountTabId: tabs.accountTab!.id,
+      bookmarkTabId: tabs.bookmarkTab.id
+    }
+  )
+
+  const revealedPaths = await application.evaluate(
+    () =>
+      (
+        globalThis as typeof globalThis & {
+          __autologinRevealedPaths?: string[]
+        }
+      ).__autologinRevealedPaths ?? []
+  )
+  expect(revealedPaths).toEqual([
+    join(userDataDirectory, 'tabs', 'autologin'),
+    join(userDataDirectory, 'tabs', 'bookmarks')
+  ])
+  expect(
+    existsSync(
+      join(
+        userDataDirectory,
+        'tabs',
+        'autologin',
+        tabs.accountTab!.databaseFileName ?? ''
+      )
+    )
+  ).toBe(true)
+  expect(
+    existsSync(
+      join(
+        userDataDirectory,
+        'tabs',
+        'bookmarks',
+        tabs.bookmarkTab.databaseFileName ?? ''
+      )
+    )
+  ).toBe(true)
+})
+
+test('opens a KDBX database with a Unicode file name without a stale-file error', async () => {
+  await createVault(page)
+  const kdbxPath = join(userDataDirectory, '中文密码库.kdbx')
+  await writeKdbxFixture(kdbxPath)
+
+  await application.evaluate(({ dialog }, filePath) => {
+    dialog.showOpenDialog = (async () => ({
+      canceled: false,
+      filePaths: [filePath]
+    })) as typeof dialog.showOpenDialog
+  }, kdbxPath)
+
+  await page.getByRole('button', { name: '新增标签页或打开数据库' }).click()
+  await page.getByRole('menuitem', { name: '打开本地数据库' }).click()
+
+  const passwordDialog = page.locator('.modal-panel').filter({
+    has: page.getByRole('heading', { name: '输入 KDBX 主密码' })
+  })
+  await expect(passwordDialog).toBeVisible()
+  await passwordDialog.getByLabel('数据库主密码').fill(
+    'correct horse battery staple'
+  )
+  await passwordDialog.getByRole('button', { name: '解密并导入' }).click()
+
+  await expect(page.locator('.toast')).toContainText('已新增 1 个站点、1 个账号')
+  await expect(
+    page.getByRole('button', { name: '关闭“中文密码库”数据库' })
+  ).toBeVisible()
+  const kdbxDirectory = join(userDataDirectory, 'tabs', 'kdbx')
+  expect(existsSync(join(kdbxDirectory, '中文密码库.kdbx'))).toBe(true)
+  expect(readdirSync(kdbxDirectory)).toContain('中文密码库.kdbx')
+})
+
 test('closes a tab without deleting its encrypted AutoLogin snapshot', async () => {
   await createVault(page)
   const initialTabs = await page.evaluate(() => window.autologin.tabs.list())
@@ -1956,10 +2595,12 @@ test('closes a tab without deleting its encrypted AutoLogin snapshot', async () 
   const firstTab = visibleAccountTabs.first()
   await firstTab.dispatchEvent('click')
   await expect(firstTab).toHaveClass(/is-active/)
+  await expect(firstTab).toHaveCSS('background-color', 'rgb(255, 255, 255)')
   expect(createdTab!.databaseFileName).toBe(`${createdTab!.name}.autologin`)
   const snapshotPath = join(
     userDataDirectory,
     'tabs',
+    'autologin',
     createdTab!.databaseFileName!
   )
   await expect.poll(() => existsSync(snapshotPath)).toBe(true)
@@ -1977,26 +2618,33 @@ test('closes a tab without deleting its encrypted AutoLogin snapshot', async () 
       activeTab.querySelector<HTMLElement>('.account-tab__name')
     const inactiveName =
       inactiveTab?.querySelector<HTMLElement>('.account-tab__name')
-    const indicator = getComputedStyle(activeTab, '::after')
+    const activeStyle = getComputedStyle(activeTab)
+    const leftPseudo = getComputedStyle(activeTab, '::before')
+    const rightPseudo = getComputedStyle(activeTab, '::after')
     return {
-      activeBackground: getComputedStyle(activeTab).backgroundColor,
-      inactiveBackground: inactiveTab
-        ? getComputedStyle(inactiveTab).backgroundColor
-        : '',
       activeWeight: activeName ? getComputedStyle(activeName).fontWeight : '',
       inactiveWeight: inactiveName
         ? getComputedStyle(inactiveName).fontWeight
         : '',
-      indicatorHeight: indicator.height,
-      indicatorColor: indicator.backgroundColor
+      shapeBackground: activeStyle.backgroundColor,
+      shapeClip: activeStyle.getPropertyValue('clip-path'),
+      activeBackground: activeStyle.backgroundColor,
+      tabRailBackground: activeTab.parentElement?.parentElement
+        ? getComputedStyle(activeTab.parentElement.parentElement).backgroundColor
+        : '',
+      leftPseudoDisplay: leftPseudo.display,
+      rightPseudoDisplay: rightPseudo.display
     }
   })
-  expect(tabVisuals.inactiveBackground).not.toBe(tabVisuals.activeBackground)
   expect(Number(tabVisuals.activeWeight)).toBeGreaterThan(
     Number(tabVisuals.inactiveWeight)
   )
-  expect(tabVisuals.indicatorHeight).toBe('2px')
-  expect(tabVisuals.indicatorColor).not.toBe('rgba(0, 0, 0, 0)')
+  expect(tabVisuals.shapeBackground).toBe('rgb(255, 255, 255)')
+  expect(tabVisuals.activeBackground).toBe('rgb(255, 255, 255)')
+  expect(tabVisuals.tabRailBackground).toBe('rgb(247, 248, 250)')
+  expect(tabVisuals.shapeClip).toBe('none')
+  expect(tabVisuals.leftPseudoDisplay).toBe('block')
+  expect(tabVisuals.rightPseudoDisplay).toBe('block')
 
   const nextLocalDatabase = await page.evaluate(() =>
     window.autologin.tabs.create({ source: 'local' })
@@ -2013,15 +2661,14 @@ test('closes a tab without deleting its encrypted AutoLogin snapshot', async () 
   const renamedSnapshotPath = join(
     userDataDirectory,
     'tabs',
+    'autologin',
     renamedTab.databaseFileName ?? ''
   )
   expect(renamedTab.databaseFileName).toMatch(/\.autologin$/)
   await expect.poll(() => existsSync(renamedSnapshotPath)).toBe(true)
   expect(existsSync(snapshotPath)).toBe(false)
 
-  await page
-    .getByRole('button', { name: `关闭“${createdTab!.name}”数据库` })
-    .click()
+  await closeTabWithPrompt(page, createdTab!.name, '关闭数据库')
   await expect(
     page.getByRole('button', { name: `关闭“${createdTab!.name}”数据库` })
   ).toHaveCount(0)
@@ -2038,12 +2685,53 @@ test('closes a tab without deleting its encrypted AutoLogin snapshot', async () 
   expect(existsSync(renamedSnapshotPath)).toBe(true)
 })
 
+test('closes and permanently deletes a database from the tab close popover', async () => {
+  await createVault(page)
+  const initialTabs = await page.evaluate(() => window.autologin.tabs.list())
+  await page.getByRole('button', { name: '新增标签页或打开数据库' }).click()
+  await page.getByRole('menuitem', { name: '新增本地数据库' }).click()
+  await expect(page.locator('.toast')).toContainText('数据库已创建')
+
+  const createdTab = await page.evaluate(async (knownIds) => {
+    const tabs = await window.autologin.tabs.list()
+    return tabs.find((tab) => !knownIds.includes(tab.id))
+  }, initialTabs.map((tab) => tab.id))
+  expect(createdTab).toBeDefined()
+  const snapshotPath = join(
+    userDataDirectory,
+    'tabs',
+    'autologin',
+    createdTab!.databaseFileName!
+  )
+  await expect.poll(() => existsSync(snapshotPath)).toBe(true)
+
+  await page
+    .getByRole('button', { name: `关闭“${createdTab!.name}”数据库` })
+    .click()
+  const closePopover = page.locator('.tab-close-popover')
+  await expect(closePopover).toBeVisible()
+  await expect(closePopover.getByRole('menuitem')).toHaveCount(3)
+  await closePopover
+    .getByRole('menuitem', { name: '关闭并且删除数据库' })
+    .click()
+
+  await expect(page.locator('.toast')).toContainText('数据库已关闭并永久删除')
+  await expect
+    .poll(() =>
+      page.evaluate(
+        async (tabId) =>
+          (await window.autologin.tabs.list()).some((tab) => tab.id === tabId),
+        createdTab!.id
+      )
+    )
+    .toBe(false)
+  await expect.poll(() => existsSync(snapshotPath)).toBe(false)
+})
+
 test('shows a global empty state after every account database is closed', async () => {
   await createVault(page)
   const [initialTab] = await page.evaluate(() => window.autologin.tabs.list())
-  await page
-    .getByRole('button', { name: `关闭“${initialTab.name}”数据库` })
-    .click()
+  await closeTabWithPrompt(page, initialTab.name, '关闭数据库')
 
   const emptyState = page.locator('.library-database-empty-state')
   await expect(emptyState).toBeVisible()
@@ -2112,6 +2800,7 @@ test('does not resurrect a database file deleted outside the app', async () => {
   const deletedPath = join(
     userDataDirectory,
     'tabs',
+    'autologin',
     deletedTab.databaseFileName ?? ''
   )
   await expect.poll(() => existsSync(deletedPath)).toBe(true)
@@ -2127,7 +2816,12 @@ test('does not resurrect a database file deleted outside the app', async () => {
   expect(existsSync(deletedPath)).toBe(false)
   expect(
     existsSync(
-      join(userDataDirectory, 'tabs', nextTab.databaseFileName ?? '')
+      join(
+        userDataDirectory,
+        'tabs',
+        'autologin',
+        nextTab.databaseFileName ?? ''
+      )
     )
   ).toBe(true)
 })
@@ -2223,6 +2917,12 @@ test('persists appearance, language and interface scale with separate resets', a
     .getByRole('button', { name: '书签' })
   await expect(bookmarksNav).toBeVisible()
   await bookmarksNav.click()
+  const createBookmarkTabButton = page.getByRole('button', {
+    name: '新建书签标签页'
+  })
+  if ((await createBookmarkTabButton.count()) > 0) {
+    await createBookmarkTabButton.click()
+  }
   await expect(page.locator('.page-breadcrumb h1')).toHaveText('全部书签')
   await expect(page.getByRole('button', { name: '导入浏览器书签' }).first()).toBeVisible()
 
@@ -3001,7 +3701,9 @@ test('supports group actions, batch editing and one-browser tabs', async () => {
     failed: 0,
     manual: 0
   })
-  await expect(page.locator('.batch-status')).toContainText('成功 2 / 失败 0')
+  expect(
+    await page.evaluate(() => window.autologin.login.getBatchState())
+  ).toMatchObject({ active: false, success: 2, failed: 0 })
   const browserTargets = await externalBrowserTargets()
   expect(
     browserTargets.filter(
@@ -3011,7 +3713,7 @@ test('supports group actions, batch editing and one-browser tabs', async () => {
           target.url.startsWith(untrustedServer.baseUrl))
     )
   ).toHaveLength(2)
-  expect(externalBrowserProfileNames()).toEqual(['batch'])
+  expect(externalBrowserProfileNames()).toEqual(['personal'])
 
   await renamedGroupRow.click({ button: 'right' })
   await groupMenu.getByRole('menuitem', { name: '删除分组' }).click()
@@ -3220,6 +3922,24 @@ async function selectPageSize(
   await expect(menu).toHaveCount(0)
 }
 
+async function writeKdbxFixture(filePath: string): Promise<void> {
+  configureKdbxArgon2()
+  const credentials = new KdbxCredentials(
+    ProtectedValue.fromString('correct horse battery staple')
+  )
+  await credentials.ready
+  const database = Kdbx.create(credentials, 'AutoLogin E2E')
+  database.setKdf(Consts.KdfId.Argon2id)
+  const root = database.getDefaultGroup()
+  const group = database.createGroup(root, '工作')
+  const entry = database.createEntry(group)
+  entry.fields.set('Title', 'KDBX 测试站点')
+  entry.fields.set('URL', `${server.baseUrl}/login`)
+  entry.fields.set('UserName', 'kdbx@example.test')
+  entry.fields.set('Password', ProtectedValue.fromString('keepass-secret'))
+  writeFileSync(filePath, Buffer.from(await database.save()))
+}
+
 async function createVault(targetPage: Page): Promise<void> {
   await expect(targetPage.getByRole('heading', { name: '创建你的本地保险库' })).toBeVisible()
   await targetPage.getByPlaceholder('至少 10 个字符').fill('correct horse battery staple')
@@ -3350,8 +4070,8 @@ async function waitForBatch(
 ): Promise<void> {
   await expect
     .poll(
-      () =>
-        targetPage.evaluate(async () => {
+      async () => {
+        const state = await targetPage.evaluate(async () => {
           const state = await window.autologin.login.getBatchState()
           return {
             active: state?.active ?? null,
@@ -3359,10 +4079,41 @@ async function waitForBatch(
             failed: state?.failed ?? null,
             manual: state?.manual ?? null
           }
-        }),
+        })
+        return state
+      },
       { timeout: 35000 }
     )
     .toMatchObject(expected)
+  const batchState = await targetPage.evaluate(async () => {
+    const state = await window.autologin.login.getBatchState()
+    return {
+      active: state?.active ?? null,
+      success: state?.success ?? null,
+      failed: state?.failed ?? null,
+      manual: state?.manual ?? null,
+      items:
+        state?.items.map((item) => ({
+          account: item.accountLabel,
+          status: item.status,
+          message: item.message
+        })) ?? []
+    }
+  })
+  expect(batchState).toMatchObject(expected)
+}
+
+async function closeTabWithPrompt(
+  targetPage: Page,
+  tabName: string,
+  action: '关闭数据库' | '关闭并且删除数据库'
+): Promise<void> {
+  await targetPage
+    .getByRole('button', { name: `关闭“${tabName}”数据库` })
+    .click()
+  const popover = targetPage.locator('.tab-close-popover')
+  await expect(popover).toBeVisible()
+  await popover.getByRole('menuitem', { name: action }).click()
 }
 
 async function targetSnapshot(

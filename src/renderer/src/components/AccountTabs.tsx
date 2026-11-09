@@ -12,7 +12,7 @@ interface AccountTabsProps {
   controls: ReactNode
   onSelect: (tab: AccountTab) => void
   onOpenMenu: (event: MouseEvent<HTMLElement>, tab: AccountTab) => void
-  onClose: (tab: AccountTab) => void
+  onClose: (tab: AccountTab, anchor: DOMRect) => void
 }
 
 export const AccountTabs = memo(function AccountTabs({
@@ -43,6 +43,7 @@ export const AccountTabs = memo(function AccountTabs({
           <div
             className={`account-tab${tab.id === activeTabId ? ' is-active' : ''}`}
             key={tab.id}
+            data-tab-id={tab.id}
             style={{ '--tab-color': tab.color } as CSSProperties}
             onContextMenu={(event) => onOpenMenu(event, tab)}
             onClick={() => onSelect(tab)}
@@ -91,7 +92,7 @@ export const AccountTabs = memo(function AccountTabs({
               disabled={busy}
               onClick={(event) => {
                 event.stopPropagation()
-                onClose(tab)
+                onClose(tab, event.currentTarget.getBoundingClientRect())
               }}
             >
               <X size={12} />

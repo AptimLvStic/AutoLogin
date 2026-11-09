@@ -2,8 +2,10 @@ import { existsSync, mkdirSync, renameSync } from 'node:fs'
 import { join } from 'node:path'
 import {
   DATABASE_FILE_EXTENSIONS,
+  DATABASE_FOLDERS,
   databaseExtensionForTab,
   databaseFileNameFor,
+  databaseFolderForTab,
   normalizeDatabaseName
 } from '../shared/database-files'
 import { DEFAULT_ACCOUNT_TAB_ID, type AccountTab, type VaultData } from '../shared/types'
@@ -25,27 +27,36 @@ export function migrateTabDatabaseFiles(
   tabsDirectory: string
 ): TabDatabaseMigrationResult {
   mkdirSync(tabsDirectory, { recursive: true })
-  const reservedFileNames = new Set<string>()
+  const reservedFileNames = new Map<string, Set<string>>()
   const issues: TabDatabaseMigrationIssue[] = []
   let changed = false
   let renamed = 0
 
   for (const tab of data.tabs) {
     const extension = databaseExtensionForTab(tab)
-    const legacyFileName = findLegacyDatabaseFileName(tab, tabsDirectory)
-    const currentFileName = tab.databaseFileName ?? legacyFileName
-    const currentPath = currentFileName
-      ? join(tabsDirectory, currentFileName)
-      : null
+    const folder = databaseFolderForTab(tab)
+    const folderDirectory = join(tabsDirectory, folder)
+    mkdirSync(folderDirectory, { recursive: true })
+
+    const existingPath = findExistingDatabasePath(tab, tabsDirectory, extension)
+    const currentFileName =
+      existingPath?.fileName ??
+      tab.databaseFileName ??
+      findLegacyDatabaseFileName(tab, tabsDirectory, extension)
+    const currentPath = existingPath?.path ?? null
+    const folderReservations =
+      reservedFileNames.get(folder) ?? new Set<string>()
+    reservedFileNames.set(folder, folderReservations)
+
     const nextBaseName = uniqueDatabaseBaseName(
       tab.name,
       extension,
-      tabsDirectory,
-      reservedFileNames,
+      folderDirectory,
+      folderReservations,
       currentPath
     )
     const nextFileName = databaseFileNameFor(nextBaseName, extension)
-    const nextPath = join(tabsDirectory, nextFileName)
+    const nextPath = join(folderDirectory, nextFileName)
 
     if (nextBaseName !== tab.name) {
       tab.name = nextBaseName
@@ -55,7 +66,7 @@ export function migrateTabDatabaseFiles(
       tab.databaseFileName = nextFileName
       changed = true
     }
-    reservedFileNames.add(nextFileName.toLocaleLowerCase())
+    folderReservations.add(nextFileName.toLocaleLowerCase())
 
     if (
       !currentPath ||
@@ -69,8 +80,10 @@ export function migrateTabDatabaseFiles(
       renameSync(currentPath, nextPath)
       renamed += 1
     } catch (error) {
-      tab.databaseFileName = currentFileName ?? undefined
-      changed = true
+      if (currentFileName) {
+        tab.databaseFileName = currentFileName
+        changed = true
+      }
       issues.push({
         tabId: tab.id,
         tabName: tab.name,
@@ -82,34 +95,54 @@ export function migrateTabDatabaseFiles(
   return { changed, renamed, issues }
 }
 
-function findLegacyDatabaseFileName(
-  tab: AccountTab,
-  tabsDirectory: string
-): string | null {
-  const candidates = new Set<string>()
-  if (tab.databaseFileName) candidates.add(tab.databaseFileName)
-  candidates.add(
-    databaseFileNameFor(tab.name, databaseExtensionForTab(tab))
-  )
-  for (const extension of DATABASE_FILE_EXTENSIONS) {
-    candidates.add(`tab-${tab.id}${extension}`)
-  }
-  if (tab.id === DEFAULT_ACCOUNT_TAB_ID) {
-    candidates.add('tab-local.autologin')
-  }
+interface ExistingDatabasePath {
+  path: string
+  fileName: string
+}
 
-  for (const candidate of candidates) {
-    if (existsSync(join(tabsDirectory, candidate))) {
-      return candidate
+function findExistingDatabasePath(
+  tab: AccountTab,
+  tabsDirectory: string,
+  extension: string
+): ExistingDatabasePath | null {
+  const candidates = candidateFileNames(tab, extension)
+  const folders = [...DATABASE_FOLDERS, '']
+  for (const fileName of candidates) {
+    for (const folder of folders) {
+      const path = join(tabsDirectory, folder, fileName)
+      if (existsSync(path)) {
+        return { path, fileName }
+      }
     }
   }
   return null
 }
 
+function findLegacyDatabaseFileName(
+  tab: AccountTab,
+  tabsDirectory: string,
+  extension: string
+): string | null {
+  return findExistingDatabasePath(tab, tabsDirectory, extension)?.fileName ?? null
+}
+
+function candidateFileNames(tab: AccountTab, extension: string): string[] {
+  const candidates = new Set<string>()
+  if (tab.databaseFileName) candidates.add(tab.databaseFileName)
+  candidates.add(databaseFileNameFor(tab.name, extension))
+  for (const candidateExtension of DATABASE_FILE_EXTENSIONS) {
+    candidates.add(`tab-${tab.id}${candidateExtension}`)
+  }
+  if (tab.id === DEFAULT_ACCOUNT_TAB_ID) {
+    candidates.add('tab-local.autologin')
+  }
+  return [...candidates]
+}
+
 function uniqueDatabaseBaseName(
   requestedName: string,
   extension: string,
-  tabsDirectory: string,
+  folderDirectory: string,
   reservedFileNames: Set<string>,
   currentPath: string | null
 ): string {
@@ -122,7 +155,7 @@ function uniqueDatabaseBaseName(
       .slice(0, 40 - suffix.length)
       .trimEnd()}${suffix}`
     const candidateFileName = databaseFileNameFor(candidate, extension)
-    const candidatePath = join(tabsDirectory, candidateFileName)
+    const candidatePath = join(folderDirectory, candidateFileName)
     const reserved = reservedFileNames.has(
       candidateFileName.toLocaleLowerCase()
     )

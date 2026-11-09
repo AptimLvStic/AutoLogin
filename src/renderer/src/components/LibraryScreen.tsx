@@ -31,7 +31,6 @@ import {
   Settings,
   SlidersHorizontal,
   Sparkles,
-  Square,
   Trash2,
   Undo2,
   UserRound,
@@ -57,6 +56,12 @@ import {
   type TrashRetentionDays
 } from '@shared/types'
 import { matchesKeyboardShortcut } from '@shared/shortcuts'
+import {
+  flattenGroupTree,
+  groupLevel,
+  groupParentPath,
+  type GroupSummary
+} from '@shared/group-tree'
 import { useI18n } from '../i18n'
 import { AccountDrawer } from './AccountDrawer'
 import { AccountTabs, DatabaseCreateIcon } from './AccountTabs'
@@ -127,43 +132,43 @@ const ACCOUNT_COLUMN_MIN_WIDTHS: Record<AccountColumnResizeKey, number> = {
 const ACCOUNT_COLUMN_TRACKS = {
   wide: {
     checkbox: '22px',
-    site: 'minmax(120px, 1.15fr)',
-    username: 'minmax(80px, 0.78fr)',
-    group: 'minmax(52px, 0.5fr)',
+    site: 'minmax(100px, 1.15fr)',
+    username: 'minmax(72px, 0.78fr)',
+    group: 'minmax(48px, 0.5fr)',
     updated: '82px',
     status: '70px',
-    url: 'minmax(112px, 0.9fr)',
-    actions: '98px'
+    url: 'minmax(104px, 0.9fr)',
+    actions: '90px'
   },
   medium: {
     checkbox: '20px',
-    site: 'minmax(96px, 1.1fr)',
-    username: 'minmax(68px, 0.78fr)',
-    group: 'minmax(44px, 0.48fr)',
-    updated: '68px',
+    site: 'minmax(86px, 1.1fr)',
+    username: 'minmax(60px, 0.78fr)',
+    group: 'minmax(40px, 0.48fr)',
+    updated: '62px',
     status: '56px',
-    url: 'minmax(92px, 0.85fr)',
-    actions: '96px'
+    url: 'minmax(84px, 0.85fr)',
+    actions: '86px'
   },
   compact: {
     checkbox: '20px',
-    site: 'minmax(84px, 1.1fr)',
-    username: 'minmax(58px, 0.78fr)',
-    group: 'minmax(40px, 0.5fr)',
-    updated: '60px',
-    status: '52px',
-    url: 'minmax(78px, 0.8fr)',
-    actions: '92px'
+    site: 'minmax(72px, 1.1fr)',
+    username: 'minmax(50px, 0.78fr)',
+    group: 'minmax(34px, 0.5fr)',
+    updated: '54px',
+    status: '46px',
+    url: 'minmax(70px, 0.8fr)',
+    actions: '82px'
   },
   narrow: {
     checkbox: '20px',
-    site: 'minmax(72px, 1.05fr)',
-    username: 'minmax(48px, 0.72fr)',
-    group: 'minmax(34px, 0.45fr)',
-    updated: '52px',
-    status: '46px',
-    url: 'minmax(68px, 0.8fr)',
-    actions: '88px'
+    site: 'minmax(62px, 1.05fr)',
+    username: 'minmax(42px, 0.72fr)',
+    group: 'minmax(30px, 0.45fr)',
+    updated: '48px',
+    status: '42px',
+    url: 'minmax(60px, 0.8fr)',
+    actions: '76px'
   }
 } as const
 type Translate = (
@@ -173,15 +178,6 @@ type Translate = (
   variables?: Record<string, string | number>
 ) => string
 
-interface GroupSummary {
-  key: string
-  name: string
-  actualName: string | null
-  parentPath: string | null
-  level: number
-  count: number
-  accounts: AccountWithSite[]
-}
 const UNGROUPED_KEY = UNGROUPED_GROUP_KEY
 const ACCOUNT_SUBNAV_DEFAULT_WIDTH = 184
 const ACCOUNT_SUBNAV_MIN_WIDTH = 128
@@ -311,7 +307,6 @@ export function LibraryScreen({
   onRefresh,
   onLock,
   onStartBatch,
-  onCancelBatch,
   onRecord,
   onDownloadUpdate,
   onCancelUpdate,
@@ -328,7 +323,6 @@ export function LibraryScreen({
   onRefresh: () => Promise<void>
   onLock: () => Promise<void>
   onStartBatch: (accountIds: string[]) => Promise<boolean>
-  onCancelBatch: () => Promise<void>
   onRecord: (account: AccountWithSite) => void
   onDownloadUpdate: () => Promise<void>
   onCancelUpdate: () => Promise<void>
@@ -472,8 +466,6 @@ export function LibraryScreen({
   >(() => ({ ...ACCOUNT_COLUMN_DEFAULT_WIDTHS }))
   const [accountColumnSizing, setAccountColumnSizing] =
     useState<AccountColumnSizing>(() => {
-      const stored = window.localStorage.getItem(ACCOUNT_COLUMN_SIZING_STORAGE_KEY)
-      if (stored === 'content' || stored === 'manual') return stored
       return 'window'
     })
   const [columnMenuOpen, setColumnMenuOpen] = useState(false)
@@ -507,7 +499,12 @@ export function LibraryScreen({
   const [accountSubnavHidden, setAccountSubnavHidden] = useState(
     () => window.localStorage.getItem('autologin.account.subnav.hidden') === '1'
   )
-  const [groupDefinitions, setGroupDefinitions] = useState<GroupDefinition[]>([])
+  const [groupDefinitionState, setGroupDefinitionState] = useState<{
+    tabId: string
+    groups: GroupDefinition[]
+  }>({ tabId: '', groups: [] })
+  const groupDefinitions =
+    groupDefinitionState.tabId === activeTabId ? groupDefinitionState.groups : []
   const [deletedAccounts, setDeletedAccounts] = useState<DeletedAccountWithSite[]>([])
   const [trashSection, setTrashSection] = useState<'accounts' | 'bookmarks'>(
     'accounts'
@@ -531,6 +528,11 @@ export function LibraryScreen({
   const [groupCreateBusy, setGroupCreateBusy] = useState(false)
   const [accountMenu, setAccountMenu] = useState<AccountMenuState | null>(null)
   const [tabMenu, setTabMenu] = useState<{
+    tab: AccountTab
+    left: number
+    top: number
+  } | null>(null)
+  const [tabClosePrompt, setTabClosePrompt] = useState<{
     tab: AccountTab
     left: number
     top: number
@@ -578,7 +580,7 @@ export function LibraryScreen({
   const [duplicateBusy, setDuplicateBusy] = useState(false)
   const [accountClipboardIds, setAccountClipboardIds] = useState<string[]>([])
   const [keyboardDuplicateBusy, setKeyboardDuplicateBusy] = useState(false)
-  const [batchCancelBusy, setBatchCancelBusy] = useState(false)
+  const [bookmarkBatchOpenBusy, setBookmarkBatchOpenBusy] = useState(false)
   const [manualRefreshing, setManualRefreshing] = useState(false)
   const [deleteSelectedOpen, setDeleteSelectedOpen] = useState(false)
   const [deleteSelectedBusy, setDeleteSelectedBusy] = useState(false)
@@ -624,6 +626,7 @@ export function LibraryScreen({
       return current
     }
     for (const definition of groupDefinitions) {
+      if (definition.tabId !== activeTabId) continue
       ensureGroup(definition.path, definition.name)
     }
     for (const site of sites) {
@@ -889,8 +892,8 @@ export function LibraryScreen({
     setSelectedIds(new Set())
     selectionAnchorRef.current = null
     setDrawer(null)
+    setGroupDefinitionState({ tabId: activeTabId, groups: [] })
     if (!activeTabId) {
-      setGroupDefinitions([])
       return () => {
         cancelled = true
       }
@@ -898,10 +901,14 @@ export function LibraryScreen({
     void window.autologin.groups
       .list(activeTabId)
       .then((nextGroups) => {
-        if (!cancelled) setGroupDefinitions(nextGroups)
+        if (!cancelled) {
+          setGroupDefinitionState({ tabId: activeTabId, groups: nextGroups })
+        }
       })
       .catch(() => {
-        if (!cancelled) setGroupDefinitions([])
+        if (!cancelled) {
+          setGroupDefinitionState({ tabId: activeTabId, groups: [] })
+        }
       })
     return () => {
       cancelled = true
@@ -1017,6 +1024,31 @@ export function LibraryScreen({
       window.removeEventListener('blur', close)
     }
   }, [tabMenu])
+
+  useEffect(() => {
+    if (!tabClosePrompt) return
+    const close = (): void => setTabClosePrompt(null)
+    const closeOnPointer = (event: PointerEvent): void => {
+      if (
+        event.target instanceof Element &&
+        event.target.closest('.tab-close-popover')
+      ) {
+        return
+      }
+      close()
+    }
+    const closeOnEscape = (event: KeyboardEvent): void => {
+      if (event.key === 'Escape') close()
+    }
+    document.addEventListener('pointerdown', closeOnPointer)
+    document.addEventListener('keydown', closeOnEscape)
+    window.addEventListener('blur', close)
+    return () => {
+      document.removeEventListener('pointerdown', closeOnPointer)
+      document.removeEventListener('keydown', closeOnEscape)
+      window.removeEventListener('blur', close)
+    }
+  }, [tabClosePrompt])
 
   useEffect(() => {
     if (!groupMenu) return
@@ -1297,7 +1329,7 @@ export function LibraryScreen({
       window.autologin.accounts.listDeleted()
     ])
     setTabs(nextTabs)
-    setGroupDefinitions(nextGroups)
+    setGroupDefinitionState({ tabId: activeTabId, groups: nextGroups })
     setDeletedAccounts(nextDeleted)
   }
 
@@ -1315,9 +1347,10 @@ export function LibraryScreen({
       setAccountTabId(tabId)
       setView('accounts')
     }
-    setGroupDefinitions(
-      (await window.autologin.groups.list(tabId)) ?? []
-    )
+    setGroupDefinitionState({
+      tabId,
+      groups: (await window.autologin.groups.list(tabId)) ?? []
+    })
   }
 
   function switchView(next: LibraryView): void {
@@ -1639,14 +1672,43 @@ export function LibraryScreen({
     }
   }
 
-  async function closeTab(tab: AccountTab): Promise<void> {
+  function openTabClosePrompt(tab: AccountTab, anchor?: DOMRect): void {
+    const tabElement = [...document.querySelectorAll<HTMLElement>('.account-tab')]
+      .find((element) => element.dataset.tabId === tab.id)
+    const target = anchor ?? tabElement?.getBoundingClientRect()
+    const width = 272
+    const estimatedHeight = 144
+    const left = Math.min(
+      Math.max(12, (target?.right ?? window.innerWidth - width) - width),
+      window.innerWidth - width - 12
+    )
+    const top = Math.min(
+      target ? target.bottom + 6 : 76,
+      window.innerHeight - estimatedHeight - 12
+    )
+    setTabMenu(null)
+    setTabClosePrompt({ tab, left, top })
+  }
+
+  async function closeTab(
+    tab: AccountTab,
+    mode: 'close' | 'purge' = 'close'
+  ): Promise<void> {
     if (tabBusy) return
+    setTabClosePrompt(null)
     setTabBusy(true)
     try {
-      await window.autologin.tabs.delete(tab.id)
-      const nextTabs = tabs.map((entry) =>
-        entry.id === tab.id ? { ...entry, hidden: true } : entry
-      )
+      if (mode === 'purge') {
+        await window.autologin.tabs.purge(tab.id)
+      } else {
+        await window.autologin.tabs.delete(tab.id)
+      }
+      const nextTabs =
+        mode === 'purge'
+          ? tabs.filter((entry) => entry.id !== tab.id)
+          : tabs.map((entry) =>
+              entry.id === tab.id ? { ...entry, hidden: true } : entry
+            )
       setTabs(nextTabs)
       if (activeTabId === tab.id) {
         if (tab.source === 'bookmarks') {
@@ -1667,11 +1729,19 @@ export function LibraryScreen({
         }
       }
       setTabMenu(null)
+      await onRefresh()
+      if (mode === 'purge') {
+        setDeletedAccounts(await window.autologin.accounts.listDeleted())
+      }
       notify(
         'success',
         tab.source === 'bookmarks'
-          ? tr('标签页已关闭', 'Tab closed.', '標籤頁已關閉')
-          : tr('数据库已关闭', 'Database closed.', '資料庫已關閉')
+          ? mode === 'purge'
+            ? tr('书签已关闭并永久删除', 'Bookmark tab and data deleted.', '書籤已關閉並永久刪除')
+            : tr('标签页已关闭', 'Tab closed.', '標籤頁已關閉')
+          : mode === 'purge'
+            ? tr('数据库已关闭并永久删除', 'Database and file deleted.', '資料庫已關閉並永久刪除')
+            : tr('数据库已关闭', 'Database closed.', '資料庫已關閉')
       )
     } catch (error) {
       notify(
@@ -2974,13 +3044,59 @@ export function LibraryScreen({
     }
   }
 
-  async function cancelActiveBatch(): Promise<void> {
-    if (!batchState?.active || batchCancelBusy) return
-    setBatchCancelBusy(true)
+  async function openSelectedBookmarks(): Promise<void> {
+    if (view !== 'bookmarks' || selectedIds.size === 0 || bookmarkBatchOpenBusy) {
+      return
+    }
+    const ids = [...selectedIds]
+    setBookmarkBatchOpenBusy(true)
     try {
-      await onCancelBatch()
+      const results = await Promise.allSettled(
+        ids.map((accountId) => window.autologin.bookmarks.visit(accountId))
+      )
+      const failedIds: string[] = []
+      results.forEach((result, index) => {
+        const accountId = ids[index]
+        if (result.status === 'rejected' || result.value.status !== 'success') {
+          if (accountId) failedIds.push(accountId)
+        }
+      })
+      const openedCount = ids.length - failedIds.length
+      const failedCount = failedIds.length
+      if (openedCount > 0) {
+        notify(
+          failedCount === 0 ? 'success' : 'info',
+          failedCount === 0
+            ? tr(
+                `已打开 ${openedCount} 个书签`,
+                `Opened ${openedCount} bookmark${openedCount === 1 ? '' : 's'}.`,
+                `已開啟 ${openedCount} 個書籤`
+              )
+            : tr(
+                `已打开 ${openedCount} 个书签，${failedCount} 个失败`,
+                `Opened ${openedCount} bookmark${openedCount === 1 ? '' : 's'}; ${failedCount} failed.`,
+                `已開啟 ${openedCount} 個書籤，${failedCount} 個失敗`
+              )
+        )
+      } else {
+        notify(
+          'error',
+          tr(
+            `打开 ${failedCount} 个书签失败`,
+            `Could not open ${failedCount} bookmark${failedCount === 1 ? '' : 's'}.`,
+            `開啟 ${failedCount} 個書籤失敗`
+          )
+        )
+      }
+      if (failedCount === 0) {
+        setSelectedIds(new Set())
+        selectionAnchorRef.current = null
+      } else {
+        setSelectedIds(new Set(failedIds))
+        selectionAnchorRef.current = failedIds.at(-1) ?? null
+      }
     } finally {
-      setBatchCancelBusy(false)
+      setBookmarkBatchOpenBusy(false)
     }
   }
 
@@ -3278,12 +3394,66 @@ export function LibraryScreen({
             type="button"
             role="menuitem"
             className="is-danger"
-            onClick={() => void closeTab(tabMenu.tab)}
+            onClick={() => openTabClosePrompt(tabMenu.tab)}
           >
             <X size={14} />
             {tabMenu.tab.source === 'bookmarks'
               ? tr('关闭标签页', 'Close tab', '關閉標籤頁')
               : tr('关闭数据库', 'Close database', '關閉資料庫')}
+          </button>
+        </div>
+      )}
+
+      {tabClosePrompt && (
+        <div
+          className="tab-close-popover"
+          role="menu"
+          aria-label={tr(
+            '关闭数据库选项',
+            'Close database options',
+            '關閉資料庫選項'
+          )}
+          style={{ left: tabClosePrompt.left, top: tabClosePrompt.top }}
+        >
+          <button
+            type="button"
+            role="menuitem"
+            onClick={() => void closeTab(tabClosePrompt.tab, 'close')}
+            disabled={tabBusy}
+          >
+            <X size={14} />
+            {tabClosePrompt.tab.source === 'bookmarks'
+              ? tr('关闭书签', 'Close bookmark tab', '關閉書籤')
+              : tr('关闭数据库', 'Close database', '關閉資料庫')}
+          </button>
+          <button
+            type="button"
+            role="menuitem"
+            className="is-danger"
+            onClick={() => void closeTab(tabClosePrompt.tab, 'purge')}
+            disabled={tabBusy}
+          >
+            <Trash2 size={14} />
+            {tabClosePrompt.tab.source === 'bookmarks'
+              ? tr(
+                  '关闭并且删除书签',
+                  'Close and delete bookmark tab',
+                  '關閉並刪除書籤'
+                )
+              : tr(
+                  '关闭并且删除数据库',
+                  'Close and delete database',
+                  '關閉並刪除資料庫'
+                )}
+          </button>
+          <div className="account-context-menu__divider" aria-hidden="true" />
+          <button
+            type="button"
+            role="menuitem"
+            onClick={() => setTabClosePrompt(null)}
+            disabled={tabBusy}
+          >
+            {tr('取消', 'Cancel', '取消')}
           </button>
         </div>
       )}
@@ -3948,7 +4118,7 @@ export function LibraryScreen({
                 }
               }}
               onOpenMenu={openTabMenu}
-              onClose={(tab) => void closeTab(tab)}
+              onClose={(tab, anchor) => openTabClosePrompt(tab, anchor)}
               controls={
                 showDatabaseEmptyState ? null : (
                   <>
@@ -3956,6 +4126,7 @@ export function LibraryScreen({
                       <AccountTransferControls
                         tabId={activeTabId}
                         onCreateTab={() => createTab('local')}
+                        creatingTab={tabBusy}
                         onImported={(result) =>
                           void handleDataImported(result.tabId)
                         }
@@ -4320,50 +4491,7 @@ export function LibraryScreen({
                     })}
                   </nav>
                 </div>
-                <div className="library-header__actions">
-                  {view === 'accounts' && batchState && batchState.total > 0 && (
-                    <button
-                      type="button"
-                      className={`batch-status${batchState.active ? ' is-active' : ''}${
-                        batchState.failed > 0 || batchState.canceled > 0 ? ' has-failures' : ''
-                      }`}
-                      onClick={() => switchView('loginLogs')}
-                      aria-label={tr('查看登录结果日志', 'View login result logs', '查看登入結果日誌')}
-                    >
-                      {batchState.active ? (
-                        <LoaderCircle size={14} className="spin" />
-                      ) : (
-                        <span className="batch-status__dot" />
-                      )}
-                      <span>
-                        {tr('成功', 'Success', '成功')} {batchState.success} / {tr('失败', 'Failed', '失敗')}{' '}
-                        {batchState.failed}
-                        {batchState.manual > 0
-                          ? ` · ${tr('待人工', 'Manual', '待人工')} ${batchState.manual}`
-                          : ''}
-                        {batchState.canceled > 0
-                          ? ` · ${tr('已中断', 'Canceled', '已中斷')} ${batchState.canceled}`
-                          : ''}
-                      </span>
-                    </button>
-                  )}
-                  {view === 'accounts' && batchState?.active && (
-                    <button
-                      type="button"
-                      className="batch-cancel"
-                      onClick={() => void cancelActiveBatch()}
-                      disabled={batchCancelBusy}
-                      aria-label={tr('中断批量登录', 'Cancel batch sign-in', '中斷批次登入')}
-                      title={tr('中断批量登录', 'Cancel batch sign-in', '中斷批次登入')}
-                    >
-                      {batchCancelBusy ? (
-                        <LoaderCircle size={13} className="spin" />
-                      ) : (
-                        <Square size={11} fill="currentColor" />
-                      )}
-                    </button>
-                  )}
-                </div>
+                <div className="library-header__actions" />
               </header>
 
               <div className="library-toolbar">
@@ -4472,11 +4600,32 @@ export function LibraryScreen({
                         </button>
                       </>
                     )}
+                    {view === 'bookmarks' && (
+                      <button
+                        type="button"
+                        className="button button--ghost button--small button--icon-only"
+                        onClick={() => void openSelectedBookmarks()}
+                        disabled={selectedAccountCount === 0 || bookmarkBatchOpenBusy}
+                        aria-label={tr('批量打开', 'Open selected bookmarks', '批次開啟')}
+                        title={tr('批量打开', 'Open selected bookmarks', '批次開啟')}
+                        aria-busy={bookmarkBatchOpenBusy}
+                      >
+                        {bookmarkBatchOpenBusy ? (
+                          <LoaderCircle size={14} className="spin" />
+                        ) : (
+                          <Globe2 size={14} />
+                        )}
+                      </button>
+                    )}
                     <button
                       type="button"
                       className="button button--danger-ghost button--small button--icon-only"
                       onClick={() => setDeleteSelectedOpen(true)}
-                      disabled={selectedAccountCount === 0 || Boolean(batchState?.active)}
+                      disabled={
+                        selectedAccountCount === 0 ||
+                        Boolean(batchState?.active) ||
+                        bookmarkBatchOpenBusy
+                      }
                       aria-label={tr('删除账号', 'Delete accounts', '刪除帳號')}
                       title={tr('删除账号', 'Delete accounts', '刪除帳號')}
                     >
@@ -5625,68 +5774,6 @@ function displayGroup(account: AccountWithSite, tr: Translate): string {
   return account.site.group?.trim() || tr('未分组', 'Ungrouped', '未分組')
 }
 
-
-function groupParentPath(path: string): string | null {
-  const parts = path.split(GROUP_PATH_SEPARATOR).filter(Boolean)
-  if (parts.length <= 1) return null
-  return parts.slice(0, -1).join(GROUP_PATH_SEPARATOR)
-}
-
-function groupLevel(path: string): number {
-  return Math.max(1, path.split(GROUP_PATH_SEPARATOR).filter(Boolean).length)
-}
-
-function flattenGroupTree(
-  groups: GroupSummary[],
-  order: Map<string, number>,
-  language: string
-): GroupSummary[] {
-  const named = groups.filter(
-    (group): group is GroupSummary & { actualName: string } => group.actualName !== null
-  )
-  const ungrouped = groups.filter((group) => group.actualName === null)
-  const result: GroupSummary[] = []
-  const visited = new Set<string>()
-  const compare = (left: GroupSummary, right: GroupSummary): number => {
-    const leftOrder =
-      order.get(left.actualName ?? left.key) ?? order.get(left.name) ?? Number.MAX_SAFE_INTEGER
-    const rightOrder =
-      order.get(right.actualName ?? right.key) ?? order.get(right.name) ?? Number.MAX_SAFE_INTEGER
-    if (leftOrder !== rightOrder) return leftOrder - rightOrder
-    return left.name.localeCompare(right.name, language)
-  }
-
-  const visit = (parentPath: string | null): void => {
-    const children = named
-      .filter((group) => group.parentPath === parentPath && !visited.has(group.key))
-      .sort(compare)
-    for (const group of children) {
-      visited.add(group.key)
-      result.push(group)
-      visit(group.actualName)
-    }
-  }
-
-  visit(null)
-  // Invalid or partially recovered paths still need to remain reachable.
-  for (const group of named.filter((entry) => !visited.has(entry.key)).sort(compare)) {
-    visited.add(group.key)
-    result.push(group)
-    visit(group.actualName)
-  }
-  if (ungrouped.length === 0) return result
-  const ungroupedOrder = order.get(UNGROUPED_GROUP_KEY) ?? Number.MAX_SAFE_INTEGER
-  const insertIndex = result.findIndex((group) => {
-    if (group.parentPath !== null) return false
-    const groupOrder =
-      order.get(group.actualName ?? group.key) ??
-      order.get(group.name) ??
-      Number.MAX_SAFE_INTEGER
-    return groupOrder > ungroupedOrder
-  })
-  result.splice(insertIndex < 0 ? result.length : insertIndex, 0, ...ungrouped)
-  return result
-}
 
 function readFileAsDataUrl(file: File): Promise<string> {
   return new Promise((resolve, reject) => {

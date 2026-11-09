@@ -81,6 +81,15 @@ export default function App(): React.JSX.Element {
     return () => window.removeEventListener('keydown', openDevTools)
   }, [])
 
+  useEffect(() => {
+    const suppressNativeContextMenu = (event: MouseEvent): void => {
+      event.preventDefault()
+    }
+    document.addEventListener('contextmenu', suppressNativeContextMenu)
+    return () =>
+      document.removeEventListener('contextmenu', suppressNativeContextMenu)
+  }, [])
+
   const loadData = useCallback(async (): Promise<void> => {
     const [nextAccounts, nextSites, nextSettings] = await Promise.all([
       window.autologin.accounts.list(),
@@ -374,20 +383,6 @@ export default function App(): React.JSX.Element {
     }
   }
 
-  async function cancelBatch(): Promise<void> {
-    try {
-      setBatchState(await window.autologin.login.cancelBatch())
-      notify('info', translate(settings.language, '已中断批量登录', 'Batch sign-in canceled', '已中斷批次登入'))
-    } catch (error) {
-      notify(
-        'error',
-        error instanceof Error
-          ? error.message
-          : translate(settings.language, '中断批量登录失败', 'Could not cancel batch sign-in', '中斷批次登入失敗')
-      )
-    }
-  }
-
   async function downloadUpdate(): Promise<void> {
     try {
       setUpdateState(await window.autologin.app.downloadUpdate())
@@ -526,7 +521,6 @@ export default function App(): React.JSX.Element {
           onRefresh={loadData}
           onLock={lockVault}
           onStartBatch={startBatch}
-          onCancelBatch={cancelBatch}
           onRecord={openRecording}
           onDownloadUpdate={downloadUpdate}
           onCancelUpdate={cancelUpdate}

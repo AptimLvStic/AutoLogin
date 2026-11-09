@@ -179,7 +179,8 @@ export class LoginSessionManager {
           browser: browserInfo,
           profileDirectory: browserProfileDirectory(this.userDataPath, account.id),
           headless: this.headlessBrowser,
-          proxy: this.vault.getSettings().proxy
+          proxy: this.vault.getSettings().proxy,
+          initialUrl: site.startUrl
         }))
       this.host = host
       if (token !== this.sessionToken || this.destroyed) {
@@ -191,6 +192,7 @@ export class LoginSessionManager {
 
       let page: ExternalBrowserPage | null = null
       page = await host.createPage({
+        initialUrl: site.startUrl,
         onEvent: (event) => {
           if (page) {
             this.handleBrowserEvent(page, event)
@@ -210,7 +212,16 @@ export class LoginSessionManager {
         return this.getState()
       }
       this.browser = page
-      await page.navigate(site.startUrl)
+      const snapshot = page.getSnapshot()
+      if (isHttpUrl(snapshot.url)) {
+        this.handleBrowserEvent(page, {
+          type: 'loaded',
+          url: snapshot.url,
+          title: snapshot.title || site.name
+        })
+      } else {
+        this.schedulePageRun(600)
+      }
       return this.getState()
     } catch (error) {
       if (token === this.sessionToken) {
@@ -234,6 +245,10 @@ export class LoginSessionManager {
 
   async close(): Promise<void> {
     await this.dispose()
+  }
+
+  async detach(): Promise<void> {
+    await this.dispose(false)
   }
 
   async retry(): Promise<void> {
@@ -277,6 +292,10 @@ export class LoginSessionManager {
       throw new Error('默认浏览器尚未打开')
     }
     await this.browser.focus()
+  }
+
+  async setAutomationActive(active: boolean): Promise<void> {
+    await this.browser?.setAutomationActive(active)
   }
 
   async finishRecording(): Promise<RecipeDraftResult> {
@@ -375,7 +394,7 @@ export class LoginSessionManager {
     clearManagedSessionDirectories(this.userDataPath, accountId)
   }
 
-  private async dispose(): Promise<void> {
+  private async dispose(closePage = true): Promise<void> {
     this.sessionToken += 1
     this.destroyed = true
     this.clearPageTimer()
@@ -391,7 +410,7 @@ export class LoginSessionManager {
     this.navigationPending = false
     this.state = { ...EMPTY_STATE }
     this.onState(this.getState())
-    if (browser) {
+    if (browser && closePage) {
       await browser.close().catch(() => undefined)
     }
     if (!this.sharedHost && host) {
@@ -974,6 +993,19 @@ export class LoginSessionManager {
     if (this.hadSubmission || this.challengeSeen) {
       this.clearSubmissionTimer()
       this.emit({ status: 'authenticated', message: '登录页面已离开，登录流程完成' })
+      return
+    }
+
+    const currentUrl = stripQuery(this.browser?.getSnapshot().url ?? '')
+    const startUrl = stripQuery(this.site?.startUrl ?? '')
+    if (
+      currentUrl &&
+      startUrl &&
+      currentUrl !== startUrl &&
+      isHttpUrl(currentUrl)
+    ) {
+      this.clearSubmissionTimer()
+      this.emit({ status: 'authenticated', message: '已有会话仍然有效，已直接打开站点' })
       return
     }
 

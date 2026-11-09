@@ -100,7 +100,12 @@ export function SettingsPage({
   const [clearBusy, setClearBusy] = useState(false)
   const [about, setAbout] = useState<AboutInfo | null>(null)
   const [dataLocation, setDataLocation] = useState<DataLocationInfo | null>(null)
+  const [dataLocationLoading, setDataLocationLoading] = useState(true)
+  const [dataLocationError, setDataLocationError] = useState('')
   const [locationBusy, setLocationBusy] = useState(false)
+  const [openingDataLocation, setOpeningDataLocation] = useState(false)
+  const [restartingApp, setRestartingApp] = useState(false)
+  const [openingPrivacy, setOpeningPrivacy] = useState(false)
   const [restoreLocationOpen, setRestoreLocationOpen] = useState(false)
   const [updateResult, setUpdateResult] = useState<UpdateCheckResult | null>(null)
   const [checkingUpdates, setCheckingUpdates] = useState(false)
@@ -115,8 +120,10 @@ export function SettingsPage({
   const [proxyResult, setProxyResult] = useState<ProxyTestResult | null>(null)
   const [backups, setBackups] = useState<BackupRecord[]>([])
   const [backupsLoading, setBackupsLoading] = useState(false)
+  const [backupsError, setBackupsError] = useState('')
   const [confirmBackup, setConfirmBackup] = useState<BackupRecord | null>(null)
   const [restoringBackup, setRestoringBackup] = useState(false)
+  const [resettingSettings, setResettingSettings] = useState(false)
   const scaleSaveTimer = useRef<number | null>(null)
 
   useEffect(() => {
@@ -136,27 +143,7 @@ export function SettingsPage({
   }, [])
 
   useEffect(() => {
-    let cancelled = false
-    void Promise.all([window.autologin.app.getAbout(), window.autologin.app.getDataLocation()])
-      .then(([nextAbout, nextLocation]) => {
-        if (!cancelled) {
-          setAbout(nextAbout)
-          setDataLocation(nextLocation)
-        }
-      })
-      .catch((error) => {
-        if (!cancelled) {
-          notify(
-            'error',
-            error instanceof Error
-              ? error.message
-              : tr('无法读取应用信息', 'Could not read app information.', '無法讀取應用程式資訊')
-          )
-        }
-      })
-    return () => {
-      cancelled = true
-    }
+    void loadSettingsInfo()
   }, [notify])
 
   useEffect(() => {
@@ -164,6 +151,36 @@ export function SettingsPage({
       void loadBackups()
     }
   }, [module])
+
+  async function loadSettingsInfo(): Promise<void> {
+    setDataLocationLoading(true)
+    setDataLocationError('')
+    const [aboutResult, locationResult] = await Promise.allSettled([
+      window.autologin.app.getAbout(),
+      window.autologin.app.getDataLocation()
+    ])
+    if (aboutResult.status === 'fulfilled') {
+      setAbout(aboutResult.value)
+    } else {
+      notify(
+        'error',
+        aboutResult.reason instanceof Error
+          ? aboutResult.reason.message
+          : tr('无法读取应用信息', 'Could not read app information.', '無法讀取應用程式資訊')
+      )
+    }
+    if (locationResult.status === 'fulfilled') {
+      setDataLocation(locationResult.value)
+    } else {
+      const message =
+        locationResult.reason instanceof Error
+          ? locationResult.reason.message
+          : tr('无法读取数据保存位置', 'Could not read the data location.', '無法讀取資料儲存位置')
+      setDataLocationError(message)
+      notify('error', message)
+    }
+    setDataLocationLoading(false)
+  }
 
   async function changeAutoLock(value: AutoLockMinutes): Promise<void> {
     setAutoLock(value)
@@ -316,6 +333,8 @@ export function SettingsPage({
   }
 
   async function resetAllSettings(): Promise<void> {
+    if (resettingSettings) return
+    setResettingSettings(true)
     if (scaleSaveTimer.current) {
       window.clearTimeout(scaleSaveTimer.current)
       scaleSaveTimer.current = null
@@ -325,27 +344,31 @@ export function SettingsPage({
     setFontSizeScale(DEFAULT_APP_SETTINGS.fontSizeScale)
     setProxy(DEFAULT_APP_SETTINGS.proxy)
     setProxyResult(null)
-    await saveAppearance(
-      {
-        autoLockMinutes: DEFAULT_APP_SETTINGS.autoLockMinutes,
-        colorMode: DEFAULT_APP_SETTINGS.colorMode,
-        language: DEFAULT_APP_SETTINGS.language,
-        themePreset: DEFAULT_APP_SETTINGS.themePreset,
-        customTheme: DEFAULT_APP_SETTINGS.customTheme,
-        interfaceScale: DEFAULT_APP_SETTINGS.interfaceScale,
-        fontSizeScale: DEFAULT_APP_SETTINGS.fontSizeScale,
-        accountCopyShortcutEnabled: DEFAULT_APP_SETTINGS.accountCopyShortcutEnabled,
-        accountCopyShortcut: DEFAULT_APP_SETTINGS.accountCopyShortcut,
-        proxy: DEFAULT_APP_SETTINGS.proxy,
-        groupOrder: []
-      },
-      translate(
-        settings.language,
-        '所有设置已恢复默认',
-        'All settings reset to defaults.',
-        '所有設定已恢復預設'
+    try {
+      await saveAppearance(
+        {
+          autoLockMinutes: DEFAULT_APP_SETTINGS.autoLockMinutes,
+          colorMode: DEFAULT_APP_SETTINGS.colorMode,
+          language: DEFAULT_APP_SETTINGS.language,
+          themePreset: DEFAULT_APP_SETTINGS.themePreset,
+          customTheme: DEFAULT_APP_SETTINGS.customTheme,
+          interfaceScale: DEFAULT_APP_SETTINGS.interfaceScale,
+          fontSizeScale: DEFAULT_APP_SETTINGS.fontSizeScale,
+          accountCopyShortcutEnabled: DEFAULT_APP_SETTINGS.accountCopyShortcutEnabled,
+          accountCopyShortcut: DEFAULT_APP_SETTINGS.accountCopyShortcut,
+          proxy: DEFAULT_APP_SETTINGS.proxy,
+          groupOrder: []
+        },
+        translate(
+          settings.language,
+          '所有设置已恢复默认',
+          'All settings reset to defaults.',
+          '所有設定已恢復預設'
+        )
       )
-    )
+    } finally {
+      setResettingSettings(false)
+    }
   }
 
   async function submitPassword(event: React.FormEvent): Promise<void> {
@@ -617,9 +640,15 @@ export function SettingsPage({
 
   async function loadBackups(): Promise<void> {
     setBackupsLoading(true)
+    setBackupsError('')
     try {
       setBackups(await window.autologin.data.listBackups())
     } catch (error) {
+      setBackupsError(
+        error instanceof Error
+          ? error.message
+          : tr('读取备份记录失败', 'Could not load backups.', '讀取備份記錄失敗')
+      )
       notify(
         'error',
         error instanceof Error
@@ -628,6 +657,57 @@ export function SettingsPage({
       )
     } finally {
       setBackupsLoading(false)
+    }
+  }
+
+  async function openDataLocation(): Promise<void> {
+    if (openingDataLocation) return
+    setOpeningDataLocation(true)
+    try {
+      await window.autologin.app.openDataLocation()
+      notify('success', tr('已打开数据目录', 'Data folder opened.', '已開啟資料目錄'))
+    } catch (error) {
+      notify(
+        'error',
+        error instanceof Error
+          ? error.message
+          : tr('无法打开数据目录', 'Could not open the data folder.', '無法開啟資料目錄')
+      )
+    } finally {
+      setOpeningDataLocation(false)
+    }
+  }
+
+  async function restartApp(): Promise<void> {
+    if (restartingApp) return
+    setRestartingApp(true)
+    try {
+      await window.autologin.app.restart()
+    } catch (error) {
+      setRestartingApp(false)
+      notify(
+        'error',
+        error instanceof Error
+          ? error.message
+          : tr('无法重启应用', 'Could not restart the app.', '無法重新啟動應用程式')
+      )
+    }
+  }
+
+  async function openPrivacy(): Promise<void> {
+    if (openingPrivacy) return
+    setOpeningPrivacy(true)
+    try {
+      await window.autologin.app.openPrivacy()
+    } catch (error) {
+      notify(
+        'error',
+        error instanceof Error
+          ? error.message
+          : tr('无法打开隐私说明', 'Could not open the privacy notice.', '無法開啟隱私說明')
+      )
+    } finally {
+      setOpeningPrivacy(false)
     }
   }
 
@@ -953,9 +1033,16 @@ export function SettingsPage({
                 type="button"
                 className="reset-setting-button"
                 onClick={() => void resetAllSettings()}
+                disabled={resettingSettings}
               >
-                <RotateCcw size={15} />
-                {tr('恢复默认设置', 'Restore defaults', '恢復預設設定')}
+                {resettingSettings ? (
+                  <LoaderCircle size={15} className="spin" />
+                ) : (
+                  <RotateCcw size={15} />
+                )}
+                {resettingSettings
+                  ? tr('正在恢复…', 'Restoring…', '正在恢復…')
+                  : tr('恢复默认设置', 'Restore defaults', '恢復預設設定')}
               </button>
             </div>
           </SettingsPanel>
@@ -1282,13 +1369,30 @@ export function SettingsPage({
                 )}
               />
               <div className="settings-location">
-                <code>{dataLocation?.directory ?? tr('正在读取…', 'Loading…', '正在讀取…')}</code>
-                <span className="settings-location__badge">
-                  {dataLocation?.isDefault
-                    ? tr('默认位置', 'Default', '預設位置')
-                    : tr('自定义位置', 'Custom', '自訂位置')}
-                </span>
+                <code>
+                  {dataLocationLoading
+                    ? tr('正在读取…', 'Loading…', '正在讀取…')
+                    : dataLocationError
+                      ? tr('读取失败', 'Could not load', '讀取失敗')
+                      : dataLocation?.directory}
+                </code>
+                {dataLocation && !dataLocationError && (
+                  <span className="settings-location__badge">
+                    {dataLocation.isDefault
+                      ? tr('默认位置', 'Default', '預設位置')
+                      : tr('自定义位置', 'Custom', '自訂位置')}
+                  </span>
+                )}
               </div>
+              {dataLocationError && (
+                <div className="settings-notice settings-notice--error">
+                  <TriangleAlert size={16} />
+                  <span>{dataLocationError}</span>
+                  <button className="text-button" onClick={() => void loadSettingsInfo()}>
+                    {tr('重试', 'Retry', '重試')}
+                  </button>
+                </div>
+              )}
               {dataLocation?.restartRequired && (
                 <div className="settings-notice">
                   <TriangleAlert size={16} />
@@ -1301,9 +1405,15 @@ export function SettingsPage({
                   </span>
                   <button
                     className="text-button"
-                    onClick={() => void window.autologin.app.restart()}
+                    onClick={() => void restartApp()}
+                    disabled={restartingApp}
                   >
-                    {tr('立即重启', 'Restart now', '立即重新啟動')}
+                    {restartingApp ? (
+                      <LoaderCircle size={13} className="spin" />
+                    ) : null}
+                    {restartingApp
+                      ? tr('正在重启…', 'Restarting…', '正在重新啟動…')
+                      : tr('立即重启', 'Restart now', '立即重新啟動')}
                   </button>
                 </div>
               )}
@@ -1324,9 +1434,18 @@ export function SettingsPage({
                 </button>
                 <button
                   className="button button--ghost"
-                  onClick={() => void window.autologin.app.openDataLocation()}
+                  onClick={() => void openDataLocation()}
+                  disabled={openingDataLocation || dataLocationLoading || Boolean(dataLocationError)}
+                  aria-busy={openingDataLocation}
                 >
-                  {tr('打开目录', 'Open folder', '開啟目錄')}
+                  {openingDataLocation ? (
+                    <LoaderCircle size={15} className="spin" />
+                  ) : (
+                    <FolderOpen size={15} />
+                  )}
+                  {openingDataLocation
+                    ? tr('打开中…', 'Opening…', '開啟中…')
+                    : tr('打开目录', 'Open folder', '開啟目錄')}
                 </button>
                 <button
                   type="button"
@@ -1366,6 +1485,15 @@ export function SettingsPage({
                 <div className="backup-empty">
                   <LoaderCircle size={18} className="spin" />
                   {tr('正在读取备份…', 'Loading backups…', '正在讀取備份…')}
+                </div>
+              ) : backupsError ? (
+                <div className="backup-empty backup-empty--error">
+                  <TriangleAlert size={18} />
+                  <span>{backupsError}</span>
+                  <button className="button button--soft button--small" onClick={() => void loadBackups()}>
+                    <RefreshCw size={13} />
+                    {tr('重试', 'Retry', '重試')}
+                  </button>
                 </div>
               ) : backups.length === 0 ? (
                 <div className="backup-empty">
@@ -1430,9 +1558,15 @@ export function SettingsPage({
               <div className="settings-inline-actions">
                 <button
                   className="text-button"
-                  onClick={() => void window.autologin.app.openPrivacy()}
+                  onClick={() => void openPrivacy()}
+                  disabled={openingPrivacy}
                 >
-                  {tr('隐私说明', 'Privacy', '隱私說明')}
+                  {openingPrivacy ? (
+                    <LoaderCircle size={13} className="spin" />
+                  ) : null}
+                  {openingPrivacy
+                    ? tr('打开中…', 'Opening…', '開啟中…')
+                    : tr('隐私说明', 'Privacy', '隱私說明')}
                 </button>
               </div>
             </div>

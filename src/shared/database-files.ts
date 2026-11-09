@@ -8,12 +8,29 @@ export const DATABASE_FILE_EXTENSIONS = [
   '.htm'
 ] as const
 
+export const DATABASE_FOLDERS = [
+  'autologin',
+  'kdbx',
+  'csv',
+  'bookmarks'
+] as const
+
+export type DatabaseFolder = (typeof DATABASE_FOLDERS)[number]
+
 const SOURCE_EXTENSIONS: Record<AccountTabSource, string> = {
   local: '.autologin',
   autologin: '.autologin',
   kdbx: '.kdbx',
   csv: '.csv',
   bookmarks: '.html'
+}
+
+const SOURCE_FOLDERS: Record<AccountTabSource, DatabaseFolder> = {
+  local: 'autologin',
+  autologin: 'autologin',
+  kdbx: 'kdbx',
+  csv: 'csv',
+  bookmarks: 'bookmarks'
 }
 
 const WINDOWS_RESERVED_NAMES = new Set([
@@ -70,6 +87,14 @@ export function databaseExtensionForTab(tab: AccountTab): string {
     extensionFromDatabaseFileName(tab.databaseFileName) ||
     databaseExtensionForSource(tab.source)
   )
+}
+
+export function databaseFolderForSource(source: AccountTabSource): DatabaseFolder {
+  return SOURCE_FOLDERS[source]
+}
+
+export function databaseFolderForTab(tab: AccountTab): DatabaseFolder {
+  return databaseFolderForSource(tab.source)
 }
 
 export function shouldWriteEncryptedTabSnapshot(tab: AccountTab): boolean {

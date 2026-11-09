@@ -1,5 +1,5 @@
 import { EventEmitter } from 'node:events'
-import { spawn, spawnSync } from 'node:child_process'
+import { spawn } from 'node:child_process'
 import { existsSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { homedir, tmpdir } from 'node:os'
 import { basename, dirname, isAbsolute, join, resolve } from 'node:path'
@@ -367,12 +367,27 @@ const DIALOG_SCRIPT = String.raw`
 Add-Type -AssemblyName System.Windows.Forms
 Add-Type -AssemblyName System.Drawing
 
+function Write-DialogResult($value) {
+  $json = $value | ConvertTo-Json -Compress -Depth 8
+  $bytes = [Text.Encoding]::UTF8.GetBytes($json)
+  [Console]::Out.Write('AUTOLOGIN_DIALOG_RESULT:' + [Convert]::ToBase64String($bytes))
+}
+
 $requestJson = [Text.Encoding]::UTF8.GetString(
   [Convert]::FromBase64String($env:AUTOLOGIN_DIALOG_REQUEST)
 )
 $request = $requestJson | ConvertFrom-Json
 
 try {
+  $owner = New-Object Windows.Forms.Form
+  $owner.Text = [string]$request.title
+  $owner.ShowInTaskbar = $false
+  $owner.TopMost = $true
+  $owner.StartPosition = 'CenterScreen'
+  $owner.Size = New-Object Drawing.Size(1, 1)
+  $owner.Opacity = 0
+  $owner.Show()
+
   if ($request.kind -eq 'message') {
     $message = [string]$request.message
     if ($request.detail) {
@@ -386,13 +401,14 @@ try {
     }
     $icon = [Windows.Forms.MessageBoxIcon]::Information
     $result = [Windows.Forms.MessageBox]::Show(
+      $owner,
       $message,
       [string]$request.title,
       $buttonType,
       $icon
     )
     $response = if ($buttons.Count -gt 1 -and $result -eq [Windows.Forms.DialogResult]::No) { 1 } else { 0 }
-    [Console]::Out.Write((@{ response = $response; checkboxChecked = $false } | ConvertTo-Json -Compress))
+    Write-DialogResult @{ response = $response; checkboxChecked = $false }
     exit 0
   }
 
@@ -403,7 +419,7 @@ try {
     if ($request.defaultPath -and (Test-Path -LiteralPath $request.defaultPath)) {
       $dialog.SelectedPath = [string]$request.defaultPath
     }
-    $result = $dialog.ShowDialog()
+    $result = $dialog.ShowDialog($owner)
     if ($result -eq [Windows.Forms.DialogResult]::OK) {
       $paths = @([string]$dialog.SelectedPath)
       $canceled = $false
@@ -411,7 +427,7 @@ try {
       $paths = @()
       $canceled = $true
     }
-    [Console]::Out.Write((@{ canceled = $canceled; filePaths = $paths } | ConvertTo-Json -Compress))
+    Write-DialogResult @{ canceled = $canceled; filePaths = $paths }
     exit 0
   }
 
@@ -431,7 +447,7 @@ try {
     if ($request.defaultPath) {
       $dialog.FileName = [string]$request.defaultPath
     }
-    $result = $dialog.ShowDialog()
+    $result = $dialog.ShowDialog($owner)
     if ($result -eq [Windows.Forms.DialogResult]::OK) {
       $paths = @([string]$dialog.FileName)
       $canceled = $false
@@ -448,7 +464,7 @@ try {
     if ($request.defaultPath) {
       $dialog.FileName = [string]$request.defaultPath
     }
-    $result = $dialog.ShowDialog()
+    $result = $dialog.ShowDialog($owner)
     if ($result -eq [Windows.Forms.DialogResult]::OK) {
       $paths = @($dialog.FileNames)
       $canceled = $false
@@ -458,13 +474,18 @@ try {
     }
   }
 
-  [Console]::Out.Write((@{ canceled = $canceled; filePaths = $paths } | ConvertTo-Json -Compress))
+  Write-DialogResult @{ canceled = $canceled; filePaths = $paths }
 } catch {
-  [Console]::Out.Write((@{ error = $_.Exception.Message } | ConvertTo-Json -Compress))
+  Write-DialogResult @{ error = $_.Exception.Message }
+} finally {
+  if ($owner) {
+    $owner.Close()
+    $owner.Dispose()
+  }
 }
 `
 
-function runDialogRequest(kind: string, options: DialogOptions): unknown {
+async function runDialogRequest(kind: string, options: DialogOptions): Promise<unknown> {
   const properties = options.properties ?? []
   const request = {
     kind: kind === 'open' && properties.includes('openDirectory') ? 'openDirectory' : kind,
@@ -479,36 +500,63 @@ function runDialogRequest(kind: string, options: DialogOptions): unknown {
     type: options.type
   }
   const encoded = Buffer.from(JSON.stringify(request), 'utf8').toString('base64')
-  const result = spawnSync(
-    'powershell.exe',
-    [
-      '-NoLogo',
-      '-NoProfile',
-      '-NonInteractive',
-      '-STA',
-      '-OutputFormat',
-      'Text',
-      '-Command',
-      DIALOG_SCRIPT
-    ],
-    {
-      env: { ...process.env, AUTOLOGIN_DIALOG_REQUEST: encoded },
-      encoding: 'utf8',
-      windowsHide: true
-    }
-  )
-  if (result.status !== 0) {
-    throw new Error(result.stderr.trim() || '无法打开系统对话框')
-  }
-  const output = result.stdout.trim()
-  if (!output) {
-    throw new Error('系统对话框没有返回结果')
-  }
-  const parsed = JSON.parse(output) as Record<string, unknown>
-  if (typeof parsed.error === 'string') {
-    throw new Error(parsed.error)
-  }
-  return parsed
+  return await new Promise((resolvePromise, reject) => {
+    const child = spawn(
+      'powershell.exe',
+      [
+        '-NoLogo',
+        '-NoProfile',
+        '-NonInteractive',
+        '-STA',
+        '-OutputFormat',
+        'Text',
+        '-Command',
+        DIALOG_SCRIPT
+      ],
+      {
+        env: { ...process.env, AUTOLOGIN_DIALOG_REQUEST: encoded },
+        windowsHide: true
+      }
+    )
+    let stdout = ''
+    let stderr = ''
+    child.stdout.setEncoding('utf8')
+    child.stderr.setEncoding('utf8')
+    child.stdout.on('data', (chunk: string) => {
+      stdout += chunk
+    })
+    child.stderr.on('data', (chunk: string) => {
+      stderr += chunk
+    })
+    child.once('error', reject)
+    child.once('close', (code) => {
+      if (code !== 0) {
+        reject(new Error(stderr.trim() || '无法打开系统对话框'))
+        return
+      }
+      const output = stdout.trim()
+      if (!output) {
+        reject(new Error('系统对话框没有返回结果'))
+        return
+      }
+      try {
+        const resultPrefix = 'AUTOLOGIN_DIALOG_RESULT:'
+        const encodedResult = output.startsWith(resultPrefix)
+          ? output.slice(resultPrefix.length)
+          : output
+        const parsed = JSON.parse(
+          Buffer.from(encodedResult, 'base64').toString('utf8')
+        ) as Record<string, unknown>
+        if (typeof parsed.error === 'string') {
+          reject(new Error(parsed.error))
+          return
+        }
+        resolvePromise(parsed)
+      } catch (error) {
+        reject(error)
+      }
+    })
+  })
 }
 
 function normalizeDialogArgs(
@@ -523,7 +571,10 @@ export const dialog = {
     first: BrowserWindow | DialogOptions,
     second?: DialogOptions
   ): Promise<DialogResult> => {
-    const result = runDialogRequest('open', normalizeDialogArgs(first, second)) as DialogResult
+    const result = (await runDialogRequest(
+      'open',
+      normalizeDialogArgs(first, second)
+    )) as DialogResult
     return {
       canceled: Boolean(result.canceled),
       ...(result.filePath ? { filePath: result.filePath } : {}),
@@ -534,7 +585,10 @@ export const dialog = {
     first: BrowserWindow | DialogOptions,
     second?: DialogOptions
   ): Promise<DialogResult> => {
-    const result = runDialogRequest('save', normalizeDialogArgs(first, second)) as DialogResult
+    const result = (await runDialogRequest(
+      'save',
+      normalizeDialogArgs(first, second)
+    )) as DialogResult
     return {
       canceled: Boolean(result.canceled),
       ...(result.filePath ? { filePath: result.filePath } : {}),
@@ -545,10 +599,10 @@ export const dialog = {
     first: BrowserWindow | DialogOptions,
     second?: DialogOptions
   ): Promise<MessageBoxResult> => {
-    const result = runDialogRequest(
+    const result = (await runDialogRequest(
       'message',
       normalizeDialogArgs(first, second)
-    ) as MessageBoxResult
+    )) as MessageBoxResult
     return {
       response: Number(result.response) || 0,
       checkboxChecked: false
@@ -556,57 +610,78 @@ export const dialog = {
   }
 }
 
-function runClipboardPowerShell(script: string, value?: string): string {
+function runProcessCapture(
+  executable: string,
+  args: string[],
+  env: NodeJS.ProcessEnv = process.env
+): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const child = spawn(executable, args, {
+      env,
+      windowsHide: true
+    })
+    let stdout = ''
+    let stderr = ''
+    child.stdout.setEncoding('utf8')
+    child.stderr.setEncoding('utf8')
+    child.stdout.on('data', (chunk: string) => {
+      stdout += chunk
+    })
+    child.stderr.on('data', (chunk: string) => {
+      stderr += chunk
+    })
+    child.once('error', reject)
+    child.once('close', (code) => {
+      if (code !== 0) {
+        reject(new Error(stderr.trim() || `进程退出码 ${code ?? 'unknown'}`))
+        return
+      }
+      resolve(stdout)
+    })
+  })
+}
+
+async function runClipboardPowerShell(script: string, value?: string): Promise<string> {
   const env = { ...process.env }
   if (value !== undefined) {
     env.AUTOLOGIN_CLIPBOARD_VALUE = Buffer.from(value, 'utf8').toString('base64')
   }
-  const result = spawnSync(
+  return await runProcessCapture(
     'powershell.exe',
     ['-NoLogo', '-NoProfile', '-NonInteractive', '-Command', script],
-    {
-      env,
-      encoding: 'utf8',
-      windowsHide: true
-    }
+    env
   )
-  if (result.status !== 0) {
-    throw new Error(result.stderr.trim() || '剪贴板操作失败')
-  }
-  return result.stdout
 }
 
 export const clipboard = {
-  writeText: (value: string): void => {
-    runClipboardPowerShell(
+  writeText: async (value: string): Promise<void> => {
+    await runClipboardPowerShell(
       '$text=[Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($env:AUTOLOGIN_CLIPBOARD_VALUE)); Set-Clipboard -Value $text',
       value
     )
   },
-  readText: (): string =>
-    runClipboardPowerShell(
+  readText: async (): Promise<string> =>
+    await runClipboardPowerShell(
       '$text=Get-Clipboard -Raw; if ($null -ne $text) { [Console]::Out.Write($text) }'
     ),
-  clear: (): void => {
-    runClipboardPowerShell('Set-Clipboard -Value $null')
+  clear: async (): Promise<void> => {
+    await runClipboardPowerShell('Set-Clipboard -Value $null')
   }
 }
 
-function quotePowerShellLiteral(value: string): string {
-  return `'${value.replaceAll("'", "''")}'`
-}
-
-function runPowerShellDetached(script: string): void {
-  const child = spawn(
-    'powershell.exe',
-    ['-NoLogo', '-NoProfile', '-NonInteractive', '-Command', script],
-    {
+function runDetachedProcess(executable: string, args: string[]): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const child = spawn(executable, args, {
       detached: true,
       stdio: 'ignore',
       windowsHide: true
-    }
-  )
-  child.unref()
+    })
+    child.once('error', reject)
+    child.once('spawn', () => {
+      child.unref()
+      resolve()
+    })
+  })
 }
 
 export const shell = {
@@ -615,48 +690,55 @@ export const shell = {
     if (url.protocol !== 'http:' && url.protocol !== 'https:') {
       throw new Error('只能打开 http 或 https 地址')
     }
-    runPowerShellDetached(`Start-Process -FilePath ${quotePowerShellLiteral(value)}`)
+    await runDetachedProcess('rundll32.exe', ['url.dll,FileProtocolHandler', value])
   },
   openPath: async (path: string): Promise<string> => {
     if (!existsSync(path)) return '文件不存在'
-    runPowerShellDetached(`Start-Process -LiteralPath ${quotePowerShellLiteral(path)}`)
+    if (statSync(path).isDirectory()) {
+      await runDetachedProcess('explorer.exe', [path])
+    } else {
+      await runDetachedProcess('rundll32.exe', [
+        'url.dll,FileProtocolHandler',
+        pathToFileURL(path).href
+      ])
+    }
     return ''
   },
   showItemInFolder: (path: string): void => {
     if (!existsSync(path)) return
-    const child = spawn('explorer.exe', [`/select,${path}`], {
-      detached: true,
-      stdio: 'ignore',
-      windowsHide: true
-    })
-    child.unref()
+    void runDetachedProcess('explorer.exe', ['/select,', path]).catch(() => undefined)
   }
 }
 
-function readWindowsSystemProxy(): string | null {
-  const result = spawnSync(
+async function readWindowsSystemProxy(): Promise<string | null> {
+  let result: string
+  try {
+    result = await runProcessCapture(
     'reg.exe',
     [
       'query',
       'HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Internet Settings',
       '/v',
       'ProxyEnable'
-    ],
-    { encoding: 'utf8', windowsHide: true }
-  )
-  const enabled = /ProxyEnable\s+REG_DWORD\s+0x1/i.test(result.stdout)
+    ]
+    )
+  } catch {
+    return null
+  }
+  const enabled = /ProxyEnable\s+REG_DWORD\s+0x1/i.test(result)
   if (!enabled) return null
-  const serverResult = spawnSync(
-    'reg.exe',
-    [
-      'query',
-      'HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Internet Settings',
-      '/v',
-      'ProxyServer'
-    ],
-    { encoding: 'utf8', windowsHide: true }
-  )
-  const match = /ProxyServer\s+REG_SZ\s+(.+)/i.exec(serverResult.stdout)
+  let serverResult: string
+  try {
+    serverResult = await runProcessCapture('reg.exe', [
+        'query',
+        'HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Internet Settings',
+        '/v',
+        'ProxyServer'
+      ])
+  } catch {
+    return null
+  }
+  const match = /ProxyServer\s+REG_SZ\s+(.+)/i.exec(serverResult)
   const server = match?.[1]?.trim()
   if (!server) return null
   const byProtocol = server
@@ -694,7 +776,7 @@ class ShimSession {
       this.proxy.mode === 'fixed_servers'
         ? this.proxy.proxyRules
         : this.proxy.mode === 'system'
-          ? readWindowsSystemProxy()
+          ? await readWindowsSystemProxy()
           : null
     const dispatcher = proxyUrl ? new ProxyAgent(proxyUrl) : undefined
     return (await undiciFetch(input as Parameters<typeof undiciFetch>[0], {
@@ -869,7 +951,6 @@ class ShimAutoUpdater extends EventEmitter {
 
 export const autoUpdater = new ShimAutoUpdater()
 
-void pathToFileURL
 void basename
 void dirname
 void isAbsolute

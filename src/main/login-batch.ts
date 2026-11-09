@@ -24,15 +24,16 @@ import {
 } from './login-session'
 import {
   assertChromiumBrowser,
-  discoverDefaultBrowser,
-  type DefaultBrowser
+  discoverDefaultBrowser
 } from './browser-discovery'
+import { prepareUserBrowserProfile } from './browser-profile'
 import { ExternalBrowserHost } from './external-browser'
 import { browserProfileDirectory } from './session-index'
 import { VaultManager } from './vault'
 
 const MAX_CONCURRENT_TABS = 3
 const LOGIN_TIMEOUT_MS = 30_000
+const BATCH_TIMEOUT_MS = LOGIN_TIMEOUT_MS + 15_000
 const MAX_FAILURE_LOG_BYTES = 2 * 1024 * 1024
 
 export class LoginBatchManager {
@@ -40,11 +41,14 @@ export class LoginBatchManager {
   private readonly managers = new Map<string, LoginSessionManager>()
   private readonly timers = new Map<string, NodeJS.Timeout>()
   private readonly loggedResults = new Set<string>()
+  private readonly activeBatchAccountIds = new Set<string>()
   private host: ExternalBrowserHost | null = null
-  private browserInfo: DefaultBrowser | null = null
+  private hostStart: Promise<ExternalBrowserHost> | null = null
   private queue: string[] = []
   private running = 0
   private disposed = false
+  private generation = 0
+  private batchWatchdog: NodeJS.Timeout | null = null
 
   constructor(
     private readonly vault: VaultManager,
@@ -59,6 +63,9 @@ export class LoginBatchManager {
   }
 
   async start(accountIds: string[]): Promise<LoginBatchState> {
+    if (this.state?.active && this.batchHasExpired()) {
+      await this.expireActiveBatch('批量登录超时，已自动结束未完成的账号')
+    }
     if (this.state?.active) {
       throw new Error('已有批量登录任务正在进行')
     }
@@ -74,20 +81,19 @@ export class LoginBatchManager {
       return { account, site }
     })
 
-    await this.closeRuntime()
+    this.clearBatchWatchdog()
+    this.generation += 1
+    const generation = this.generation
     this.disposed = false
-    const browserInfo = discoverDefaultBrowser(this.browserExecutableOverride)
-    assertChromiumBrowser(browserInfo)
-    this.browserInfo = browserInfo
-    this.host = await ExternalBrowserHost.launch({
-      browser: browserInfo,
-      profileDirectory: browserProfileDirectory(this.userDataPath, 'batch'),
-      headless: this.headlessBrowser,
-      proxy: this.vault.getSettings().proxy
-    })
+    await this.ensureHost(accounts[0]?.site.startUrl)
+    for (const accountId of uniqueIds) {
+      await this.detachAccount(accountId)
+    }
 
     const startedAt = new Date().toISOString()
     this.loggedResults.clear()
+    this.activeBatchAccountIds.clear()
+    for (const accountId of uniqueIds) this.activeBatchAccountIds.add(accountId)
     this.queue = accounts.map(({ account }) => account.id)
     this.running = 0
     this.state = {
@@ -111,7 +117,8 @@ export class LoginBatchManager {
       }))
     }
     this.publish()
-    this.pump()
+    this.scheduleBatchWatchdog(generation)
+    this.pump(generation)
     return this.getState()!
   }
 
@@ -142,19 +149,31 @@ export class LoginBatchManager {
       )
     }
     this.queue = []
-    await this.closeRuntime()
+    await this.closeActiveBatchManagers()
     this.publish()
     return this.getState()!
   }
 
   async clearSession(accountId: string): Promise<void> {
     await this.closeRuntime()
+    clearManagedSessionDirectories(this.userDataPath, 'personal')
     clearManagedSessionDirectories(this.userDataPath, 'batch')
     clearManagedSessionDirectories(this.userDataPath, accountId)
   }
 
+  async openUrl(url: string): Promise<void> {
+    const host = await this.ensureHost(url)
+    const page = await host.createPage({
+      initialUrl: url,
+      onEvent: () => undefined,
+      onClosed: () => undefined
+    })
+    await page.focus().catch(() => undefined)
+  }
+
   async closeAccount(accountId: string): Promise<void> {
     this.clearTimer(accountId)
+    this.activeBatchAccountIds.delete(accountId)
     const manager = this.managers.get(accountId)
     this.managers.delete(accountId)
     if (manager) {
@@ -162,8 +181,19 @@ export class LoginBatchManager {
     }
   }
 
+  private async detachAccount(accountId: string): Promise<void> {
+    this.clearTimer(accountId)
+    this.activeBatchAccountIds.delete(accountId)
+    const manager = this.managers.get(accountId)
+    this.managers.delete(accountId)
+    if (manager) {
+      await manager.detach()
+    }
+  }
+
   async close(): Promise<void> {
     this.disposed = true
+    this.clearBatchWatchdog()
     await this.closeRuntime()
     if (this.state?.active) {
       this.state = {
@@ -176,8 +206,12 @@ export class LoginBatchManager {
     }
   }
 
-  private pump(): void {
-    if (this.disposed || !this.state?.active) {
+  private pump(generation: number): void {
+    if (
+      this.disposed ||
+      generation !== this.generation ||
+      !this.state?.active
+    ) {
       return
     }
     while (this.running < MAX_CONCURRENT_TABS && this.queue.length > 0) {
@@ -186,14 +220,86 @@ export class LoginBatchManager {
         break
       }
       this.running += 1
-      void this.runAccount(accountId).finally(() => {
-        this.running -= 1
-        this.pump()
+      void this.runAccount(accountId, generation).finally(() => {
+        if (generation !== this.generation) {
+          return
+        }
+        this.running = Math.max(0, this.running - 1)
+        this.pump(generation)
       })
     }
   }
 
-  private async runAccount(accountId: string): Promise<void> {
+  private scheduleBatchWatchdog(generation: number): void {
+    this.clearBatchWatchdog()
+    const startedAt = Date.parse(this.state?.startedAt ?? '')
+    const elapsed = Number.isFinite(startedAt) ? Date.now() - startedAt : 0
+    const delay = Math.max(0, BATCH_TIMEOUT_MS - Math.max(0, elapsed))
+    const watchdog = setTimeout(() => {
+      this.batchWatchdog = null
+      if (generation !== this.generation || !this.state?.active) {
+        return
+      }
+      void this.expireActiveBatch('批量登录超时，已自动结束未完成的账号')
+    }, delay)
+    watchdog.unref()
+    this.batchWatchdog = watchdog
+  }
+
+  private clearBatchWatchdog(): void {
+    if (this.batchWatchdog) {
+      clearTimeout(this.batchWatchdog)
+      this.batchWatchdog = null
+    }
+  }
+
+  private batchHasExpired(): boolean {
+    if (!this.state?.active) {
+      return false
+    }
+    const startedAt = Date.parse(this.state.startedAt)
+    return Number.isFinite(startedAt) && Date.now() - startedAt >= BATCH_TIMEOUT_MS
+  }
+
+  private async expireActiveBatch(reason: string): Promise<void> {
+    if (!this.state?.active) {
+      return
+    }
+
+    const finishedAt = new Date().toISOString()
+    const safeReason = sanitizeLoginReason(reason, '批量登录超时')
+    const pendingItems = this.state.items.filter((item) => isPendingStatus(item.status))
+    this.clearBatchWatchdog()
+    this.generation += 1
+    this.queue = []
+    this.running = 0
+
+    this.state = {
+      ...this.state,
+      active: false,
+      pending: 0,
+      finishedAt,
+      items: this.state.items.map((item) =>
+        isPendingStatus(item.status)
+          ? {
+              ...item,
+              status: 'failed',
+              message: safeReason,
+              completedAt: finishedAt
+            }
+          : item
+      )
+    }
+    for (const item of pendingItems) {
+      this.writeLoginLog(item, safeReason, 'timeout')
+    }
+    this.publish()
+  }
+
+  private async runAccount(accountId: string, generation: number): Promise<void> {
+    if (generation !== this.generation) {
+      return
+    }
     const item = this.findItem(accountId)
     if (
       !item ||
@@ -211,8 +317,16 @@ export class LoginBatchManager {
     })
     this.armTimeout(accountId)
 
-    if (!this.host || !this.browserInfo) {
-      this.markFailed(accountId, '共享默认浏览器尚未准备好')
+    let host: ExternalBrowserHost
+    try {
+      host = await this.ensureHost()
+    } catch (error) {
+      if (generation === this.generation) {
+        this.markFailed(
+          accountId,
+          error instanceof Error ? error.message : '共享默认浏览器尚未准备好'
+        )
+      }
       return
     }
 
@@ -221,14 +335,17 @@ export class LoginBatchManager {
       this.userDataPath,
       this.browserExecutableOverride,
       this.headlessBrowser,
-      (next) => this.handleLoginState(accountId, next),
-      this.host
+      (next) => this.handleLoginState(accountId, next, generation),
+      host
     )
     this.managers.set(accountId, manager)
 
     try {
       await manager.start(accountId, 'login')
     } catch (error) {
+      if (generation !== this.generation) {
+        return
+      }
       this.markFailed(
         accountId,
         error instanceof Error ? error.message : '无法启动默认浏览器'
@@ -236,19 +353,28 @@ export class LoginBatchManager {
     }
   }
 
-  private handleLoginState(accountId: string, state: LoginViewState): void {
+  private handleLoginState(
+    accountId: string,
+    state: LoginViewState,
+    generation: number
+  ): void {
+    if (generation !== this.generation) {
+      return
+    }
     const item = this.findItem(accountId)
     if (
       !item ||
       item.status === 'success' ||
       item.status === 'failed' ||
-      item.status === 'canceled'
+      item.status === 'canceled' ||
+      (item.status === 'manual' && state.status !== 'authenticated')
     ) {
       return
     }
 
     if (state.status === 'authenticated') {
       this.clearTimer(accountId)
+      void this.managers.get(accountId)?.setAutomationActive(false)
       const safeReason = sanitizeLoginReason(state.message || '登录成功', '登录成功')
       this.updateItem(accountId, {
         status: 'success',
@@ -260,6 +386,7 @@ export class LoginBatchManager {
     }
 
     if (state.status === 'error') {
+      void this.managers.get(accountId)?.setAutomationActive(false)
       this.markFailed(accountId, state.message || '默认浏览器发生错误')
       return
     }
@@ -315,7 +442,8 @@ export class LoginBatchManager {
       return
     }
     this.clearTimer(accountId)
-    const status = reason.includes('30 秒') ? 'timeout' : 'error'
+    void this.managers.get(accountId)?.setAutomationActive(false)
+    const status = reason.includes('超时') ? 'timeout' : 'error'
     const safeReason = sanitizeLoginReason(reason, status === 'timeout' ? '登录超时' : '登录失败')
     this.updateItem(accountId, {
       status: 'failed',
@@ -414,6 +542,9 @@ export class LoginBatchManager {
       finishedAt:
         !active && !this.state.finishedAt ? new Date().toISOString() : this.state.finishedAt
     }
+    if (!active) {
+      this.clearBatchWatchdog()
+    }
     this.onState(structuredClone(this.state))
   }
 
@@ -421,9 +552,64 @@ export class LoginBatchManager {
     return this.state?.items.find((item) => item.accountId === accountId)
   }
 
+  private async ensureHost(initialUrl?: string): Promise<ExternalBrowserHost> {
+    if (this.host && !this.host.isClosed()) {
+      return this.host
+    }
+    if (this.hostStart) {
+      return this.hostStart
+    }
+
+    const start = (async () => {
+      const browserInfo = discoverDefaultBrowser(this.browserExecutableOverride)
+      assertChromiumBrowser(browserInfo)
+      const profile = await prepareUserBrowserProfile(
+        browserInfo,
+        browserProfileDirectory(this.userDataPath, 'personal')
+      )
+      const host = await ExternalBrowserHost.launch({
+        browser: browserInfo,
+        profileDirectory: profile.profileDirectory,
+        headless: this.headlessBrowser,
+        proxy: this.vault.getSettings().proxy,
+        initialUrl
+      })
+      this.host = host
+      return host
+    })()
+    this.hostStart = start
+    try {
+      return await start
+    } finally {
+      if (this.hostStart === start) {
+        this.hostStart = null
+      }
+    }
+  }
+
+  private async closeActiveBatchManagers(): Promise<void> {
+    const accountIds = [...this.activeBatchAccountIds]
+    this.activeBatchAccountIds.clear()
+    const managers = accountIds
+      .map((accountId) => this.managers.get(accountId))
+      .filter((manager): manager is LoginSessionManager => Boolean(manager))
+    for (const accountId of accountIds) {
+      this.clearTimer(accountId)
+      this.managers.delete(accountId)
+    }
+    await Promise.allSettled(managers.map((manager) => manager.close()))
+  }
+
   private async closeRuntime(): Promise<void> {
+    this.clearBatchWatchdog()
+    this.generation += 1
     this.queue = []
     this.running = 0
+    this.activeBatchAccountIds.clear()
+    const pendingHostStart = this.hostStart
+    if (pendingHostStart) {
+      await pendingHostStart.catch(() => undefined)
+    }
     for (const timer of this.timers.values()) {
       clearTimeout(timer)
     }
@@ -433,7 +619,7 @@ export class LoginBatchManager {
     await Promise.allSettled(managers.map((manager) => manager.close()))
     const host = this.host
     this.host = null
-    this.browserInfo = null
+    this.hostStart = null
     if (host) {
       await host.close().catch(() => undefined)
     }

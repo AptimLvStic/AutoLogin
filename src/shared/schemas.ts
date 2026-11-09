@@ -323,7 +323,7 @@ export const appSettingsPatchSchema = z
 
 export const vaultDataSchema = z.object({
   schemaVersion: z.literal(1),
-  tabs: z.array(accountTabSchema).min(1).default([defaultLocalTab]),
+  tabs: z.array(accountTabSchema).default([defaultLocalTab]),
   sites: z.array(siteSchema),
   accounts: z.array(storedAccountSchema),
   groupDefinitions: z

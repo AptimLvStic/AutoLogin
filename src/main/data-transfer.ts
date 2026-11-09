@@ -627,6 +627,19 @@ function ensureImportedGroups(data: VaultData, tabId: string, now: string): void
       existing.add(prefix)
     }
   }
+  const order = data.settings.groupOrders[tabId] ?? []
+  const nextOrder = [...order]
+  for (const path of needed) {
+    for (const prefix of path
+      .split(GROUP_PATH_SEPARATOR)
+      .map((segment, index, segments) => segments.slice(0, index + 1).join(GROUP_PATH_SEPARATOR))) {
+      if (!nextOrder.includes(prefix)) nextOrder.push(prefix)
+    }
+  }
+  data.settings.groupOrders[tabId] = nextOrder
+  if (tabId === DEFAULT_ACCOUNT_TAB_ID) {
+    data.settings.groupOrder = [...nextOrder]
+  }
 }
 
 function kdbxEntryToCandidate(

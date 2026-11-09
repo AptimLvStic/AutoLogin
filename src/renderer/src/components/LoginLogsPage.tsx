@@ -7,6 +7,7 @@ import {
   LoaderCircle,
   RefreshCw,
   SearchX,
+  TriangleAlert,
   Trash2
 } from 'lucide-react'
 import type {
@@ -43,6 +44,8 @@ export function LoginLogsPage({
   const { tr, formatDate, language } = useI18n()
   const [entries, setEntries] = useState<LoginLogEntry[]>([])
   const [loading, setLoading] = useState(true)
+  const [loadError, setLoadError] = useState('')
+  const [openingRawLog, setOpeningRawLog] = useState(false)
   const [date, setDate] = useState('')
   const [siteId, setSiteId] = useState('all')
   const [groupName, setGroupName] = useState('all')
@@ -57,9 +60,13 @@ export function LoginLogsPage({
 
   async function load(): Promise<void> {
     setLoading(true)
+    setLoadError('')
     try {
       setEntries(await window.autologin.app.listLoginLogs())
     } catch (error) {
+      setLoadError(
+        error instanceof Error ? error.message : tr('读取登录日志失败', 'Could not read login logs.', '讀取登入日誌失敗')
+      )
       notify(
         'error',
         error instanceof Error
@@ -68,6 +75,24 @@ export function LoginLogsPage({
       )
     } finally {
       setLoading(false)
+    }
+  }
+
+  async function openRawLog(): Promise<void> {
+    if (openingRawLog) return
+    setOpeningRawLog(true)
+    try {
+      await window.autologin.app.openFailureLog()
+      notify('success', tr('已打开原始日志', 'Raw log opened.', '已開啟原始日誌'))
+    } catch (error) {
+      notify(
+        'error',
+        error instanceof Error
+          ? error.message
+          : tr('无法打开原始日志', 'Could not open the raw log.', '無法開啟原始日誌')
+      )
+    } finally {
+      setOpeningRawLog(false)
     }
   }
 
@@ -304,10 +329,18 @@ export function LoginLogsPage({
             </button>
             <button
               className="button button--ghost"
-              onClick={() => void window.autologin.app.openFailureLog()}
+              onClick={() => void openRawLog()}
+              disabled={openingRawLog}
+              aria-busy={openingRawLog}
             >
-              <FileText size={15} />
-              {tr('打开原始日志', 'Open raw log', '開啟原始日誌')}
+              {openingRawLog ? (
+                <LoaderCircle size={15} className="spin" />
+              ) : (
+                <FileText size={15} />
+              )}
+              {openingRawLog
+                ? tr('打开中…', 'Opening…', '開啟中…')
+                : tr('打开原始日志', 'Open raw log', '開啟原始日誌')}
             </button>
           </div>
         </div>
@@ -347,6 +380,16 @@ export function LoginLogsPage({
           <div className="logs-empty">
             <LoaderCircle size={22} className="spin" />
             <span>{tr('正在读取本地日志', 'Reading local logs', '正在讀取本機日誌')}</span>
+          </div>
+        ) : loadError ? (
+          <div className="logs-empty">
+            <TriangleAlert size={24} />
+            <strong>{tr('读取日志失败', 'Could not read logs', '讀取日誌失敗')}</strong>
+            <span>{loadError}</span>
+            <button className="button button--soft" onClick={() => void load()}>
+              <RefreshCw size={15} />
+              {tr('重试', 'Retry', '重試')}
+            </button>
           </div>
         ) : visible.length === 0 ? (
           <div className="logs-empty">

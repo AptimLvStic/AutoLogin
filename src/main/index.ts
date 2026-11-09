@@ -10,6 +10,7 @@ import {
 } from 'node:fs'
 import { basename, dirname, join, resolve } from 'node:path'
 import { randomUUID } from 'node:crypto'
+import { fileURLToPath } from 'node:url'
 import type { IpcMainEvent, IpcMainInvokeEvent } from 'electron'
 import { autoUpdater } from 'electron-updater'
 import { CancellationToken } from 'builder-util-runtime'
@@ -58,6 +59,8 @@ import {
   UNGROUPED_GROUP_KEY
 } from '@shared/types'
 import {
+  databaseFolderForSource,
+  databaseFolderForTab,
   databaseExtensionForSource,
   databaseExtensionForTab,
   databaseNameFromFileName,
@@ -143,6 +146,7 @@ import {
   recoverDataDirectoryFromInstall,
   writeDataDirectory
 } from './data-location'
+import { repairGroupDefinitions } from './group-definitions'
 import {
   deleteLoginLogs,
   failureLogPath,
@@ -462,28 +466,31 @@ function syncTabSnapshotFiles(data: VaultData): void {
 
   const dataByTab = indexVaultDataByTab(data)
   for (const tab of data.tabs) {
-    if (!shouldWriteEncryptedTabSnapshot(tab)) {
-      continue
-    }
     const databasePath = tabDatabasePath(tab)
-    if (
-      !pendingNewDatabaseTabIds.has(tab.id) &&
-      !existsSync(databasePath)
-    ) {
-      continue
-    }
     try {
-      const snapshot = buildTabSnapshot(
-        data,
-        tab,
-        dataByTab.get(tab.id),
-        getTabGroupOrder(data, tab.id)
-      )
-      vault.writeEncryptedSnapshot(
-        databasePath,
-        snapshot
-      )
-      pendingNewDatabaseTabIds.delete(tab.id)
+      if (shouldWriteEncryptedTabSnapshot(tab)) {
+        if (
+          !pendingNewDatabaseTabIds.has(tab.id) &&
+          !existsSync(databasePath)
+        ) {
+          continue
+        }
+        const snapshot = buildTabSnapshot(
+          data,
+          tab,
+          dataByTab.get(tab.id),
+          getTabGroupOrder(data, tab.id)
+        )
+        vault.writeEncryptedSnapshot(databasePath, snapshot)
+        pendingNewDatabaseTabIds.delete(tab.id)
+      } else if (tab.source === 'bookmarks') {
+        mkdirSync(dirname(databasePath), { recursive: true })
+        writeFileSync(databasePath, serializeTabBookmarks(data, tab.id), {
+          encoding: 'utf8',
+          mode: 0o600
+        })
+        pendingNewDatabaseTabIds.delete(tab.id)
+      }
     } catch (error) {
       appendAppLog(dataDirectory, {
         level: 'error',
@@ -499,16 +506,43 @@ function tabDatabasePath(tab: AccountTab): string {
   return join(
     dataDirectory,
     'tabs',
+    databaseFolderForTab(tab),
     tab.databaseFileName ??
       databaseFileNameFor(tab.name, databaseExtensionForTab(tab))
   )
 }
 
+function legacyTabDatabasePath(tab: AccountTab): string {
+  return join(
+    dataDirectory,
+    'tabs',
+    tab.databaseFileName ??
+      databaseFileNameFor(tab.name, databaseExtensionForTab(tab))
+  )
+}
+
+function tabDatabaseFileExists(tab: AccountTab): boolean {
+  return (
+    pendingNewDatabaseTabIds.has(tab.id) ||
+    existsSync(tabDatabasePath(tab)) ||
+    existsSync(legacyTabDatabasePath(tab))
+  )
+}
+
+function tabRevealDirectory(tab: AccountTab): string {
+  const tabsDirectory = join(dataDirectory, 'tabs', databaseFolderForTab(tab))
+  const databasePath = tabDatabasePath(tab)
+  const legacyPath = legacyTabDatabasePath(tab)
+  mkdirSync(tabsDirectory, { recursive: true })
+  if (existsSync(databasePath)) return dirname(databasePath)
+  if (existsSync(legacyPath)) return dirname(legacyPath)
+  return tabsDirectory
+}
+
 function pruneMissingDatabaseTabs(data: VaultData): void {
   const result = removeMissingDatabaseTabs(
     data,
-    (tab) =>
-      pendingNewDatabaseTabIds.has(tab.id) || existsSync(tabDatabasePath(tab))
+    (tab) => tabDatabaseFileExists(tab)
   )
   if (result.removedTabs.length === 0) return
 
@@ -528,8 +562,7 @@ function purgeMissingDatabaseTabs(): void {
   const data = vault.requireData()
   const result = removeMissingDatabaseTabs(
     data,
-    (tab) =>
-      pendingNewDatabaseTabIds.has(tab.id) || existsSync(tabDatabasePath(tab))
+    (tab) => tabDatabaseFileExists(tab)
   )
   if (result.removedTabs.length === 0) return
   vault.save()
@@ -547,7 +580,6 @@ function purgeMissingDatabaseTabs(): void {
 }
 
 function reconcileTabDatabaseFiles(): void {
-  purgeMissingDatabaseTabs()
   const data = vault.requireData()
   let result
   try {
@@ -574,8 +606,10 @@ function reconcileTabDatabaseFiles(): void {
   }
   if (result.changed) {
     vault.save()
-    return
+  } else {
+    syncTabSnapshotFiles(data)
   }
+  purgeMissingDatabaseTabs()
   syncTabSnapshotFiles(data)
 }
 
@@ -727,6 +761,19 @@ function registerIpc(): void {
     assertTrustedSender(event)
     await deleteAccountTab(requireId(tabId))
   })
+  ipcMain.handle('tabs:purge', async (event, tabId: unknown) => {
+    assertTrustedSender(event)
+    await purgeAccountTab(requireId(tabId))
+  })
+  ipcMain.handle('tabs:reveal-path', (event, tabId: unknown): string => {
+    assertTrustedSender(event)
+    const id = requireId(tabId)
+    const tab = vault.requireData().tabs.find((entry) => entry.id === id)
+    if (!tab) {
+      throw new Error('标签页不存在')
+    }
+    return tabRevealDirectory(tab)
+  })
   ipcMain.handle('tabs:reveal', async (event, tabId: unknown) => {
     assertTrustedSender(event)
     const id = requireId(tabId)
@@ -734,14 +781,8 @@ function registerIpc(): void {
     if (!tab) {
       throw new Error('标签页不存在')
     }
-    const tabsDirectory = join(dataDirectory, 'tabs')
-    const databasePath = tabDatabasePath(tab)
-    if (existsSync(databasePath)) {
-      shell.showItemInFolder(databasePath)
-      return
-    }
-    mkdirSync(tabsDirectory, { recursive: true })
-    const error = await shell.openPath(tabsDirectory)
+    const targetDirectory = tabRevealDirectory(tab)
+    const error = await shell.openPath(targetDirectory)
     if (error) {
       throw new Error(`无法打开数据库所在文件夹：${error}`)
     }
@@ -1141,21 +1182,21 @@ function registerIpc(): void {
       message: '账号密码已复制到剪贴板'
     })
   })
-  ipcMain.handle('accounts:copy-username', (event, accountId: unknown) => {
+  ipcMain.handle('accounts:copy-username', async (event, accountId: unknown) => {
     assertTrustedSender(event)
     const id = requireId(accountId)
     const account = vault.requireData().accounts.find((entry) => entry.id === id)
     if (!account) {
       throw new Error('账号不存在')
     }
-    clipboard.writeText(account.username)
+    await clipboard.writeText(account.username)
     appendAppLog(dataDirectory, {
       level: 'info',
       category: 'data',
       message: '账号用户名已复制到剪贴板'
     })
   })
-  ipcMain.handle('accounts:copy-url', (event, accountId: unknown) => {
+  ipcMain.handle('accounts:copy-url', async (event, accountId: unknown) => {
     assertTrustedSender(event)
     const id = requireId(accountId)
     const data = vault.requireData()
@@ -1167,7 +1208,7 @@ function registerIpc(): void {
     if (!site) {
       throw new Error('站点不存在')
     }
-    clipboard.writeText(site.startUrl)
+    await clipboard.writeText(site.startUrl)
     appendAppLog(dataDirectory, {
       level: 'info',
       category: 'data',
@@ -1219,7 +1260,11 @@ function registerIpc(): void {
       let status: 'success' | 'error' = 'success'
       let reason = '已在系统默认浏览器中打开'
       try {
-        await openExternalUrl(site.startUrl)
+        ensureLoginManagers()
+        if (!batchManager) {
+          throw new Error('本地浏览器尚未准备好')
+        }
+        await batchManager.openUrl(site.startUrl)
       } catch (error) {
         status = 'error'
         reason =
@@ -1527,7 +1572,10 @@ function registerIpc(): void {
       'csv',
       basename(path),
       parsedInput.data.mode,
-      parsedInput.data.tabId
+      parsedInput.data.tabId,
+      parsedInput.data.mode === 'new'
+        ? { sourcePath: normalizeSelectedPath(path) }
+        : undefined
     )
     appendImportLog(result, basename(path))
     return result
@@ -1547,10 +1595,11 @@ function registerIpc(): void {
         }
       ]
     })
-    const path = selection.filePaths[0]
-    if (selection.canceled || !path) {
+    const selectedPath = selection.filePaths[0]
+    if (selection.canceled || !selectedPath) {
       return null
     }
+    const path = normalizeSelectedPath(selectedPath)
     if (!existsSync(path)) {
       throw new Error('所选数据库文件已被移动或删除，请重新选择')
     }
@@ -1605,13 +1654,17 @@ function registerIpc(): void {
       if (!selection) {
         throw new Error('数据库选择已过期，请重新选择文件')
       }
-      if (!existsSync(selection.path)) {
+      const databasePath = resolveSelectedDatabasePath(
+        selection.path,
+        selection.kind
+      )
+      if (!databasePath) {
         pendingDatabaseSelections.delete(parsed.data.token)
         throw new Error('所选数据库文件已被移动或删除，请重新选择')
       }
       purgeMissingDatabaseTabs()
       const existing = findExistingDatabaseTab(
-        selection.path,
+        databasePath,
         selection.kind
       )
       if (existing) {
@@ -1636,22 +1689,22 @@ function registerIpc(): void {
         selection.kind === 'autologin'
           ? applyAutologinImport(
               await vault.readEncryptedSnapshot(
-                selection.path,
+                databasePath,
                 parsed.data.password
               ),
               {
                 fileName: selection.fileName,
-                sourcePath: selection.path,
+                sourcePath: databasePath,
                 exactFileName: true
               }
             )
           : applyDataImport(
-              await parseKdbxImport(selection.path, parsed.data.password),
+              await parseKdbxImport(databasePath, parsed.data.password),
               'kdbx',
               selection.fileName,
               'new',
               undefined,
-              { sourcePath: selection.path }
+              { sourcePath: databasePath }
             )
       pendingDatabaseSelections.delete(parsed.data.token)
       appendImportLog(result, selection.fileName)
@@ -1668,12 +1721,16 @@ function registerIpc(): void {
       properties: ['openFile'],
       filters: [{ name: 'KeePassXC 数据库', extensions: ['kdbx'] }]
     })
-    const path = selection.filePaths[0]
-    if (selection.canceled || !path) {
+    const selectedPath = selection.filePaths[0]
+    if (selection.canceled || !selectedPath) {
       return null
     }
+    const path = normalizeSelectedPath(selectedPath)
     if (!path.toLocaleLowerCase().endsWith('.kdbx')) {
       throw new Error('请选择 .kdbx 格式的 KeePassXC 数据库')
+    }
+    if (!existsSync(path)) {
+      throw new Error('所选数据库文件已被移动或删除，请重新选择')
     }
     const stats = statSync(path)
     const token = randomUUID()
@@ -1699,14 +1756,22 @@ function registerIpc(): void {
       if (!selection) {
         throw new Error('KeePassXC 数据库选择已过期，请重新选择文件')
       }
-      const imported = await parseKdbxImport(selection.path, parsed.data.password)
+      const databasePath = resolveSelectedDatabasePath(
+        selection.path,
+        'kdbx'
+      )
+      if (!databasePath) {
+        pendingKdbxSelections.delete(parsed.data.token)
+        throw new Error('所选数据库文件已被移动或删除，请重新选择')
+      }
+      const imported = await parseKdbxImport(databasePath, parsed.data.password)
       const result = applyDataImport(
         imported,
         'kdbx',
         selection.fileName,
         'new',
         undefined,
-        { sourcePath: selection.path }
+        { sourcePath: databasePath }
       )
       pendingKdbxSelections.delete(parsed.data.token)
       appendImportLog(result, selection.fileName)
@@ -1723,12 +1788,16 @@ function registerIpc(): void {
       properties: ['openFile'],
       filters: [{ name: 'AutoLogin 加密配置', extensions: ['autologin'] }]
     })
-    const path = selection.filePaths[0]
-    if (selection.canceled || !path) {
+    const selectedPath = selection.filePaths[0]
+    if (selection.canceled || !selectedPath) {
       return null
     }
+    const path = normalizeSelectedPath(selectedPath)
     if (!path.toLocaleLowerCase().endsWith('.autologin')) {
       throw new Error('请选择 .autologin 格式的 AutoLogin 配置文件')
+    }
+    if (!existsSync(path)) {
+      throw new Error('所选数据库文件已被移动或删除，请重新选择')
     }
     const stats = statSync(path)
     const token = randomUUID()
@@ -1754,13 +1823,21 @@ function registerIpc(): void {
       if (!selection) {
         throw new Error('AutoLogin 配置文件选择已过期，请重新选择文件')
       }
-      const imported = await vault.readEncryptedSnapshot(
+      const databasePath = resolveSelectedDatabasePath(
         selection.path,
+        'autologin'
+      )
+      if (!databasePath) {
+        pendingAutologinSelections.delete(parsed.data.token)
+        throw new Error('所选数据库文件已被移动或删除，请重新选择')
+      }
+      const imported = await vault.readEncryptedSnapshot(
+        databasePath,
         parsed.data.password
       )
       const result = applyAutologinImport(imported, {
         fileName: selection.fileName,
-        sourcePath: selection.path,
+        sourcePath: databasePath,
         exactFileName: true
       })
       pendingAutologinSelections.delete(parsed.data.token)
@@ -2181,7 +2258,22 @@ function deleteGroup(groupName: string, requestedTabId?: string): number {
 function listGroups(tabId?: string): GroupDefinition[] {
   const data = vault.requireData()
   const scopedTabId = tabId ?? DEFAULT_ACCOUNT_TAB_ID
-  if (ensureGroupDefinitions(data, scopedTabId)) vault.save()
+  let changed = repairGroupDefinitions(data)
+  changed = ensureGroupDefinitions(data, scopedTabId) || changed
+  const seen = new Set<string>()
+  const deduplicated = data.groupDefinitions.filter((group) => {
+    const key = `${group.tabId ?? DEFAULT_ACCOUNT_TAB_ID}\u0000${group.path}`
+    if (seen.has(key)) {
+      changed = true
+      return false
+    }
+    seen.add(key)
+    return true
+  })
+  if (deduplicated.length !== data.groupDefinitions.length) {
+    data.groupDefinitions = deduplicated
+  }
+  if (changed) vault.save()
   return structuredClone(
     data.groupDefinitions.filter((group) => group.tabId === scopedTabId)
   )
@@ -2625,13 +2717,14 @@ async function testSelector(input: SelectorTestInput): Promise<SelectorTestResul
       browser,
       profileDirectory: testDirectory,
       headless: true,
-      proxy: vault.getSettings().proxy
+      proxy: vault.getSettings().proxy,
+      initialUrl: normalizeUrl(input.url?.trim() || site.startUrl)
     })
     const page = await host.createPage({
+      initialUrl: normalizeUrl(input.url?.trim() || site.startUrl),
       onEvent: () => undefined,
       onClosed: () => undefined
     })
-    await page.navigate(normalizeUrl(input.url?.trim() || site.startUrl))
     await page.waitForLoad()
     const result = await page.runAgentCommand({
       type: 'test-selector',
@@ -3202,7 +3295,12 @@ function updateAccountTab(tabId: string, input: AccountTabUpdateInput): AccountT
         name,
         databaseExtensionForTab(tab)
       )
-      const nextPath = join(dataDirectory, 'tabs', nextFileName)
+      const nextPath = join(
+        dataDirectory,
+        'tabs',
+        databaseFolderForTab(tab),
+        nextFileName
+      )
       const samePath =
         oldPath.toLocaleLowerCase() === nextPath.toLocaleLowerCase()
       if (existsSync(nextPath) && !samePath) {
@@ -3260,6 +3358,83 @@ async function deleteAccountTab(tabId: string): Promise<void> {
   })
 }
 
+async function purgeAccountTab(tabId: string): Promise<void> {
+  const data = vault.requireData()
+  const tab = data.tabs.find((entry) => entry.id === tabId)
+  if (!tab) throw new Error('标签页不存在')
+
+  const siteIds = new Set(
+    data.sites
+      .filter((site) => site.tabId === tabId)
+      .map((site) => site.id)
+  )
+  const accountIds = new Set(
+    data.accounts
+      .filter(
+        (account) =>
+          account.tabId === tabId || siteIds.has(account.siteId)
+      )
+      .map((account) => account.id)
+  )
+  const databasePaths = new Set([
+    tabDatabasePath(tab),
+    legacyTabDatabasePath(tab)
+  ])
+
+  data.tabs = data.tabs.filter((entry) => entry.id !== tabId)
+  data.sites = data.sites.filter(
+    (site) => site.tabId !== tabId && !siteIds.has(site.id)
+  )
+  data.accounts = data.accounts.filter(
+    (account) =>
+      account.tabId !== tabId && !accountIds.has(account.id)
+  )
+  data.groupDefinitions = data.groupDefinitions.filter(
+    (group) => group.tabId !== tabId
+  )
+  data.deletedAccounts = data.deletedAccounts.filter(
+    (record) => record.tabId !== tabId && !accountIds.has(record.account.id)
+  )
+  delete data.settings.groupOrders[tabId]
+  if (tabId === DEFAULT_ACCOUNT_TAB_ID) {
+    data.settings.groupOrder = []
+  }
+  vault.save()
+  pendingNewDatabaseTabIds.delete(tabId)
+
+  for (const accountId of accountIds) {
+    try {
+      await batchManager?.clearSession(accountId)
+      await loginManager?.clearSession(accountId)
+      clearManagedSessionDirectories(dataDirectory, accountId)
+      sessionIndex.remove(accountId)
+    } catch (error) {
+      appendAppLog(dataDirectory, {
+        level: 'warning',
+        category: 'error',
+        message: '删除数据库时未能完全清理浏览器会话',
+        details: sanitizeLogDetails(
+          error instanceof Error ? error.message : String(error)
+        )
+      })
+    }
+  }
+
+  for (const databasePath of databasePaths) {
+    rmSync(databasePath, {
+      force: true,
+      maxRetries: 3,
+      retryDelay: 120
+    })
+  }
+
+  appendAppLog(dataDirectory, {
+    level: 'warning',
+    category: 'data',
+    message: `${tab.source === 'bookmarks' ? '书签' : '数据库'}已关闭并永久删除：${tab.name}`
+  })
+}
+
 function buildAccountTab(
   data: VaultData,
   requestedName: string,
@@ -3286,7 +3461,14 @@ function buildAccountTab(
           databaseFileNameFor(tab.name, databaseExtensionForTab(tab))
         ).toLocaleLowerCase() === databaseFileName.toLocaleLowerCase()
     ) ||
-    existsSync(join(dataDirectory, 'tabs', databaseFileName))
+    existsSync(
+      join(
+        dataDirectory,
+        'tabs',
+        databaseFolderForSource(source),
+        databaseFileName
+      )
+    )
   ) {
     const suffix = ` ${sequence}`
     name = `${baseName.slice(0, 40 - suffix.length).trimEnd()}${suffix}`
@@ -3306,7 +3488,10 @@ function buildAccountTab(
     createdAt: now,
     updatedAt: now
   }
-  if (shouldWriteEncryptedTabSnapshot(tab)) {
+  if (
+    shouldWriteEncryptedTabSnapshot(tab) ||
+    tab.source === 'bookmarks'
+  ) {
     pendingNewDatabaseTabIds.add(tab.id)
   }
   return tab
@@ -3355,10 +3540,13 @@ function applyDataImport(
   if (mode === 'new' && options.sourcePath) {
     ensureOpenedDatabaseFileStored(targetTab, options.sourcePath)
   }
+  repairGroupDefinitions(merged.data)
   data.tabs = merged.data.tabs
   data.sites = merged.data.sites
   data.accounts = merged.data.accounts
   data.groupDefinitions = merged.data.groupDefinitions
+  data.settings.groupOrders = merged.data.settings.groupOrders
+  data.settings.groupOrder = merged.data.settings.groupOrder
   vault.save()
   sessionIndex.replace(data.accounts.map((account) => account.id))
   return merged.result
@@ -3394,10 +3582,13 @@ function applyAutologinImport(
   if (options.sourcePath && targetTab) {
     ensureOpenedDatabaseFileStored(targetTab, options.sourcePath)
   }
+  repairGroupDefinitions(merged.data)
   data.tabs = merged.data.tabs
   data.sites = merged.data.sites
   data.accounts = merged.data.accounts
   data.groupDefinitions = merged.data.groupDefinitions
+  data.settings.groupOrders = merged.data.settings.groupOrders
+  data.settings.groupOrder = merged.data.settings.groupOrder
   vault.save()
   sessionIndex.replace(data.accounts.map((account) => account.id))
   return merged.result
@@ -3447,7 +3638,12 @@ function ensureOpenedDatabaseFileStored(
   const databaseFileName =
     tab.databaseFileName ??
     databaseFileNameFor(tab.name, databaseExtensionForTab(tab))
-  const targetPath = join(dataDirectory, 'tabs', databaseFileName)
+  const targetPath = join(
+    dataDirectory,
+    'tabs',
+    databaseFolderForTab(tab),
+    databaseFileName
+  )
   if (
     resolve(sourcePath).toLocaleLowerCase() ===
     resolve(targetPath).toLocaleLowerCase()
@@ -3458,7 +3654,11 @@ function ensureOpenedDatabaseFileStored(
     throw new Error(`数据库文件“${databaseFileName}”已存在，未覆盖原文件`)
   }
   mkdirSync(dirname(targetPath), { recursive: true })
-  copyFileSync(sourcePath, targetPath)
+  if (pathIsInside(join(dataDirectory, 'tabs'), sourcePath)) {
+    renameSync(sourcePath, targetPath)
+  } else {
+    copyFileSync(sourcePath, targetPath)
+  }
 }
 
 function findExistingDatabaseTab(
@@ -3470,12 +3670,16 @@ function findExistingDatabaseTab(
   const exact = data.tabs.find(
     (tab) =>
       tabMatchesDatabaseKind(tab, kind) &&
-      resolve(tabDatabasePath(tab)).toLocaleLowerCase() === normalizedPath
+      (resolve(tabDatabasePath(tab)).toLocaleLowerCase() === normalizedPath ||
+        resolve(legacyTabDatabasePath(tab)).toLocaleLowerCase() === normalizedPath)
   )
   if (exact) return exact
 
   const tabsDirectory = resolve(join(dataDirectory, 'tabs')).toLocaleLowerCase()
-  if (dirname(normalizedPath) !== tabsDirectory) {
+  if (
+    normalizedPath !== tabsDirectory &&
+    !pathIsInside(tabsDirectory, normalizedPath)
+  ) {
     return null
   }
   const requestedName = normalizeDatabaseName(
@@ -3532,13 +3736,13 @@ function appendImportLog(result: DataImportResult, fileName: string): void {
 }
 
 async function copySecret(value: string): Promise<void> {
-  clipboard.writeText(value)
+  await clipboard.writeText(value)
   if (clipboardClearTimer) {
     clearTimeout(clipboardClearTimer)
   }
   clipboardClearTimer = setTimeout(async () => {
     if ((await clipboard.readText()) === value) {
-      clipboard.clear()
+      await clipboard.clear()
     }
   }, 30_000)
   clipboardClearTimer.unref()
@@ -3560,6 +3764,39 @@ function cleanExpiredDatabaseSelections(): void {
       pendingDatabaseSelections.delete(token)
     }
   }
+}
+
+function normalizeSelectedPath(value: string): string {
+  const trimmed = value.trim().replace(/^"(.*)"$/, '$1')
+  if (/^file:\/\//i.test(trimmed)) {
+    try {
+      return resolve(fileURLToPath(trimmed))
+    } catch {
+      // Fall through to path resolution for malformed file URLs.
+    }
+  }
+  return resolve(trimmed)
+}
+
+function resolveSelectedDatabasePath(
+  selectedPath: string,
+  kind: LocalDatabaseKind
+): string | null {
+  const normalizedPath = normalizeSelectedPath(selectedPath)
+  if (existsSync(normalizedPath)) {
+    return normalizedPath
+  }
+
+  const tabsRoot = resolve(join(dataDirectory, 'tabs'))
+  if (!pathIsInside(tabsRoot, normalizedPath)) {
+    return null
+  }
+  const fileName = basename(normalizedPath)
+  const candidates = [
+    join(tabsRoot, kind === 'kdbx' ? 'kdbx' : 'autologin', fileName),
+    join(tabsRoot, fileName)
+  ]
+  return candidates.find((candidate) => existsSync(candidate)) ?? null
 }
 
 function cleanExpiredAutologinSelections(): void {
@@ -3688,13 +3925,6 @@ async function restoreDefaultDataLocation(): Promise<DataLocationInfo> {
     sendToRenderer('vault:locked')
     throw error
   }
-}
-
-async function openExternalUrl(value: string): Promise<void> {
-  if (!isHttpUrl(value)) {
-    throw new Error('只能打开 http 或 https 地址')
-  }
-  await shell.openExternal(value)
 }
 
 function initializeAutoUpdater(): void {

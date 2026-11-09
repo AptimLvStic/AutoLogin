@@ -12,15 +12,37 @@ import type {
   SiteInput
 } from '@shared/types'
 
+const LONG_OPERATION_PATTERN =
+  /(?:choose-|data:(?:import|export|restore-backup)|accounts:fetch-icons-batch|app:(?:choose-data-location|restore-default-data-location|clear-all-data))/
+
+function timeoutForChannel(channel: string): number {
+  return LONG_OPERATION_PATTERN.test(channel) ? 10 * 60_000 : 30_000
+}
+
 async function invoke<T>(channel: string, ...args: unknown[]): Promise<T> {
+  let timeoutId: ReturnType<typeof setTimeout> | undefined
   try {
-    return (await ipcRenderer.invoke(channel, ...args)) as T
+    const timeout = new Promise<never>((_resolve, reject) => {
+      timeoutId = setTimeout(() => {
+        reject(
+          new Error(
+            `本地操作超时（${Math.round(timeoutForChannel(channel) / 1000)} 秒），请重试或重新启动应用`
+          )
+        )
+      }, timeoutForChannel(channel))
+    })
+    return (await Promise.race([
+      ipcRenderer.invoke(channel, ...args) as Promise<T>,
+      timeout
+    ])) as T
   } catch (error) {
     const raw = error instanceof Error ? error.message : String(error)
     const cleaned = raw
       .replace(/^Error invoking remote method '[^']+':\s*/i, '')
       .replace(/^Error:\s*/i, '')
     throw new Error(cleaned || '操作失败')
+  } finally {
+    if (timeoutId !== undefined) clearTimeout(timeoutId)
   }
 }
 
@@ -44,6 +66,7 @@ const api: AutologinApi = {
     create: (input) => invoke('tabs:create', input),
     update: (tabId, input) => invoke('tabs:update', tabId, input),
     delete: (tabId) => invoke('tabs:delete', tabId),
+    purge: (tabId) => invoke('tabs:purge', tabId),
     reveal: (tabId) => invoke('tabs:reveal', tabId)
   },
   groups: {

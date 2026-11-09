@@ -72,7 +72,16 @@ const api: AutologinApi = {
     create: (input) => call('tabs:create', input),
     update: (tabId, input) => call('tabs:update', tabId, input),
     delete: (tabId) => call('tabs:delete', tabId),
-    reveal: (tabId) => call('tabs:reveal', tabId)
+    purge: (tabId) => call('tabs:purge', tabId),
+    reveal: async (tabId) => {
+      const path = await call<string>('tabs:reveal-path', tabId)
+      try {
+        await invoke('open_path', { path })
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error)
+        throw new Error(message || '无法打开数据库所在文件夹')
+      }
+    }
   },
   groups: {
     list: (tabId) => call('groups:list', tabId),

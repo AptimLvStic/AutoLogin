@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { invoke, isTauri } from '@tauri-apps/api/core'
+import { getCurrentWebview } from '@tauri-apps/api/webview'
 import { LoaderCircle, LockKeyhole, Minus, Square, X } from 'lucide-react'
 import type {
   AccountWithSite,
@@ -163,6 +164,17 @@ export default function App(): React.JSX.Element {
       }
     }
   }, [])
+
+  useEffect(() => {
+    const interfaceScale = Math.min(1.25, Math.max(0.8, settings.interfaceScale / 100))
+    document.documentElement.style.setProperty(
+      '--interface-scale',
+      String(interfaceScale)
+    )
+    if (isTauri()) {
+      void getCurrentWebview().setZoom(interfaceScale).catch(() => undefined)
+    }
+  }, [settings.interfaceScale])
 
   useEffect(() => {
     const media = window.matchMedia('(prefers-color-scheme: dark)')

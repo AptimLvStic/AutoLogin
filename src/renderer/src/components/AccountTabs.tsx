@@ -100,7 +100,12 @@ export const AccountTabs = memo(function AccountTabs({
           </div>
         ))}
       </div>
-      {controls}
+      {controls && (
+        <>
+          <span className="account-tabs__toolbar-divider" aria-hidden="true" />
+          {controls}
+        </>
+      )}
     </div>
   )
 })

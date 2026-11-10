@@ -8,6 +8,7 @@ import {
   KeyRound,
   LoaderCircle,
   LockKeyhole,
+  MoreHorizontal,
   Plus,
   Upload
 } from 'lucide-react'
@@ -43,11 +44,9 @@ export function AccountTransferControls({
 }): React.JSX.Element {
   const { tr } = useI18n()
   const [menuOpen, setMenuOpen] = useState(false)
-  const [createMenuOpen, setCreateMenuOpen] = useState(false)
   const [importBusy, setImportBusy] = useState(false)
   const [templateBusy, setTemplateBusy] = useState(false)
   const [exportBusy, setExportBusy] = useState(false)
-  const [exportMenuOpen, setExportMenuOpen] = useState(false)
   const [kdbxSelection, setKdbxSelection] = useState<KdbxSelection | null>(null)
   const [databasePassword, setDatabasePassword] = useState('')
   const [kdbxError, setKdbxError] = useState('')
@@ -62,8 +61,6 @@ export function AccountTransferControls({
   const [exportPasswordConfirm, setExportPasswordConfirm] = useState('')
   const [exportPasswordError, setExportPasswordError] = useState('')
   const groupRef = useRef<HTMLDivElement>(null)
-  const createGroupRef = useRef<HTMLDivElement>(null)
-  const exportGroupRef = useRef<HTMLDivElement>(null)
   const lastOpenDatabaseRequestRef = useRef(0)
 
   useEffect(() => {
@@ -100,50 +97,6 @@ export function AccountTransferControls({
     }
   }, [menuOpen])
 
-  useEffect(() => {
-    if (!createMenuOpen) return
-    const closeOnPointer = (event: PointerEvent): void => {
-      if (
-        event.target instanceof Node &&
-        createGroupRef.current?.contains(event.target)
-      ) {
-        return
-      }
-      setCreateMenuOpen(false)
-    }
-    const closeOnEscape = (event: KeyboardEvent): void => {
-      if (event.key === 'Escape') setCreateMenuOpen(false)
-    }
-    document.addEventListener('pointerdown', closeOnPointer)
-    document.addEventListener('keydown', closeOnEscape)
-    return () => {
-      document.removeEventListener('pointerdown', closeOnPointer)
-      document.removeEventListener('keydown', closeOnEscape)
-    }
-  }, [createMenuOpen])
-
-  useEffect(() => {
-    if (!exportMenuOpen) return
-    const closeOnPointer = (event: PointerEvent): void => {
-      if (
-        event.target instanceof Node &&
-        exportGroupRef.current?.contains(event.target)
-      ) {
-        return
-      }
-      setExportMenuOpen(false)
-    }
-    const closeOnEscape = (event: KeyboardEvent): void => {
-      if (event.key === 'Escape') setExportMenuOpen(false)
-    }
-    document.addEventListener('pointerdown', closeOnPointer)
-    document.addEventListener('keydown', closeOnEscape)
-    return () => {
-      document.removeEventListener('pointerdown', closeOnPointer)
-      document.removeEventListener('keydown', closeOnEscape)
-    }
-  }, [exportMenuOpen])
-
   function acceptImport(result: DataImportResult): void {
     onImported(result)
     notify(
@@ -178,7 +131,6 @@ export function AccountTransferControls({
   async function chooseDatabase(): Promise<void> {
     if (importBusy) return
     setMenuOpen(false)
-    setCreateMenuOpen(false)
     setImportBusy(true)
     try {
       const selection = await window.autologin.data.chooseDatabase()
@@ -359,7 +311,7 @@ export function AccountTransferControls({
 
   function beginExport(format: DataExportFormat): void {
     if (exportBusy) return
-    setExportMenuOpen(false)
+    setMenuOpen(false)
     if (format === 'kdbx') {
       setExportPassword('')
       setExportPasswordConfirm('')
@@ -393,170 +345,165 @@ export function AccountTransferControls({
     }
   }
 
-  const exportLabel = tr('导出', 'Export', '匯出')
-
   return (
     <>
       {renderControls && (
         <div className="account-transfer-controls">
-      <div className="account-tabs__tool-group" ref={createGroupRef}>
-        <button
-          type="button"
-          className="account-tabs__add"
-          onClick={() => setCreateMenuOpen((open) => !open)}
-          disabled={creatingTab || importBusy || kdbxBusy || autologinBusy}
-          aria-label={tr(
-            '新增标签页或打开数据库',
-            'Add tab or open database',
-            '新增標籤頁或開啟資料庫'
-          )}
-          title={tr(
-            '新增标签页或打开数据库',
-            'Add tab or open database',
-            '新增標籤頁或開啟資料庫'
-          )}
-          aria-haspopup="menu"
-          aria-expanded={createMenuOpen}
-        >
-          {creatingTab || importBusy || kdbxBusy || autologinBusy ? (
-            <LoaderCircle size={15} className="spin" />
-          ) : (
-            <Plus size={15} />
-          )}
-        </button>
-        {createMenuOpen && (
-          <div className="account-import-menu account-create-menu" role="menu">
+          <div className="account-tabs__tool-group" ref={groupRef}>
             <button
               type="button"
-              role="menuitem"
-              onClick={() => {
-                setCreateMenuOpen(false)
-                void onCreateTab()
-              }}
+              className="account-tabs__tool account-tabs__more"
+              onClick={() => setMenuOpen((open) => !open)}
+              disabled={
+                creatingTab ||
+                importBusy ||
+                templateBusy ||
+                exportBusy ||
+                kdbxBusy ||
+                autologinBusy
+              }
+              aria-label={tr(
+                '更多数据库操作',
+                'More database actions',
+                '更多資料庫操作'
+              )}
+              title={tr(
+                '更多数据库操作',
+                'More database actions',
+                '更多資料庫操作'
+              )}
+              aria-haspopup="menu"
+              aria-expanded={menuOpen}
             >
-              <Plus size={15} />
-              <span>
-                {tr('新增本地数据库', 'New local database', '新增本機資料庫')}
-              </span>
+              {creatingTab ||
+              importBusy ||
+              templateBusy ||
+              exportBusy ||
+              kdbxBusy ||
+              autologinBusy ? (
+                <LoaderCircle size={16} className="spin" />
+              ) : (
+                <MoreHorizontal size={17} />
+              )}
             </button>
-            <button type="button" role="menuitem" onClick={() => void chooseDatabase()}>
-              <FolderOpen size={15} />
-              <span>
-                {tr(
-                  '打开本地数据库',
-                  'Open local database',
-                  '開啟本機資料庫'
-                )}
-              </span>
-            </button>
+            {menuOpen && (
+              <div className="account-import-menu account-more-menu" role="menu">
+                <span className="account-import-menu__label">
+                  {tr('数据库', 'Database', '資料庫')}
+                </span>
+                <button
+                  type="button"
+                  role="menuitem"
+                  onClick={() => {
+                    setMenuOpen(false)
+                    void onCreateTab()
+                  }}
+                >
+                  <Plus size={15} />
+                  <span>
+                    {tr('新增本地数据库', 'New local database', '新增本機資料庫')}
+                  </span>
+                </button>
+                <button
+                  type="button"
+                  role="menuitem"
+                  onClick={() => void chooseDatabase()}
+                >
+                  <FolderOpen size={15} />
+                  <span>
+                    {tr('打开本地数据库', 'Open local database', '開啟本機資料庫')}
+                  </span>
+                </button>
+                <span className="account-import-menu__divider" aria-hidden="true" />
+                <span className="account-import-menu__label">
+                  {tr('导入', 'Import', '匯入')}
+                </span>
+                <button
+                  type="button"
+                  role="menuitem"
+                  onClick={() => void importCsv('current')}
+                >
+                  <FileSpreadsheet size={15} />
+                  <span>
+                    {tr(
+                      '当前数据库导入标准CSV',
+                      'Import standard CSV into current database',
+                      '目前資料庫匯入標準CSV'
+                    )}
+                  </span>
+                </button>
+                <button
+                  type="button"
+                  role="menuitem"
+                  onClick={() => void importCsv('new')}
+                >
+                  <Upload size={15} />
+                  <span>
+                    {tr(
+                      '新数据库导入标准CSV',
+                      'Import standard CSV into new database',
+                      '新資料庫匯入標準CSV'
+                    )}
+                  </span>
+                </button>
+                <button
+                  type="button"
+                  role="menuitem"
+                  onClick={() => void exportCsvTemplate()}
+                >
+                  <FileDown size={15} />
+                  <span>
+                    {tr('下载 CSV 模板', 'Download CSV template', '下載 CSV 範本')}
+                  </span>
+                </button>
+                <span className="account-import-menu__divider" aria-hidden="true" />
+                <span className="account-import-menu__label">
+                  {tr('导出', 'Export', '匯出')}
+                </span>
+                <button
+                  type="button"
+                  role="menuitem"
+                  onClick={() => beginExport('autologin')}
+                  disabled={!tabId}
+                >
+                  <LockKeyhole size={15} />
+                  <span>
+                    {tr(
+                      '导出 AutoLogin 格式',
+                      'Export AutoLogin format',
+                      '匯出 AutoLogin 格式'
+                    )}
+                  </span>
+                </button>
+                <button
+                  type="button"
+                  role="menuitem"
+                  onClick={() => beginExport('csv')}
+                  disabled={!tabId}
+                >
+                  <FileSpreadsheet size={15} />
+                  <span>
+                    {tr('导出 CSV 格式', 'Export CSV format', '匯出 CSV 格式')}
+                  </span>
+                </button>
+                <button
+                  type="button"
+                  role="menuitem"
+                  onClick={() => beginExport('kdbx')}
+                  disabled={!tabId}
+                >
+                  <KeyRound size={15} />
+                  <span>
+                    {tr(
+                      '导出 KeePassXC 格式',
+                      'Export KeePassXC format',
+                      '匯出 KeePassXC 格式'
+                    )}
+                  </span>
+                </button>
+              </div>
+            )}
           </div>
-        )}
-      </div>
-      <div className="account-tabs__tool-group" ref={groupRef}>
-        <button
-          type="button"
-          className="account-tabs__tool"
-          onClick={() => setMenuOpen((open) => !open)}
-          disabled={importBusy || templateBusy || creatingTab}
-          aria-label={tr('导入账号', 'Import accounts', '匯入帳號')}
-          title={tr('导入账号', 'Import accounts', '匯入帳號')}
-          aria-haspopup="menu"
-          aria-expanded={menuOpen}
-        >
-          {importBusy || templateBusy ? (
-            <LoaderCircle size={15} className="spin" />
-          ) : (
-            <Upload size={15} />
-          )}
-        </button>
-        {menuOpen && (
-          <div className="account-import-menu" role="menu">
-            <button type="button" role="menuitem" onClick={() => void importCsv('current')}>
-              <FileSpreadsheet size={15} />
-              <span>
-                {tr(
-                  '当前数据库导入标准CSV',
-                  'Import standard CSV into current database',
-                  '目前資料庫匯入標準CSV'
-                )}
-              </span>
-            </button>
-            <button type="button" role="menuitem" onClick={() => void importCsv('new')}>
-              <FileSpreadsheet size={15} />
-              <span>
-                {tr(
-                  '新数据库导入标准CSV',
-                  'Import standard CSV into new database',
-                  '新資料庫匯入標準CSV'
-                )}
-              </span>
-            </button>
-            <span className="account-import-menu__divider" aria-hidden="true" />
-            <button type="button" role="menuitem" onClick={() => void exportCsvTemplate()}>
-              <FileDown size={15} />
-              <span>{tr('下载 CSV 模板', 'Download CSV template', '下載 CSV 範本')}</span>
-            </button>
-          </div>
-        )}
-      </div>
-      <div className="account-tabs__tool-group" ref={exportGroupRef}>
-        <button
-          type="button"
-          className="account-tabs__tool"
-          onClick={() => setExportMenuOpen((open) => !open)}
-          disabled={exportBusy || !tabId}
-          aria-label={exportLabel}
-          title={exportLabel}
-          aria-haspopup="menu"
-          aria-expanded={exportMenuOpen}
-        >
-          {exportBusy ? (
-            <LoaderCircle size={15} className="spin" />
-          ) : (
-            <Download size={15} />
-          )}
-        </button>
-        {exportMenuOpen && (
-          <div className="account-import-menu account-export-menu" role="menu">
-            <button
-              type="button"
-              role="menuitem"
-              onClick={() => beginExport('autologin')}
-            >
-              <LockKeyhole size={15} />
-              <span>
-                {tr(
-                  '导出 AutoLogin 格式',
-                  'Export AutoLogin format',
-                  '匯出 AutoLogin 格式'
-                )}
-              </span>
-            </button>
-            <button
-              type="button"
-              role="menuitem"
-              onClick={() => beginExport('csv')}
-            >
-              <FileSpreadsheet size={15} />
-              <span>{tr('导出 CSV 格式', 'Export CSV format', '匯出 CSV 格式')}</span>
-            </button>
-            <button
-              type="button"
-              role="menuitem"
-              onClick={() => beginExport('kdbx')}
-            >
-              <KeyRound size={15} />
-              <span>
-                {tr(
-                  '导出 KeePassXC 格式',
-                  'Export KeePassXC format',
-                  '匯出 KeePassXC 格式'
-                )}
-              </span>
-            </button>
-          </div>
-        )}
-      </div>
         </div>
       )}
 

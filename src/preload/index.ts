@@ -13,7 +13,7 @@ import type {
 } from '@shared/types'
 
 const LONG_OPERATION_PATTERN =
-  /(?:choose-|data:(?:import|export|restore-backup)|accounts:fetch-icons-batch|app:(?:choose-data-location|restore-default-data-location|clear-all-data))/
+  /(?:choose-|data:(?:import|export|restore-backup)|accounts:fetch-icons-batch|app:(?:choose-data-location|resolve-data-location-conflict|restore-default-data-location|clear-all-data))/
 
 function timeoutForChannel(channel: string): number {
   return LONG_OPERATION_PATTERN.test(channel) ? 10 * 60_000 : 30_000
@@ -65,6 +65,7 @@ const api: AutologinApi = {
     list: () => invoke('tabs:list'),
     create: (input) => invoke('tabs:create', input),
     update: (tabId, input) => invoke('tabs:update', tabId, input),
+    fileStatus: (tabId) => invoke('tabs:file-status', tabId),
     delete: (tabId) => invoke('tabs:delete', tabId),
     purge: (tabId) => invoke('tabs:purge', tabId),
     reveal: (tabId) => invoke('tabs:reveal', tabId)
@@ -138,6 +139,8 @@ const api: AutologinApi = {
     installUpdate: () => invoke('app:install-update'),
     getDataLocation: () => invoke('app:get-data-location'),
     chooseDataLocation: () => invoke('app:choose-data-location'),
+    resolveDataLocationConflict: (directory, action) =>
+      invoke('app:resolve-data-location-conflict', { directory, action }),
     restoreDefaultDataLocation: () => invoke('app:restore-default-data-location'),
     openDataLocation: () => invoke('app:open-data-location'),
     openFailureLog: () => invoke('app:open-failure-log'),

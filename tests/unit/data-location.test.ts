@@ -1,8 +1,17 @@
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  readdirSync,
+  rmSync,
+  writeFileSync
+} from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 import {
+  hasManagedDataDirectory,
   migrateDataDirectory,
   pathIsInside,
   readDataDirectory,
@@ -99,6 +108,35 @@ describe('data location recovery', () => {
     expect(readFileSync(join(defaultData, 'vault.enc'), 'utf8')).toBe('custom-vault')
     expect(existsSync(join(customData, 'vault.enc'))).toBe(false)
     expect(readDataDirectory(stablePointerDirectory, [userData], userData)).toBe(defaultData)
+  })
+
+  it('backs up existing target data before overwriting it', () => {
+    const stablePointerDirectory = createDirectory()
+    const currentData = createDirectory()
+    const targetData = createDirectory()
+    writeFileSync(join(currentData, 'vault.enc'), 'current-vault')
+    mkdirSync(join(currentData, 'logs'), { recursive: true })
+    writeFileSync(join(currentData, 'logs', 'app.jsonl'), 'current-log')
+    writeFileSync(join(targetData, 'vault.enc'), 'old-vault')
+    mkdirSync(join(targetData, 'backups'), { recursive: true })
+    writeFileSync(join(targetData, 'backups', 'old.enc'), 'old-backup')
+    writeFileSync(join(targetData, 'notes.txt'), 'keep-this-too')
+
+    expect(hasManagedDataDirectory(targetData)).toBe(true)
+    migrateDataDirectory(stablePointerDirectory, currentData, targetData, {
+      replaceExisting: true
+    })
+
+    const backupName = readdirSync(targetData).find((name) => name.startsWith('旧数据备份_'))
+    expect(backupName).toBeTruthy()
+    const backupDirectory = join(targetData, backupName!)
+    expect(readFileSync(join(targetData, 'vault.enc'), 'utf8')).toBe('current-vault')
+    expect(readFileSync(join(targetData, 'logs', 'app.jsonl'), 'utf8')).toBe('current-log')
+    expect(readFileSync(join(backupDirectory, 'vault.enc'), 'utf8')).toBe('old-vault')
+    expect(readFileSync(join(backupDirectory, 'backups', 'old.enc'), 'utf8')).toBe('old-backup')
+    expect(readFileSync(join(backupDirectory, 'notes.txt'), 'utf8')).toBe('keep-this-too')
+    expect(existsSync(join(currentData, 'vault.enc'))).toBe(false)
+    expect(readDataDirectory(stablePointerDirectory)).toBe(targetData)
   })
 
   it('detects installation and nested paths', () => {

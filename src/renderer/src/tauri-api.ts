@@ -71,6 +71,7 @@ const api: AutologinApi = {
     list: () => call('tabs:list'),
     create: (input) => call('tabs:create', input),
     update: (tabId, input) => call('tabs:update', tabId, input),
+    fileStatus: (tabId) => call('tabs:file-status', tabId),
     delete: (tabId) => call('tabs:delete', tabId),
     purge: (tabId) => call('tabs:purge', tabId),
     reveal: async (tabId) => {
@@ -151,6 +152,8 @@ const api: AutologinApi = {
     installUpdate: () => call('app:install-update'),
     getDataLocation: () => call('app:get-data-location'),
     chooseDataLocation: () => call('app:choose-data-location'),
+    resolveDataLocationConflict: (directory, action) =>
+      call('app:resolve-data-location-conflict', { directory, action }),
     restoreDefaultDataLocation: () => call('app:restore-default-data-location'),
     openDataLocation: () => call('app:open-data-location'),
     openFailureLog: () => call('app:open-failure-log'),

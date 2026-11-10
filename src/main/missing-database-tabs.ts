@@ -1,4 +1,3 @@
-import { shouldWriteEncryptedTabSnapshot } from '@shared/database-files'
 import type { AccountTab, VaultData } from '@shared/types'
 
 export interface MissingDatabaseTabCleanup {
@@ -8,12 +7,11 @@ export interface MissingDatabaseTabCleanup {
 
 export function removeMissingDatabaseTabs(
   data: VaultData,
-  tabFileExists: (tab: AccountTab) => boolean
+  tabFileExists: (tab: AccountTab) => boolean,
+  options: { hiddenOnly?: boolean } = {}
 ): MissingDatabaseTabCleanup {
   const removedTabs = data.tabs.filter(
-    (tab) =>
-      (shouldWriteEncryptedTabSnapshot(tab) || tab.source === 'kdbx') &&
-      !tabFileExists(tab)
+    (tab) => (!options.hiddenOnly || tab.hidden) && !tabFileExists(tab)
   )
   if (removedTabs.length === 0) {
     return { removedTabs: [], removedAccountIds: [] }

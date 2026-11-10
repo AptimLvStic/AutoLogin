@@ -64,12 +64,12 @@ import {
 } from '@shared/group-tree'
 import { useI18n } from '../i18n'
 import { AccountDrawer } from './AccountDrawer'
-import { AccountTabs, DatabaseCreateIcon } from './AccountTabs'
+import { AccountTabs } from './AccountTabs'
 import { AccountTransferControls } from './AccountTransferControls'
 import { AppLogsPage } from './AppLogsPage'
 import {
-  BookmarkExportButton,
-  BookmarkImportButton
+  BookmarkImportButton,
+  BookmarkTransferControls
 } from './BookmarkImportButton'
 import { LoadingSpinner } from './LoadingSpinner'
 import { LoginLogsPage } from './LoginLogsPage'
@@ -476,6 +476,9 @@ export function LibraryScreen({
   const [accountGroupTreeExpanded, setAccountGroupTreeExpanded] = useState(
     () => window.localStorage.getItem('autologin.account.groups.treeExpanded') !== '0'
   )
+  const [groupSearchExpanded, setGroupSearchExpanded] = useState(false)
+  const [groupSearch, setGroupSearch] = useState('')
+  const groupSearchRef = useRef<HTMLInputElement>(null)
   const [collapsedGroupPaths, setCollapsedGroupPaths] = useState<Set<string>>(() => {
     try {
       const stored = window.localStorage.getItem('autologin.account.groups.collapsedPaths')
@@ -540,6 +543,8 @@ export function LibraryScreen({
   const [renameTabTarget, setRenameTabTarget] = useState<AccountTab | null>(null)
   const [renameTabValue, setRenameTabValue] = useState('')
   const [tabBusy, setTabBusy] = useState(false)
+  const [missingTabFileTarget, setMissingTabFileTarget] =
+    useState<AccountTab | null>(null)
   const [restoringAccountId, setRestoringAccountId] = useState<string | null>(null)
   const [trashSelection, setTrashSelection] = useState<Set<string>>(() => new Set())
   const [purgeTargets, setPurgeTargets] = useState<string[] | null>(null)
@@ -700,8 +705,33 @@ export function LibraryScreen({
     [groups, namedGroups]
   )
   const visibleTreeGroups = useMemo(
-    () =>
-      groups.filter((group) => {
+    () => {
+      const query = groupSearch.trim().toLocaleLowerCase(language)
+      if (query) {
+        const matchingPaths = new Set<string>()
+        for (const group of groups) {
+          if (!group.actualName) {
+            if (group.name.toLocaleLowerCase(language).includes(query)) {
+              matchingPaths.add('')
+            }
+            continue
+          }
+          if (
+            !group.actualName.toLocaleLowerCase(language).includes(query) &&
+            !group.name.toLocaleLowerCase(language).includes(query)
+          ) {
+            continue
+          }
+          const segments = group.actualName.split(GROUP_PATH_SEPARATOR)
+          for (let index = 1; index <= segments.length; index += 1) {
+            matchingPaths.add(segments.slice(0, index).join(GROUP_PATH_SEPARATOR))
+          }
+        }
+        return groups.filter(
+          (group) => !group.actualName || matchingPaths.has(group.actualName)
+        )
+      }
+      return groups.filter((group) => {
         if (!group.actualName) return true
         const segments = group.actualName.split(GROUP_PATH_SEPARATOR)
         return segments
@@ -712,8 +742,9 @@ export function LibraryScreen({
                 segments.slice(0, index + 1).join(GROUP_PATH_SEPARATOR)
               )
           )
-      }),
-    [collapsedGroupPaths, groups]
+      })
+    },
+    [collapsedGroupPaths, groupSearch, groups, language]
   )
 
   const currentGroup = groupFilter
@@ -1358,6 +1389,8 @@ export function LibraryScreen({
     setDrawer(null)
     setSearch('')
     setSearchExpanded(false)
+    setGroupSearch('')
+    setGroupSearchExpanded(false)
     setColumnMenuOpen(false)
     setGroupFilter(null)
     setSelectedIds(new Set())
@@ -1553,6 +1586,76 @@ export function LibraryScreen({
 
   function openSettings(): void {
     chooseSettingsModule(settingsModule)
+  }
+
+  async function selectTab(tab: AccountTab): Promise<void> {
+    if (tabBusy) return
+    try {
+      const status = await window.autologin.tabs.fileStatus(tab.id)
+      if (!status.exists) {
+        setMissingTabFileTarget(tab)
+        return
+      }
+      if (view === 'bookmarks') {
+        setBookmarkTabId(tab.id)
+      } else {
+        setAccountTabId(tab.id)
+      }
+    } catch (error) {
+      notify(
+        'error',
+        error instanceof Error
+          ? error.message
+          : tr('无法检查标签页文件', 'Could not check the tab file.', '無法檢查標籤頁檔案')
+      )
+    }
+  }
+
+  async function deleteMissingTabPage(): Promise<void> {
+    const tab = missingTabFileTarget
+    if (!tab || tabBusy) return
+    setTabBusy(true)
+    try {
+      await window.autologin.tabs.delete(tab.id)
+      const nextTabs = tabs.map((entry) =>
+        entry.id === tab.id ? { ...entry, hidden: true } : entry
+      )
+      setTabs(nextTabs)
+      if (activeTabId === tab.id) {
+        if (tab.source === 'bookmarks') {
+          const nextBookmarkTab = nextTabs.find(
+            (entry) => !entry.hidden && entry.source === 'bookmarks'
+          )
+          setBookmarkTabId(nextBookmarkTab?.id ?? '')
+        } else {
+          const nextAccountTab =
+            nextTabs.find(
+              (entry) => !entry.hidden && entry.id === DEFAULT_ACCOUNT_TAB_ID
+            ) ??
+            nextTabs.find(
+              (entry) => !entry.hidden && entry.source !== 'bookmarks'
+            )
+          setAccountTabId(nextAccountTab?.id ?? '')
+        }
+      }
+      setMissingTabFileTarget(null)
+      await onRefresh()
+      notify(
+        'success',
+        tab.source === 'bookmarks'
+          ? tr('已删除失效的书签页面', 'Missing bookmark page removed.', '已刪除失效的書籤頁面')
+          : tr('已删除失效的数据库页面', 'Missing database page removed.', '已刪除失效的資料庫頁面')
+      )
+    } catch (error) {
+      notify(
+        'error',
+        error instanceof Error
+          ? error.message
+          : tr('删除失效页面失败', 'Could not remove the missing page.', '刪除失效頁面失敗')
+      )
+    } finally {
+      setTabBusy(false)
+    }
   }
 
   async function createTab(source: 'local' | 'bookmarks' = 'local'): Promise<void> {
@@ -4070,6 +4173,36 @@ export function LibraryScreen({
         />
       )}
 
+      {missingTabFileTarget && (
+        <ConfirmDialog
+          title={
+            missingTabFileTarget.source === 'bookmarks'
+              ? tr('这个书签已被删除', 'This bookmark was deleted', '這個書籤已被刪除')
+              : tr('这个数据库已被删除', 'This database was deleted', '這個資料庫已被刪除')
+          }
+          description={
+            missingTabFileTarget.source === 'bookmarks'
+              ? tr(
+                  '磁盘上的书签文件已不存在。是否删除该页面？',
+                  'The bookmark file no longer exists on disk. Remove this page?',
+                  '磁碟上的書籤檔案已不存在。是否刪除該頁面？'
+                )
+              : tr(
+                  '磁盘上的数据库文件已不存在。是否删除该页面？',
+                  'The database file no longer exists on disk. Remove this page?',
+                  '磁碟上的資料庫檔案已不存在。是否刪除該頁面？'
+                )
+          }
+          confirmLabel={tr('删除页面', 'Remove page', '刪除頁面')}
+          danger
+          busy={tabBusy}
+          onConfirm={() => void deleteMissingTabPage()}
+          onClose={() => {
+            if (!tabBusy) setMissingTabFileTarget(null)
+          }}
+        />
+      )}
+
       <main
         className={`library-main${accountEditorOpen ? ' is-account-editor' : ''}`}
       >
@@ -4103,20 +4236,14 @@ export function LibraryScreen({
           }
         >
           {isAccountCollectionView && (
-            <>
+            <div className="account-workspace">
             <AccountTabs
               tabs={visibleTabs}
               activeTabId={activeTabId}
               bookmarkMode={view === 'bookmarks'}
               busy={tabBusy}
               accountCounts={tabAccountCounts}
-              onSelect={(tab) => {
-                if (view === 'bookmarks') {
-                  setBookmarkTabId(tab.id)
-                } else {
-                  setAccountTabId(tab.id)
-                }
-              }}
+              onSelect={(tab) => void selectTab(tab)}
               onOpenMenu={openTabMenu}
               onClose={(tab, anchor) => openTabClosePrompt(tab, anchor)}
               controls={
@@ -4134,36 +4261,15 @@ export function LibraryScreen({
                       />
                     )}
                     {view === 'bookmarks' && (
-                      <>
-                        <button
-                          type="button"
-                          className="account-tabs__add"
-                          onClick={() => void createTab('bookmarks')}
-                          disabled={tabBusy}
-                          aria-label={tr(
-                            '新增书签标签页',
-                            'Add bookmark tab',
-                            '新增書籤標籤頁'
-                          )}
-                          title={tr(
-                            '新增书签标签页',
-                            'Add bookmark tab',
-                            '新增書籤標籤頁'
-                          )}
-                        >
-                          <DatabaseCreateIcon busy={tabBusy} />
-                        </button>
-                        <BookmarkImportButton
-                          onImported={(result) =>
-                            void handleDataImported(result.tabId)
-                          }
-                          notify={notify}
-                        />
-                        <BookmarkExportButton
-                          tabId={activeTabId}
-                          notify={notify}
-                        />
-                      </>
+                      <BookmarkTransferControls
+                        tabId={activeTabId}
+                        creating={tabBusy}
+                        onCreate={() => createTab('bookmarks')}
+                        onImported={(result) =>
+                          void handleDataImported(result.tabId)
+                        }
+                        notify={notify}
+                      />
                     )}
                   </>
                 )
@@ -4198,7 +4304,6 @@ export function LibraryScreen({
                   className="account-subnav"
                   aria-label={tr('账号分组', 'Account groups', '帳號分組')}
                 >
-                  <div className="account-subnav__header" aria-hidden="true" />
                   <div className="account-subnav__all-row">
                     <button
                       type="button"
@@ -4209,8 +4314,16 @@ export function LibraryScreen({
                       aria-expanded={accountGroupTreeExpanded}
                       title={
                         view === 'bookmarks'
-                          ? tr('全部书签', 'All bookmarks', '全部書籤')
-                          : tr('全部账号', 'All accounts', '全部帳號')
+                          ? tr(
+                              '全部书签（展开或收起分组）',
+                              'All bookmarks (expand or collapse groups)',
+                              '全部書籤（展開或收合分組）'
+                            )
+                          : tr(
+                              '全部账号（展开或收起分组）',
+                              'All accounts (expand or collapse groups)',
+                              '全部帳號（展開或收合分組）'
+                            )
                       }
                     >
                       <KeyRound size={15} />
@@ -4219,7 +4332,9 @@ export function LibraryScreen({
                           ? tr('全部书签', 'All bookmarks', '全部書籤')
                           : tr('全部账号', 'All accounts', '全部帳號')}
                       </span>
-                      {accounts.length > 0 && <small>{accounts.length}</small>}
+                      <small className={accounts.length === 0 ? 'is-empty' : undefined}>
+                        {accounts.length > 0 ? accounts.length : ''}
+                      </small>
                       <span className="account-subnav__tree-chevron" aria-hidden="true">
                         {accountGroupTreeExpanded ? (
                           <ChevronDown size={14} />
@@ -4227,6 +4342,26 @@ export function LibraryScreen({
                           <ChevronRight size={14} />
                         )}
                       </span>
+                    </button>
+                    <button
+                      type="button"
+                      className="account-subnav__search-toggle"
+                      onClick={() => {
+                        if (groupSearchExpanded) {
+                          setGroupSearch('')
+                          setGroupSearchExpanded(false)
+                        } else {
+                          setGroupSearchExpanded(true)
+                          window.requestAnimationFrame(() =>
+                            groupSearchRef.current?.focus()
+                          )
+                        }
+                      }}
+                      aria-label={tr('搜索分组', 'Search groups', '搜尋分組')}
+                      aria-expanded={groupSearchExpanded}
+                      title={tr('搜索分组', 'Search groups', '搜尋分組')}
+                    >
+                      <Search size={14} />
                     </button>
                     <button
                       type="button"
@@ -4238,6 +4373,22 @@ export function LibraryScreen({
                       <Plus size={14} />
                     </button>
                   </div>
+                  {groupSearchExpanded && (
+                    <div className="account-subnav__header">
+                      <input
+                        ref={groupSearchRef}
+                        value={groupSearch}
+                        onChange={(event) => setGroupSearch(event.target.value)}
+                        onKeyDown={(event) => {
+                          if (event.key !== 'Escape') return
+                          setGroupSearch('')
+                          setGroupSearchExpanded(false)
+                        }}
+                        placeholder={tr('筛选分组', 'Filter groups', '篩選分組')}
+                        aria-label={tr('筛选分组', 'Filter groups', '篩選分組')}
+                      />
+                    </div>
+                  )}
                   <div
                     className={`account-subnav__groups-accordion${
                       accountGroupTreeExpanded ? ' is-expanded' : ''
@@ -4285,7 +4436,7 @@ export function LibraryScreen({
                               </span>
                               <button
                                 type="button"
-                                className={`account-subnav__item account-subnav__item--group${
+                                className={`account-subnav__item account-subnav__item--group account-subnav__item--text-only${
                                   groupFilter === UNGROUPED_KEY ? ' is-active' : ''
                                 }`}
                                 onClick={() => chooseGroup(group)}
@@ -4296,9 +4447,10 @@ export function LibraryScreen({
                                 )}
                                 title={group.name}
                               >
-                                <Globe2 size={15} />
                                 <span>{group.name}</span>
-                                {group.count > 0 && <small>{group.count}</small>}
+                                <small className={group.count === 0 ? 'is-empty' : undefined}>
+                                  {group.count > 0 ? group.count : ''}
+                                </small>
                                 <span className="account-subnav__tree-spacer" aria-hidden="true" />
                               </button>
                             </div>
@@ -4347,7 +4499,7 @@ export function LibraryScreen({
                               </span>
                               <button
                                 type="button"
-                                className={`account-subnav__item account-subnav__item--group${
+                                className={`account-subnav__item account-subnav__item--group account-subnav__item--text-only${
                                   groupFilter === group.key ? ' is-active' : ''
                                 }`}
                                 onClick={() => chooseGroupFromTree(group, hasChildren)}
@@ -4376,9 +4528,10 @@ export function LibraryScreen({
                                 }
                                 title={group.actualName ?? group.name}
                               >
-                                <Layers3 size={15} />
                                 <span>{group.name}</span>
-                                {group.count > 0 && <small>{group.count}</small>}
+                                <small className={group.count === 0 ? 'is-empty' : undefined}>
+                                  {group.count > 0 ? group.count : ''}
+                                </small>
                                 {hasChildren ? (
                                   <span
                                     className="account-subnav__tree-chevron"
@@ -4959,15 +5112,28 @@ export function LibraryScreen({
                   <span aria-live="polite">
                     {tr(
                       view === 'bookmarks'
-                        ? '共 {count} 个书签，第 {page}/{pages} 页'
-                        : '共 {count} 个账号，第 {page}/{pages} 页',
+                        ? selectedAccountCount > 0
+                          ? '已选择 {selected} 个书签，共 {count} 个书签，第 {page}/{pages} 页'
+                          : '共 {count} 个书签，第 {page}/{pages} 页'
+                        : selectedAccountCount > 0
+                          ? '已选择 {selected} 个账号，共 {count} 个账号，第 {page}/{pages} 页'
+                          : '共 {count} 个账号，第 {page}/{pages} 页',
                       view === 'bookmarks'
-                        ? '{count} bookmarks, page {page} of {pages}'
-                        : '{count} accounts, page {page} of {pages}',
+                        ? selectedAccountCount > 0
+                          ? '{selected} bookmarks selected, {count} total, page {page} of {pages}'
+                          : '{count} bookmarks, page {page} of {pages}'
+                        : selectedAccountCount > 0
+                          ? '{selected} accounts selected, {count} total, page {page} of {pages}'
+                          : '{count} accounts, page {page} of {pages}',
                       view === 'bookmarks'
-                        ? '共 {count} 個書籤，第 {page}/{pages} 頁'
-                        : '共 {count} 個帳號，第 {page}/{pages} 頁',
+                        ? selectedAccountCount > 0
+                          ? '已選取 {selected} 個書籤，共 {count} 個書籤，第 {page}/{pages} 頁'
+                          : '共 {count} 個書籤，第 {page}/{pages} 頁'
+                        : selectedAccountCount > 0
+                          ? '已選取 {selected} 個帳號，共 {count} 個帳號，第 {page}/{pages} 頁'
+                          : '共 {count} 個帳號，第 {page}/{pages} 頁',
                       {
+                        selected: selectedAccountCount,
                         count: filteredAccounts.length,
                         page: currentAccountPage,
                         pages: accountPageCount
@@ -5019,7 +5185,7 @@ export function LibraryScreen({
               </div>
             </div>
             )}
-            </>
+            </div>
           )}
 
           {view === 'passwordGenerator' && (
@@ -5415,9 +5581,18 @@ function AccountListRow({
   const recorded = (account.recipes?.length ?? 0) > 0 || Boolean(account.site.recipe)
   const statusLabel = bookmark
     ? tr('书签', 'Bookmark', '書籤')
-    : recorded
-      ? tr('已录制', 'Recorded', '已錄製')
-      : tr('自动识别', 'Auto detect', '自動識別')
+    : account.loginStrategy === 'manual'
+      ? tr('手动配置', 'Manual setup', '手動設定')
+      : recorded
+        ? tr('已录制', 'Recorded', '已錄製')
+        : tr('自动识别', 'Auto detect', '自動識別')
+  const statusKind = bookmark
+    ? 'bookmark'
+    : account.loginStrategy === 'manual'
+      ? 'manual'
+      : recorded
+        ? 'recorded'
+        : 'auto'
   const actionLabel = bookmark
     ? tr('访问', 'Visit', '造訪')
     : tr('登录', 'Sign in', '登入')
@@ -5519,7 +5694,7 @@ function AccountListRow({
           style={{ order: accountColumnOrderStyle(columnOrder, 'status') }}
         >
           <span
-            className={`recipe-badge${recorded ? ' is-recorded' : ''}`}
+            className={`recipe-badge is-${statusKind}`}
             title={statusLabel}
           >
             <span />

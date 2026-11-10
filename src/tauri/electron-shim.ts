@@ -415,7 +415,7 @@ try {
   if ($request.kind -eq 'openDirectory') {
     $dialog = New-Object Windows.Forms.FolderBrowserDialog
     $dialog.Description = [string]$request.title
-    $dialog.UseDescriptionForTitle = $true
+    # Windows PowerShell's FolderBrowserDialog does not expose UseDescriptionForTitle.
     if ($request.defaultPath -and (Test-Path -LiteralPath $request.defaultPath)) {
       $dialog.SelectedPath = [string]$request.defaultPath
     }

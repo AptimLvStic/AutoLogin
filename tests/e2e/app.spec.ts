@@ -461,9 +461,11 @@ test('pauses on a captcha and resumes after manual verification', async () => {
     ].join('-')
   })
   await logsPage.getByLabel('日期').fill(today)
-  await logsPage.getByLabel('站点名称').selectOption({ label: '验证码登录' })
-  await logsPage.getByLabel('分组').selectOption({ label: '安全' })
-  await logsPage.getByLabel('状态').selectOption('manual')
+  await logsPage
+    .getByRole('combobox', { name: '站点名称' })
+    .selectOption({ label: '验证码登录' })
+  await logsPage.getByRole('combobox', { name: '分组' }).selectOption({ label: '安全' })
+  await logsPage.getByRole('combobox', { name: '状态' }).selectOption('manual')
   await selectPageSize(logsPage, '每页条数', 10)
   await expect(logsPage.locator('.log-table__row')).toHaveCount(1)
   await page.locator('.sidebar-nav__item').filter({ hasText: '账号' }).click()
@@ -506,7 +508,7 @@ test('pauses on a captcha and resumes after manual verification', async () => {
   ).toMatchObject({ active: false, success: 1, failed: 0, manual: 0 })
 
   await openLogPage(page, '登录日志')
-  await logsPage.getByLabel('状态').selectOption('manual')
+  await logsPage.getByRole('combobox', { name: '状态' }).selectOption('manual')
   const manualRow = logsPage.locator('.log-table__row').filter({ hasText: '待人工' })
   await manualRow.getByRole('checkbox').check()
   await expect(logsPage.getByRole('button', { name: '批量删除' })).toBeEnabled()
@@ -623,7 +625,7 @@ test('searches accounts and renders centered table headers with icon-only action
   expect(toolbarGap).not.toBeNull()
   expect(toolbarGap!).toBeLessThanOrEqual(6)
   await expect(page.locator('.library-toolbar')).toHaveCSS('margin-top', '0px')
-  await expect(page.locator('.library-toolbar')).toHaveCSS('min-height', '42px')
+  await expect(page.locator('.library-toolbar')).toHaveCSS('min-height', '34px')
   await page.getByRole('button', { name: '搜索账号', exact: true }).click()
   await expect(searchField).toHaveClass(/is-expanded/)
 
@@ -648,19 +650,23 @@ test('searches accounts and renders centered table headers with icon-only action
     'text-align',
     'center'
   )
-  const mainPanelStyles = await page
-    .locator('.library-view-layout--accounts')
+  const workspaceStyles = await page
+    .locator('.account-workspace')
     .evaluate((element) => {
       const style = getComputedStyle(element)
       return {
         borderTopWidth: style.borderTopWidth,
-        borderTopStyle: style.borderTopStyle,
+        borderLeftWidth: style.borderLeftWidth,
         boxShadow: style.boxShadow
       }
     })
-  expect(Number.parseFloat(mainPanelStyles.borderTopWidth)).toBeGreaterThan(0)
-  expect(mainPanelStyles.borderTopStyle).toBe('solid')
-  expect(mainPanelStyles.boxShadow).not.toBe('none')
+  expect(workspaceStyles.borderTopWidth).toBe('0px')
+  expect(workspaceStyles.borderLeftWidth).toBe('0px')
+  expect(workspaceStyles.boxShadow).toBe('none')
+  await expect(page.locator('.library-view-layout--accounts')).toHaveCSS(
+    'border-top-width',
+    '0px'
+  )
   const firstRow = page.locator('.account-row').first()
   await expect(firstRow.locator('.account-identity')).toHaveCSS('justify-content', 'flex-start')
   await expect(firstRow.locator('.account-username')).toHaveCSS('justify-content', 'flex-start')
@@ -826,6 +832,11 @@ test('reorders sibling groups and nests a dragged group with breadcrumb and toas
   await expect(alphaGroup).toBeVisible()
   await expect(betaGroup).toBeVisible()
 
+  await betaGroup.hover()
+  await expect(betaGroup.locator('.account-subnav__drag-handle')).toHaveCSS(
+    'opacity',
+    '1'
+  )
   await betaGroup
     .locator('.account-subnav__drag-handle')
     .dragTo(alphaGroup.locator('.account-subnav__item--group'), {
@@ -851,6 +862,11 @@ test('reorders sibling groups and nests a dragged group with breadcrumb and toas
     )
   })
   expect(dragAlignment).toBeLessThan(1)
+  await ungroupedGroup.hover()
+  await expect(ungroupedGroup.locator('.account-subnav__drag-handle')).toHaveCSS(
+    'opacity',
+    '1'
+  )
   await ungroupedGroup
     .locator('.account-subnav__drag-handle')
     .dragTo(betaGroup.locator('.account-subnav__item--group'), {
@@ -861,6 +877,11 @@ test('reorders sibling groups and nests a dragged group with breadcrumb and toas
     .toEqual(['__autologin:ungrouped__', 'Beta', 'Alpha'])
   await expect(page.locator('.account-subnav__item--group').nth(0)).toContainText('未分组')
 
+  await betaGroup.hover()
+  await expect(betaGroup.locator('.account-subnav__drag-handle')).toHaveCSS(
+    'opacity',
+    '1'
+  )
   await betaGroup
     .locator('.account-subnav__drag-handle')
     .dragTo(alphaGroup.locator('.account-subnav__item--group'), {
@@ -887,9 +908,13 @@ test('reorders sibling groups and nests a dragged group with breadcrumb and toas
   await expect(movedGroup).toBeVisible()
   const alphaRow = page.locator('.account-subnav__group-row').filter({ hasText: 'Alpha' })
   expect(
-    await movedGroup.evaluate((element) => Number.parseFloat(getComputedStyle(element).paddingLeft))
+    await movedGroup
+      .locator('.account-subnav__item--group')
+      .evaluate((element) => Number.parseFloat(getComputedStyle(element).paddingLeft))
   ).toBeGreaterThan(
-    await alphaRow.evaluate((element) => Number.parseFloat(getComputedStyle(element).paddingLeft))
+    await alphaRow
+      .locator('.account-subnav__item--group')
+      .evaluate((element) => Number.parseFloat(getComputedStyle(element).paddingLeft))
   )
 })
 
@@ -1059,13 +1084,25 @@ test('resizes, hides and restores the account subnav, and creates three group le
   const resizer = page.locator('.account-subnav__resizer')
   const activeTab = page.locator('.account-tab.is-active')
   await expect(activeTab).toHaveCSS('border-bottom-width', '0px')
+  await expect(activeTab).toHaveCSS('border-top-width', '0px')
+  await expect(activeTab).toHaveCSS('box-shadow', 'none')
   const tabEdge = await activeTab.evaluate((element) => {
     const style = getComputedStyle(element)
     const before = getComputedStyle(element, '::before')
     const after = getComputedStyle(element, '::after')
+    const scroll = element.closest<HTMLElement>('.account-tabs__scroll')
     const card = element
       .closest('.library-content-scroll--accounts')
-      ?.querySelector<HTMLElement>(':scope > .library-view-layout--accounts')
+      ?.querySelector<HTMLElement>(':scope > .account-workspace')
+    const contentPanel = card?.querySelector<HTMLElement>(
+      ':scope > .library-view-layout--accounts'
+    )
+    const firstItem = contentPanel?.querySelector<HTMLElement>(
+      ':scope > .account-subnav-shell > .account-subnav > .account-subnav__all-row'
+    )
+    const tabRect = element.getBoundingClientRect()
+    const cardRect = card?.getBoundingClientRect()
+    const firstItemRect = firstItem?.getBoundingClientRect()
     return {
       topLeftRadius: style.borderTopLeftRadius,
       topRightRadius: style.borderTopRightRadius,
@@ -1073,34 +1110,117 @@ test('resizes, hides and restores the account subnav, and creates three group le
       overflow: style.overflow,
       beforePseudoDisplay: before.display,
       beforePseudoBackground: before.backgroundImage,
+      beforePseudoWidth: before.width,
+      beforePseudoHeight: before.height,
       shapeClip: style.getPropertyValue('clip-path'),
       rightPseudoDisplay: after.display,
       rightPseudoBackground: after.backgroundImage,
       shapeMarginLeft: style.marginLeft,
       shapePaddingLeft: style.paddingLeft,
-      cardTopLeftRadius: card ? getComputedStyle(card).borderTopLeftRadius : ''
+      scrollPaddingLeft: scroll ? getComputedStyle(scroll).paddingLeft : '',
+      scrollMarginLeft: scroll ? getComputedStyle(scroll).marginLeft : '',
+      tabToCardLeft: cardRect ? tabRect.left - cardRect.left : 0,
+      cardTopLeftRadius: card ? getComputedStyle(card).borderTopLeftRadius : '',
+      cardTopRightRadius: card ? getComputedStyle(card).borderTopRightRadius : '',
+      cardBottomLeftRadius: card ? getComputedStyle(card).borderBottomLeftRadius : '',
+      cardBottomRightRadius: card ? getComputedStyle(card).borderBottomRightRadius : '',
+      cardOverflow: card ? getComputedStyle(card).overflow : '',
+      contentPanelRadius: contentPanel
+        ? getComputedStyle(contentPanel).borderTopLeftRadius
+        : '',
+      tabsInsideWorkspace: Boolean(
+        element.parentElement?.parentElement?.closest('.account-workspace')
+      ),
+      panelInsideWorkspace: Boolean(contentPanel?.parentElement?.matches('.account-workspace')),
+      firstItemLeft: firstItemRect && cardRect ? firstItemRect.left - cardRect.left : 0,
+      firstItemTop: firstItemRect && cardRect ? firstItemRect.top - cardRect.top : 0
     }
   })
   expect(tabEdge.topLeftRadius).toBe('10px')
   expect(tabEdge.topRightRadius).toBe('10px')
   expect(tabEdge.activeBackground).toBe('rgb(255, 255, 255)')
   expect(tabEdge.overflow).toBe('visible')
-  expect(tabEdge.beforePseudoDisplay).toBe('block')
+  expect(tabEdge.beforePseudoDisplay).toBe('none')
   expect(tabEdge.beforePseudoBackground).toContain('radial-gradient')
+  expect(tabEdge.beforePseudoWidth).toBe('20px')
+  expect(tabEdge.beforePseudoHeight).toBe('20px')
   expect(tabEdge.shapeClip).toBe('none')
   expect(tabEdge.rightPseudoDisplay).toBe('block')
   expect(tabEdge.rightPseudoBackground).toContain('radial-gradient')
   expect(tabEdge.shapeMarginLeft).toBe('0px')
   expect(tabEdge.shapePaddingLeft).toBe('10px')
-  expect(tabEdge.cardTopLeftRadius).toBe('0px')
+  expect(tabEdge.scrollPaddingLeft).toBe('0px')
+  expect(tabEdge.scrollMarginLeft).toBe('0px')
+  expect(tabEdge.tabToCardLeft).toBeLessThanOrEqual(1)
+  expect(tabEdge.cardTopLeftRadius).toBe('12px')
+  expect(tabEdge.cardTopRightRadius).toBe('12px')
+  expect(tabEdge.cardBottomLeftRadius).toBe('12px')
+  expect(tabEdge.cardBottomRightRadius).toBe('12px')
+  expect(tabEdge.cardOverflow).toBe('hidden')
+  expect(tabEdge.contentPanelRadius).toBe('0px')
+  expect(tabEdge.tabsInsideWorkspace).toBe(true)
+  expect(tabEdge.panelInsideWorkspace).toBe(true)
+  expect(tabEdge.firstItemLeft).toBeGreaterThanOrEqual(12)
+  expect(tabEdge.firstItemTop).toBeGreaterThanOrEqual(12)
   await expect(page.locator('.account-tabs__tool-group').first()).toHaveCSS(
     'margin-bottom',
-    '12px'
+    '0px'
+  )
+  await expect(page.locator('.account-workspace > .account-tabs')).toHaveCSS(
+    'margin-left',
+    '0px'
   )
   await expect(page.locator('.account-tabs')).toHaveCSS(
     'background-color',
-    'rgb(247, 248, 250)'
+    'rgb(245, 246, 248)'
   )
+  await expect(page.locator('.library-content-scroll--accounts')).toHaveCSS(
+    'padding-left',
+    '30px'
+  )
+  const workspaceAlignment = await page.evaluate(() => {
+    const activeTab = document.querySelector<HTMLElement>('.account-tab.is-active')
+    const toolbarButtons = [
+      ...document.querySelectorAll<HTMLElement>(
+        '.account-workspace > .account-tabs .account-tabs__add, .account-workspace > .account-tabs .account-tabs__tool'
+      )
+    ]
+    const scroll = document.querySelector<HTMLElement>('.account-tabs__scroll')
+    const allRow = document.querySelector<HTMLElement>('.account-subnav__all-row')
+    const groupList = document.querySelector<HTMLElement>('.account-subnav__group-list')
+    const activeRect = activeTab?.getBoundingClientRect()
+    const toolbarCenters = toolbarButtons.map((button) => {
+      const rect = button.getBoundingClientRect()
+      return rect.top + rect.height / 2
+    })
+    const allRect = allRow?.getBoundingClientRect()
+    const groupRect = groupList?.getBoundingClientRect()
+    return {
+      controlCenterDifference:
+        activeRect && toolbarCenters.length > 0
+          ? Math.max(
+              ...toolbarCenters.map((center) =>
+                Math.abs(activeRect.top + activeRect.height / 2 - center)
+              )
+            )
+          : Number.POSITIVE_INFINITY,
+      groupGap: allRect && groupRect ? groupRect.top - allRect.bottom : Number.POSITIVE_INFINITY,
+      overflowY: scroll ? getComputedStyle(scroll).overflowY : '',
+      verticallyScrollable: scroll
+        ? scroll.scrollHeight > scroll.clientHeight + 1
+        : true,
+      mainPaddingTop: getComputedStyle(
+        document.querySelector<HTMLElement>(
+          '.account-workspace > .library-view-layout--accounts > .library-view-main'
+        )!
+      ).paddingTop
+    }
+  })
+  expect(workspaceAlignment.controlCenterDifference).toBeLessThanOrEqual(0.5)
+  expect(workspaceAlignment.groupGap).toBeLessThanOrEqual(2)
+  expect(workspaceAlignment.overflowY).toBe('hidden')
+  expect(workspaceAlignment.verticallyScrollable).toBe(false)
+  expect(workspaceAlignment.mainPaddingTop).toBe('4px')
   const dividerDecoration = await page.locator('.account-subnav-shell').evaluate(
     (element) => {
       const style = getComputedStyle(element, '::after')
@@ -1188,7 +1308,7 @@ test('resizes, hides and restores the account subnav, and creates three group le
   expect(activeTabBox!.y + activeTabBox!.height).toBeGreaterThanOrEqual(
     workspaceCardBox!.y
   )
-  await expect(subnav).toHaveCSS('padding-top', '14px')
+  await expect(subnav).toHaveCSS('padding-top', '4px')
   await expect(subnav.locator('.account-subnav__all-button')).toHaveCSS(
     'font-size',
     '10px'
@@ -1257,7 +1377,7 @@ test('resizes, hides and restores the account subnav, and creates three group le
     'flex-wrap',
     'nowrap'
   )
-  await expect(page.locator('.account-subnav__header')).toHaveText('')
+  await expect(page.locator('.account-subnav__header')).toHaveCount(0)
   await expect(layout).not.toHaveClass(/is-account-subnav-hidden/)
   const dividerMetrics = await page.locator('.account-subnav-shell').evaluate((element) => {
     const shell = element.getBoundingClientRect()
@@ -1283,6 +1403,8 @@ test('resizes, hides and restores the account subnav, and creates three group le
     )
     .toBe(true)
 
+  const allAccountsRow = page.locator('.account-subnav__all-row')
+  await allAccountsRow.hover()
   await page.getByRole('button', { name: '新增一级分组' }).click()
   const groupPopover = page.locator('.group-create-popover')
   await expect(groupPopover).toBeVisible()
@@ -1321,6 +1443,7 @@ test('resizes, hides and restores the account subnav, and creates three group le
   await expect(parentRow.locator('.account-subnav__tree-chevron')).toHaveCount(0)
   await expect(parentRow.locator('.account-subnav__tree-spacer')).toHaveCount(1)
   await expect(page.locator('.toast')).toHaveCount(0, { timeout: 6000 })
+  await allAccountsRow.hover()
   await page.getByRole('button', { name: '新增一级分组' }).click()
   await groupPopover.getByLabel('分组名称').fill('Parent')
   await groupPopover.getByLabel('分组名称').press('Enter')
@@ -1330,6 +1453,7 @@ test('resizes, hides and restores the account subnav, and creates three group le
   await expect(groupPopover).toContainText('分组名称不能包含特殊字符')
   await page.keyboard.press('Escape')
   await expect(groupPopover).toHaveCount(0)
+  await parentRow.hover()
   await parentRow.getByRole('button', { name: '在“Parent”下新增子分组' }).click()
   await expect(groupPopover).toBeVisible()
   await groupPopover.getByLabel('分组名称').fill('Child')
@@ -1339,6 +1463,7 @@ test('resizes, hides and restores the account subnav, and creates three group le
   await expect(parentRow.locator('.account-subnav__tree-chevron')).toHaveCount(1)
   await expect(childRow.locator('.account-subnav__tree-chevron')).toHaveCount(0)
   await expect(childRow.locator('.account-subnav__tree-spacer')).toHaveCount(1)
+  await childRow.hover()
   await childRow.getByRole('button', { name: '在“Child”下新增子分组' }).click()
   await groupPopover.getByLabel('分组名称').fill('Grand')
   await groupPopover.getByLabel('分组名称').press('Enter')
@@ -1346,17 +1471,62 @@ test('resizes, hides and restores the account subnav, and creates three group le
   await expect(grandRow).toBeVisible()
   await expect(grandRow.getByRole('button', { name: /新增子分组/ })).toHaveCount(0)
   await expect(childRow.locator('.account-subnav__tree-chevron')).toHaveCount(1)
-  const parentIndent = await parentRow.evaluate((element) =>
-    Number.parseFloat(getComputedStyle(element).paddingLeft)
-  )
-  const childIndent = await childRow.evaluate((element) =>
-    Number.parseFloat(getComputedStyle(element).paddingLeft)
-  )
-  const grandIndent = await grandRow.evaluate((element) =>
-    Number.parseFloat(getComputedStyle(element).paddingLeft)
-  )
+  const parentIndent = await parentRow
+    .locator('.account-subnav__item--group')
+    .evaluate((element) => Number.parseFloat(getComputedStyle(element).paddingLeft))
+  const childIndent = await childRow
+    .locator('.account-subnav__item--group')
+    .evaluate((element) => Number.parseFloat(getComputedStyle(element).paddingLeft))
+  const grandIndent = await grandRow
+    .locator('.account-subnav__item--group')
+    .evaluate((element) => Number.parseFloat(getComputedStyle(element).paddingLeft))
   expect(childIndent).toBeGreaterThan(parentIndent)
   expect(grandIndent).toBeGreaterThan(childIndent)
+  const treeAlignment = await page.evaluate(() =>
+    [...document.querySelectorAll<HTMLElement>('.account-subnav__group-row')].map(
+      (row) => {
+        const item = row.querySelector<HTMLElement>('.account-subnav__item--group')
+        const plus = row.querySelector<HTMLElement>('.account-subnav__add-group')
+        const chevron = row.querySelector<HTMLElement>(
+          '.account-subnav__tree-chevron'
+        )
+        const itemRect = item?.getBoundingClientRect()
+        const plusRect = plus?.getBoundingClientRect()
+        const chevronRect = chevron?.getBoundingClientRect()
+        return {
+          label: item?.querySelector('span')?.textContent?.trim() ?? '',
+          rowPaddingLeft: Number.parseFloat(getComputedStyle(row).paddingLeft),
+          itemRight: itemRect?.right ?? 0,
+          plusCenter: plusRect ? plusRect.left + plusRect.width / 2 : null,
+          chevronCenter: chevronRect
+            ? chevronRect.left + chevronRect.width / 2
+            : null
+        }
+      }
+    )
+  )
+  for (const row of treeAlignment) {
+    expect(row.rowPaddingLeft).toBe(0)
+  }
+  const plusCenters = treeAlignment
+    .filter((row) => ['Parent', 'Child'].includes(row.label))
+    .map((row) => row.plusCenter)
+  expect(plusCenters.every((center) => center !== null)).toBe(true)
+  expect(Math.max(...(plusCenters as number[])) - Math.min(...(plusCenters as number[]))).toBeLessThan(
+    1
+  )
+  const itemRightEdges = treeAlignment
+    .filter((row) => ['未分组', 'Parent', 'Child', 'Grand'].includes(row.label))
+    .map((row) => row.itemRight)
+  expect(Math.max(...itemRightEdges) - Math.min(...itemRightEdges)).toBeLessThan(1)
+  const chevronCenters = treeAlignment
+    .filter((row) => ['Parent', 'Child'].includes(row.label))
+    .map((row) => row.chevronCenter)
+  expect(chevronCenters.every((center) => center !== null)).toBe(true)
+  expect(
+    Math.max(...(chevronCenters as number[])) -
+      Math.min(...(chevronCenters as number[]))
+  ).toBeLessThan(1)
   await expect(grandRow.locator('.account-subnav__tree-chevron')).toHaveCount(0)
   await expect(grandRow.locator('.account-subnav__tree-spacer')).toHaveCount(1)
   const ungroupedGroup = page
@@ -1364,37 +1534,78 @@ test('resizes, hides and restores the account subnav, and creates three group le
     .filter({ hasText: '未分组' })
   await expect(ungroupedGroup.locator('.account-subnav__tree-chevron')).toHaveCount(0)
   await expect(ungroupedGroup.locator('.account-subnav__tree-spacer')).toHaveCount(1)
-  const ungroupedColumns = await ungroupedGroup
-    .locator('.account-subnav__item--group')
-    .evaluate((button) => {
-      const icon = button.querySelector('svg')?.getBoundingClientRect()
-      const badge = button.querySelector('small')?.getBoundingClientRect()
-      return icon && badge
-        ? {
-            iconX: icon.x + icon.width / 2,
-            iconY: icon.y + icon.height / 2,
-            badgeX: badge.x + badge.width / 2,
-            badgeY: badge.y + badge.height / 2
-          }
-        : null
-    })
-  const parentColumns = await parentRow
-    .locator('.account-subnav__item--group')
-    .evaluate((button) => {
-      const icon = button.querySelector('svg')?.getBoundingClientRect()
-      return icon
-        ? {
-            iconX: icon.x + icon.width / 2,
-            iconY: icon.y + icon.height / 2,
-            hasBadge: Boolean(button.querySelector('small'))
-          }
-        : null
-    })
-  expect(ungroupedColumns).not.toBeNull()
-  expect(parentColumns).not.toBeNull()
-  expect(Math.abs(ungroupedColumns!.iconX - parentColumns!.iconX)).toBeLessThan(1)
-  expect(Math.abs(ungroupedColumns!.iconY - ungroupedColumns!.badgeY)).toBeLessThan(1)
-  expect(parentColumns!.hasBadge).toBe(false)
+  const groupVisuals = await page.evaluate(() =>
+    [...document.querySelectorAll<HTMLElement>('.account-subnav__group-row')].map(
+      (row) => {
+        const item = row.querySelector<HTMLElement>('.account-subnav__item--group')
+        const label = item?.querySelector<HTMLElement>(':scope > span')
+        const count = item?.querySelector<HTMLElement>(':scope > small')
+        const countRect = count?.getBoundingClientRect()
+        const labelRect = label?.getBoundingClientRect()
+        return {
+          label: label?.textContent?.trim() ?? '',
+          directIconCount: item?.querySelectorAll(':scope > svg').length ?? -1,
+          countText: count?.textContent?.trim() ?? '',
+          countVisibility: count ? getComputedStyle(count).visibility : '',
+          countBackground: count ? getComputedStyle(count).backgroundColor : '',
+          countColor: count ? getComputedStyle(count).color : '',
+          countFontVariant: count
+            ? getComputedStyle(count).fontVariantNumeric
+            : '',
+          countTextAlign: count ? getComputedStyle(count).textAlign : '',
+          labelCenterY:
+            labelRect ? labelRect.top + labelRect.height / 2 : null,
+          countCenterY:
+            countRect ? countRect.top + countRect.height / 2 : null,
+          itemHeight: item?.getBoundingClientRect().height ?? 0
+        }
+      }
+    )
+  )
+  for (const group of groupVisuals) {
+    expect(group.directIconCount).toBe(0)
+    expect(group.itemHeight).toBeGreaterThanOrEqual(36)
+    expect(group.itemHeight).toBeLessThanOrEqual(40)
+  }
+  const ungroupedVisual = groupVisuals.find((group) => group.label === '未分组')
+  const parentVisual = groupVisuals.find((group) => group.label === 'Parent')
+  expect(ungroupedVisual).toBeDefined()
+  expect(parentVisual).toBeDefined()
+  expect(ungroupedVisual!.countText).toBe('1')
+  expect(parentVisual!.countText).toBe('')
+  expect(parentVisual!.countVisibility).toBe('hidden')
+  expect(ungroupedVisual!.countBackground).toBe('rgba(0, 0, 0, 0)')
+  expect(ungroupedVisual!.countColor).toBe('rgb(136, 135, 128)')
+  expect(ungroupedVisual!.countFontVariant).toBe('tabular-nums')
+  expect(ungroupedVisual!.countTextAlign).toBe('right')
+  expect(
+    Math.abs(ungroupedVisual!.labelCenterY! - ungroupedVisual!.countCenterY!)
+  ).toBeLessThan(1)
+
+  const parentHandle = parentRow.locator('.account-subnav__drag-handle')
+  await expect(parentHandle).toHaveCSS('opacity', '0')
+  await expect(parentHandle).toHaveCSS('pointer-events', 'auto')
+  await parentRow.hover()
+  await expect(parentHandle).toHaveCSS('opacity', '1')
+  await expect(parentHandle).toHaveCSS('pointer-events', 'auto')
+
+  const allAccountsAdd = allAccountsRow.locator('.account-subnav__add-group')
+  await expect(allAccountsAdd).toHaveCSS('opacity', '0')
+  await allAccountsRow.hover()
+  await expect(allAccountsAdd).toHaveCSS('opacity', '1')
+
+  const searchToggle = page.getByRole('button', { name: '搜索分组' })
+  await expect(searchToggle).toHaveAttribute('aria-expanded', 'false')
+  await expect(page.getByLabel('筛选分组')).toHaveCount(0)
+  await searchToggle.click()
+  const groupSearchInput = page.getByLabel('筛选分组')
+  await expect(groupSearchInput).toBeVisible()
+  await groupSearchInput.fill('NoSuchGroup')
+  await expect(
+    page.locator('.account-subnav__group-row:not(.account-subnav__group-row--ungrouped)')
+  ).toHaveCount(0)
+  await groupSearchInput.press('Escape')
+  await expect(groupSearchInput).toHaveCount(0)
   const groupsAccordion = page.locator('.account-subnav__groups-accordion')
   const allAccountsButton = page.locator('.account-subnav__all-button')
   await allAccountsButton.click()
@@ -1714,9 +1925,17 @@ test('paginates a dense account tab, keeps tabs fixed and resizes the subnav', a
     .toBe(true)
 
   const pagination = page.locator('.account-pagination')
-  await expect(page.locator('.library-content-scroll--accounts > .account-tabs')).toHaveCSS(
+  await expect(page.locator('.account-workspace')).toHaveCSS(
     'margin-top',
     '20px'
+  )
+  await expect(page.locator('.account-workspace')).toHaveCSS(
+    'border-top-width',
+    '0px'
+  )
+  await expect(page.locator('.account-workspace > .account-tabs')).toHaveCSS(
+    'margin-top',
+    '0px'
   )
   await expect(pagination).toHaveCSS('padding-top', '10px')
   await expect(pagination).toHaveCSS('padding-right', '2px')
@@ -2194,9 +2413,12 @@ test('keeps bookmarks visit-only and removes the retired access log page', async
     .getByRole('button', { name: '书签' })
   await bookmarksNav.click()
   await expect(page.locator('.page-breadcrumb h1')).toHaveText('全部书签')
-  await expect(page.getByRole('button', { name: '新增书签标签页' })).toBeVisible()
-  await expect(page.getByRole('button', { name: '导入浏览器书签' }).first()).toBeVisible()
-  await expect(page.getByRole('button', { name: '导出浏览器书签' })).toBeVisible()
+  const bookmarkMenu = await openBookmarkMoreMenu(page)
+  for (const label of ['新增书签标签页', '导入浏览器书签', '导出浏览器书签']) {
+    await expect(bookmarkMenu.getByRole('menuitem', { name: label })).toBeVisible()
+  }
+  await page.keyboard.press('Escape')
+  await expect(bookmarkMenu).toHaveCount(0)
   await expect(page.getByRole('button', { name: '批量登录' })).toHaveCount(0)
   await expect(page.getByRole('button', { name: '批量操作' })).toHaveCount(0)
   await expect(page.locator('.account-list__header .account-col--status')).toHaveCount(0)
@@ -2418,7 +2640,13 @@ test('keeps imported Chrome bookmark groups scoped across repeated account and b
 
   const nav = page.locator('.sidebar-nav')
   await nav.getByRole('button', { name: '书签' }).click()
-  await page.getByRole('button', { name: '导入浏览器书签' }).first().click()
+  const bookmarkEmptyState = page.locator('.library-database-empty-state')
+  if ((await bookmarkEmptyState.count()) > 0) {
+    await bookmarkEmptyState.getByRole('button', { name: '导入浏览器书签' }).click()
+  } else {
+    const bookmarkMenu = await openBookmarkMoreMenu(page)
+    await bookmarkMenu.getByRole('menuitem', { name: '导入浏览器书签' }).click()
+  }
   await expect(page.locator('.toast')).toContainText('已新增 2 个书签站点')
   await expect(page.locator('.page-breadcrumb h1')).toHaveText('全部书签')
 
@@ -2552,8 +2780,8 @@ test('opens a KDBX database with a Unicode file name without a stale-file error'
     })) as typeof dialog.showOpenDialog
   }, kdbxPath)
 
-  await page.getByRole('button', { name: '新增标签页或打开数据库' }).click()
-  await page.getByRole('menuitem', { name: '打开本地数据库' }).click()
+  const accountMenu = await openAccountMoreMenu(page)
+  await accountMenu.getByRole('menuitem', { name: '打开本地数据库' }).click()
 
   const passwordDialog = page.locator('.modal-panel').filter({
     has: page.getByRole('heading', { name: '输入 KDBX 主密码' })
@@ -2577,8 +2805,8 @@ test('closes a tab without deleting its encrypted AutoLogin snapshot', async () 
   await createVault(page)
   const initialTabs = await page.evaluate(() => window.autologin.tabs.list())
 
-  await page.getByRole('button', { name: '新增标签页或打开数据库' }).click()
-  await page.getByRole('menuitem', { name: '新增本地数据库' }).click()
+  const accountMenu = await openAccountMoreMenu(page)
+  await accountMenu.getByRole('menuitem', { name: '新增本地数据库' }).click()
   await expect(page.locator('.toast')).toContainText('数据库已创建')
   await expect
     .poll(() => page.evaluate(() => window.autologin.tabs.list().then((tabs) => tabs.length)))
@@ -2589,7 +2817,7 @@ test('closes a tab without deleting its encrypted AutoLogin snapshot', async () 
     return tabs.find((tab) => !knownIds.includes(tab.id))
   }, initialTabs.map((tab) => tab.id))
   expect(createdTab).toBeDefined()
-  expect(createdTab!.name).toBe('本地数据库 1')
+  expect(createdTab!.name).toBe('本地数据库')
   const visibleAccountTabs = page.locator('.account-tab')
   await expect(visibleAccountTabs).toHaveCount(initialTabs.length + 1)
   const firstTab = visibleAccountTabs.first()
@@ -2632,6 +2860,7 @@ test('closes a tab without deleting its encrypted AutoLogin snapshot', async () 
       tabRailBackground: activeTab.parentElement?.parentElement
         ? getComputedStyle(activeTab.parentElement.parentElement).backgroundColor
         : '',
+      inactiveShadow: inactiveTab ? getComputedStyle(inactiveTab).boxShadow : '',
       leftPseudoDisplay: leftPseudo.display,
       rightPseudoDisplay: rightPseudo.display
     }
@@ -2641,15 +2870,30 @@ test('closes a tab without deleting its encrypted AutoLogin snapshot', async () 
   )
   expect(tabVisuals.shapeBackground).toBe('rgb(255, 255, 255)')
   expect(tabVisuals.activeBackground).toBe('rgb(255, 255, 255)')
-  expect(tabVisuals.tabRailBackground).toBe('rgb(247, 248, 250)')
+  expect(tabVisuals.tabRailBackground).toBe('rgb(245, 246, 248)')
   expect(tabVisuals.shapeClip).toBe('none')
-  expect(tabVisuals.leftPseudoDisplay).toBe('block')
+  expect(tabVisuals.inactiveShadow).not.toBe('none')
+  expect(tabVisuals.leftPseudoDisplay).toBe('none')
   expect(tabVisuals.rightPseudoDisplay).toBe('block')
+
+  await visibleAccountTabs.nth(1).dispatchEvent('click')
+  await expect(visibleAccountTabs.nth(1)).toHaveClass(/is-active/)
+  const tabRailShape = await page
+    .locator('.account-workspace > .account-tabs')
+    .evaluate((element) => {
+      const style = getComputedStyle(element)
+      return {
+        topLeftRadius: style.borderTopLeftRadius,
+        topRightRadius: style.borderTopRightRadius
+      }
+    })
+  expect(tabRailShape.topLeftRadius).toBe('12px')
+  expect(tabRailShape.topRightRadius).toBe('12px')
 
   const nextLocalDatabase = await page.evaluate(() =>
     window.autologin.tabs.create({ source: 'local' })
   )
-  expect(nextLocalDatabase.name).toBe('本地数据库 2')
+  expect(nextLocalDatabase.name).toBe('本地数据库2')
 
   const renamedTab = await page.evaluate(
     (tabId) =>
@@ -2688,8 +2932,8 @@ test('closes a tab without deleting its encrypted AutoLogin snapshot', async () 
 test('closes and permanently deletes a database from the tab close popover', async () => {
   await createVault(page)
   const initialTabs = await page.evaluate(() => window.autologin.tabs.list())
-  await page.getByRole('button', { name: '新增标签页或打开数据库' }).click()
-  await page.getByRole('menuitem', { name: '新增本地数据库' }).click()
+  const accountMenu = await openAccountMoreMenu(page)
+  await accountMenu.getByRole('menuitem', { name: '新增本地数据库' }).click()
   await expect(page.locator('.toast')).toContainText('数据库已创建')
 
   const createdTab = await page.evaluate(async (knownIds) => {
@@ -2745,12 +2989,8 @@ test('shows a global empty state after every account database is closed', async 
     emptyState.getByRole('button', { name: '打开本地数据库' })
   ).toBeVisible()
   await expect(
-    page.getByRole('button', { name: '新增标签页或打开数据库' })
+    page.getByRole('button', { name: '更多数据库操作' })
   ).toHaveCount(0)
-  await expect(page.getByRole('button', { name: '导入账号' })).toHaveCount(0)
-  await expect(page.getByRole('button', { name: '导出', exact: true })).toHaveCount(
-    0
-  )
 
   await emptyState.getByRole('button', { name: '新建数据库' }).click()
   await expect(page.locator('.toast')).toContainText('数据库已创建')
@@ -2779,10 +3019,7 @@ test('shows the database empty state when every bookmark tab is closed', async (
     emptyState.getByRole('button', { name: '导入浏览器书签' })
   ).toBeVisible()
   await expect(
-    page.getByRole('button', { name: '新增书签标签页' })
-  ).toHaveCount(0)
-  await expect(
-    page.getByRole('button', { name: '导出浏览器书签' })
+    page.getByRole('button', { name: '更多书签操作' })
   ).toHaveCount(0)
 
   await emptyState.getByRole('button', { name: '新建书签标签页' }).click()
@@ -2792,38 +3029,96 @@ test('shows the database empty state when every bookmark tab is closed', async (
   await expect(page.locator('.account-subnav-shell')).toBeVisible()
 })
 
-test('does not resurrect a database file deleted outside the app', async () => {
+test('prompts before removing database and bookmark tabs whose files were deleted', async () => {
   await createVault(page)
-  const deletedTab = await page.evaluate(() =>
-    window.autologin.tabs.create({ source: 'local' })
-  )
-  const deletedPath = join(
+  const initialTabs = await page.evaluate(() => window.autologin.tabs.list())
+  const accountMenu = await openAccountMoreMenu(page)
+  await accountMenu.getByRole('menuitem', { name: '新增本地数据库' }).click()
+  await expect(page.locator('.toast')).toContainText('数据库已创建')
+  const createdDatabase = await page.evaluate(async (knownIds) => {
+    const tabs = await window.autologin.tabs.list()
+    return tabs.find((tab) => !knownIds.includes(tab.id))
+  }, initialTabs.map((tab) => tab.id))
+  expect(createdDatabase).toBeDefined()
+  const databasePath = join(
     userDataDirectory,
     'tabs',
     'autologin',
-    deletedTab.databaseFileName ?? ''
+    createdDatabase!.databaseFileName ?? ''
   )
-  await expect.poll(() => existsSync(deletedPath)).toBe(true)
-  rmSync(deletedPath, { force: true })
+  await expect.poll(() => existsSync(databasePath)).toBe(true)
 
-  const nextTab = await page.evaluate(() =>
-    window.autologin.tabs.create({ source: 'local' })
-  )
-  const tabsAfterCreate = await page.evaluate(() =>
-    window.autologin.tabs.list()
-  )
-  expect(tabsAfterCreate.some((tab) => tab.id === deletedTab.id)).toBe(false)
-  expect(existsSync(deletedPath)).toBe(false)
-  expect(
-    existsSync(
-      join(
-        userDataDirectory,
-        'tabs',
-        'autologin',
-        nextTab.databaseFileName ?? ''
-      )
+  const nav = page.locator('.sidebar-nav')
+  await nav.getByRole('button', { name: '书签' }).click()
+  const emptyState = page.locator('.library-database-empty-state')
+  await expect(emptyState).toBeVisible()
+  await emptyState.getByRole('button', { name: '新建书签标签页' }).click()
+  await expect(page.locator('.toast')).toContainText('书签标签页已创建')
+  const bookmarkTab = await page.evaluate(async (knownIds) => {
+    const tabs = await window.autologin.tabs.list()
+    return tabs.find(
+      (tab) => tab.source === 'bookmarks' && !knownIds.includes(tab.id)
     )
-  ).toBe(true)
+  }, initialTabs.map((tab) => tab.id))
+  expect(bookmarkTab).toBeDefined()
+  const bookmarkPath = join(
+    userDataDirectory,
+    'tabs',
+    'bookmarks',
+    bookmarkTab!.databaseFileName ?? ''
+  )
+  await expect.poll(() => existsSync(bookmarkPath)).toBe(true)
+
+  rmSync(databasePath, { force: true })
+  rmSync(bookmarkPath, { force: true })
+
+  await nav.getByRole('button', { name: '账号' }).click()
+  const databaseTab = page.locator(
+    `.account-tab[data-tab-id="${createdDatabase!.id}"]`
+  )
+  await expect(databaseTab).toBeVisible()
+  await databaseTab.click()
+  const databaseDialog = page.locator('.confirm-dialog').filter({
+    has: page.getByRole('heading', { name: '这个数据库已被删除' })
+  })
+  await expect(databaseDialog).toBeVisible()
+  await databaseDialog.getByRole('button', { name: '取消' }).click()
+  await expect(databaseDialog).toHaveCount(0)
+  await expect(databaseTab).toBeVisible()
+
+  await databaseTab.click()
+  await expect(databaseDialog).toBeVisible()
+  await databaseDialog.getByRole('button', { name: '删除页面' }).click()
+  await expect(databaseTab).toHaveCount(0)
+  expect(
+    await page.evaluate(
+      async (tabId) =>
+        (await window.autologin.tabs.list()).some((tab) => tab.id === tabId),
+      createdDatabase!.id
+    )
+  ).toBe(false)
+
+  await nav.getByRole('button', { name: '书签' }).click()
+  const bookmarkPageTab = page.locator(
+    `.account-tab[data-tab-id="${bookmarkTab!.id}"]`
+  )
+  await expect(bookmarkPageTab).toBeVisible()
+  await bookmarkPageTab.click()
+  const bookmarkDialog = page.locator('.confirm-dialog').filter({
+    has: page.getByRole('heading', { name: '这个书签已被删除' })
+  })
+  await expect(bookmarkDialog).toBeVisible()
+  await bookmarkDialog.getByRole('button', { name: '删除页面' }).click()
+  await expect(bookmarkPageTab).toHaveCount(0)
+  expect(
+    await page.evaluate(
+      async (tabId) =>
+        (await window.autologin.tabs.list()).some((tab) => tab.id === tabId),
+      bookmarkTab!.id
+    )
+  ).toBe(false)
+  expect(existsSync(databasePath)).toBe(false)
+  expect(existsSync(bookmarkPath)).toBe(false)
 })
 
 test('defers an available update prompt until the vault is unlocked', async () => {
@@ -2874,43 +3169,27 @@ test('persists appearance, language and interface scale with separate resets', a
     password: 'secret-password'
   })
 
-  await expect(page.getByRole('button', { name: '导入账号' })).toBeVisible()
-  await expect(page.getByRole('button', { name: '导出', exact: true })).toBeVisible()
-  await page.getByRole('button', { name: '导入账号' }).click()
-  const importMenu = page.locator('.account-import-menu')
-  await expect(
-    importMenu.getByRole('menuitem', { name: '当前数据库导入标准CSV' })
-  ).toBeVisible()
-  await expect(
-    importMenu.getByRole('menuitem', { name: '新数据库导入标准CSV' })
-  ).toBeVisible()
-  await expect(importMenu.getByRole('menuitem', { name: '导入 KDBX 数据库' })).toHaveCount(0)
-  await expect(importMenu.getByRole('menuitem', { name: '导入浏览器书签' })).toHaveCount(0)
-  await expect(importMenu.getByRole('menuitem', { name: '下载 CSV 模板' })).toBeVisible()
-  await page.keyboard.press('Escape')
-  await expect(importMenu).toHaveCount(0)
-  await page.getByRole('button', { name: '新增标签页或打开数据库' }).click()
-  const createMenu = page.locator('.account-create-menu')
-  await expect(createMenu.getByRole('menuitem', { name: '新增本地数据库' })).toBeVisible()
-  await expect(
-    createMenu.getByRole('menuitem', { name: '打开本地数据库' })
-  ).toBeVisible()
-  await expect(
-    createMenu.getByRole('menuitem', { name: '打开 KDBX 数据库' })
-  ).toHaveCount(0)
-  await page.keyboard.press('Escape')
-  await expect(createMenu).toHaveCount(0)
-  await page.getByRole('button', { name: '导出', exact: true }).click()
-  const exportMenu = page.locator('.account-export-menu')
+  const accountMenu = await openAccountMoreMenu(page)
   for (const label of [
+    '新增本地数据库',
+    '打开本地数据库',
+    '当前数据库导入标准CSV',
+    '新数据库导入标准CSV',
+    '下载 CSV 模板',
     '导出 AutoLogin 格式',
     '导出 CSV 格式',
     '导出 KeePassXC 格式'
   ]) {
-    await expect(exportMenu.getByRole('menuitem', { name: label })).toBeVisible()
+    await expect(accountMenu.getByRole('menuitem', { name: label })).toBeVisible()
   }
+  await expect(
+    accountMenu.getByRole('menuitem', { name: '导入 KDBX 数据库' })
+  ).toHaveCount(0)
+  await expect(
+    accountMenu.getByRole('menuitem', { name: '导入浏览器书签' })
+  ).toHaveCount(0)
   await page.keyboard.press('Escape')
-  await expect(exportMenu).toHaveCount(0)
+  await expect(accountMenu).toHaveCount(0)
 
   const bookmarksNav = page
     .locator('.sidebar-nav')
@@ -2924,7 +3203,12 @@ test('persists appearance, language and interface scale with separate resets', a
     await createBookmarkTabButton.click()
   }
   await expect(page.locator('.page-breadcrumb h1')).toHaveText('全部书签')
-  await expect(page.getByRole('button', { name: '导入浏览器书签' }).first()).toBeVisible()
+  const bookmarkMenu = await openBookmarkMoreMenu(page)
+  for (const label of ['新增书签标签页', '导入浏览器书签', '导出浏览器书签']) {
+    await expect(bookmarkMenu.getByRole('menuitem', { name: label })).toBeVisible()
+  }
+  await page.keyboard.press('Escape')
+  await expect(bookmarkMenu).toHaveCount(0)
 
   const passwordGeneratorNav = page
     .locator('.sidebar-nav')
@@ -3283,9 +3567,9 @@ test('persists appearance, language and interface scale with separate resets', a
   await expect(
     appLogsPage.getByRole('tab', { name: '软件日志' })
   ).toHaveAttribute('aria-selected', 'true')
-  await appLogsPage.getByLabel('状态').selectOption('info')
+  await appLogsPage.getByRole('combobox', { name: '状态' }).selectOption('info')
   await selectPageSize(appLogsPage, '每页条数', 10)
-  await appLogsPage.getByLabel('状态').selectOption('all')
+  await appLogsPage.getByRole('combobox', { name: '状态' }).selectOption('all')
   await expect(
     appLogsPage.locator('.app-log-row').filter({ hasText: '网络代理连通性测试' }).first()
   ).toBeVisible()
@@ -3310,6 +3594,67 @@ test('persists appearance, language and interface scale with separate resets', a
   await deleteAppLogsButton.click()
   await page.locator('.confirm-dialog').getByRole('button', { name: '确认删除' }).click()
   await expect(page.locator('.toast')).toContainText('已删除 1 条软件日志')
+})
+
+test('offers load or backup-overwrite when the selected data directory is occupied', async () => {
+  await createVault(page)
+  const conflictDirectory = 'D:\\ExistingAutoLoginData'
+  await application.evaluate(({ ipcMain }, directory) => {
+    const testState = globalThis as typeof globalThis & {
+      __locationResolutionCalls: Array<{ directory: string; action: string }>
+    }
+    testState.__locationResolutionCalls = []
+    ipcMain.removeHandler('app:choose-data-location')
+    ipcMain.handle('app:choose-data-location', () => ({
+      status: 'occupied',
+      directory
+    }))
+    ipcMain.removeHandler('app:resolve-data-location-conflict')
+    ipcMain.handle(
+      'app:resolve-data-location-conflict',
+      (_event, payload: { directory: string; action: string }) => {
+        testState.__locationResolutionCalls.push(payload)
+        return {
+          directory: payload.directory,
+          defaultDirectory: 'D:\\DefaultAutoLoginData',
+          isDefault: false,
+          restartRequired: true
+        }
+      }
+    )
+  }, conflictDirectory)
+
+  await page.locator('.sidebar-actions').getByRole('button', { name: '设置' }).click()
+  const settings = page.locator('.settings-page')
+  await settings.getByRole('tab', { name: '数据与备份' }).click()
+  const changeLocation = settings.getByRole('button', { name: '更改位置' })
+  await changeLocation.click()
+
+  const dialog = page.locator('.data-location-conflict-dialog')
+  await expect(dialog.getByRole('heading', { name: '检测到旧版 AutoLogin 数据' })).toBeVisible()
+  await expect(dialog).toContainText(conflictDirectory)
+  await dialog.getByRole('button', { name: '直接加载该目录的数据' }).click()
+  await expect(page.locator('.toast')).toContainText('已切换到所选目录')
+  await expect(dialog).toHaveCount(0)
+
+  await changeLocation.click()
+  await expect(dialog).toBeVisible()
+  await dialog.getByRole('button', { name: '备份旧数据并覆盖' }).click()
+  await expect(page.locator('.toast')).toContainText('旧数据已自动备份')
+  await expect(dialog).toHaveCount(0)
+  expect(
+    await application.evaluate(
+      () =>
+        (
+          globalThis as typeof globalThis & {
+            __locationResolutionCalls: Array<{ directory: string; action: string }>
+          }
+        ).__locationResolutionCalls
+    )
+  ).toEqual([
+    { directory: conflictDirectory, action: 'load' },
+    { directory: conflictDirectory, action: 'overwrite' }
+  ])
 })
 
 test('searches site and group pickers and applies a generated password', async () => {
@@ -3946,6 +4291,24 @@ async function createVault(targetPage: Page): Promise<void> {
   await targetPage.getByPlaceholder('确认主密码').fill('correct horse battery staple')
   await targetPage.getByRole('button', { name: '创建保险库' }).click()
   await expect(targetPage.getByRole('heading', { name: '全部账号' })).toBeVisible()
+}
+
+async function openAccountMoreMenu(targetPage: Page): Promise<Locator> {
+  const trigger = targetPage.getByRole('button', { name: '更多数据库操作' })
+  await expect(trigger).toBeVisible()
+  await trigger.click()
+  const menu = targetPage.locator('.account-more-menu')
+  await expect(menu).toBeVisible()
+  return menu
+}
+
+async function openBookmarkMoreMenu(targetPage: Page): Promise<Locator> {
+  const trigger = targetPage.getByRole('button', { name: '更多书签操作' })
+  await expect(trigger).toBeVisible()
+  await trigger.click()
+  const menu = targetPage.locator('.account-more-menu')
+  await expect(menu).toBeVisible()
+  return menu
 }
 
 async function addAccount(

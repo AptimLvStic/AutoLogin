@@ -508,6 +508,12 @@ export interface DataLocationInfo {
   restartRequired?: boolean
 }
 
+export type DataLocationConflictAction = 'load' | 'overwrite'
+
+export type DataLocationChoiceResult =
+  | { status: 'changed'; info: DataLocationInfo }
+  | { status: 'occupied'; directory: string }
+
 export interface FileOperationResult {
   canceled: boolean
   fileName?: string
@@ -651,6 +657,7 @@ export interface AutologinApi {
     list: () => Promise<AccountTab[]>
     create: (input?: AccountTabCreateInput) => Promise<AccountTab>
     update: (tabId: string, input: AccountTabUpdateInput) => Promise<AccountTab>
+    fileStatus: (tabId: string) => Promise<{ exists: boolean }>
     delete: (tabId: string) => Promise<void>
     purge: (tabId: string) => Promise<void>
     reveal: (tabId: string) => Promise<void>
@@ -717,7 +724,11 @@ export interface AutologinApi {
     cancelUpdate: () => Promise<AppUpdateState>
     installUpdate: () => Promise<void>
     getDataLocation: () => Promise<DataLocationInfo>
-    chooseDataLocation: () => Promise<DataLocationInfo | null>
+    chooseDataLocation: () => Promise<DataLocationChoiceResult | null>
+    resolveDataLocationConflict: (
+      directory: string,
+      action: DataLocationConflictAction
+    ) => Promise<DataLocationInfo>
     restoreDefaultDataLocation: () => Promise<DataLocationInfo>
     openDataLocation: () => Promise<void>
     openFailureLog: () => Promise<void>

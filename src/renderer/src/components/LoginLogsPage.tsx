@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import {
   Check,
   ChevronRight,
@@ -23,8 +23,20 @@ import {
 } from './LogPagination'
 import { LogsTabs, type LogView } from './LogsTabs'
 import { ConfirmDialog, Modal } from './Modal'
+import {
+  useResizableColumns,
+  type TableColumnDefinition
+} from './ResizableColumns'
 
 type LogStatusFilter = 'all' | LoginLogEntry['status']
+type LoginLogColumnKey =
+  | 'status'
+  | 'account'
+  | 'site'
+  | 'group'
+  | 'details'
+  | 'time'
+  | 'action'
 
 const MAX_DELETE_COUNT = 100
 
@@ -57,6 +69,62 @@ export function LoginLogsPage({
   const [confirmDeleteOpen, setConfirmDeleteOpen] = useState(false)
   const [deleting, setDeleting] = useState(false)
   const selectAllRef = useRef<HTMLInputElement>(null)
+  const logTableRef = useRef<HTMLDivElement>(null)
+  const logColumns = useMemo<TableColumnDefinition<LoginLogColumnKey>[]>(
+    () => [
+      {
+        key: 'status',
+        label: tr('状态', 'Status', '狀態'),
+        track: 'minmax(64px, 0.55fr)',
+        defaultWidth: 72,
+        minWidth: 58
+      },
+      {
+        key: 'account',
+        label: tr('账号', 'Account', '帳號'),
+        track: 'minmax(96px, 0.9fr)',
+        defaultWidth: 120,
+        minWidth: 80
+      },
+      {
+        key: 'site',
+        label: tr('站点', 'Site', '站點'),
+        track: 'minmax(96px, 0.9fr)',
+        defaultWidth: 120,
+        minWidth: 80
+      },
+      {
+        key: 'group',
+        label: tr('分组', 'Group', '分組'),
+        track: 'minmax(70px, 0.62fr)',
+        defaultWidth: 90,
+        minWidth: 60
+      },
+      {
+        key: 'details',
+        label: tr('说明', 'Details', '說明'),
+        track: 'minmax(160px, 1.45fr)',
+        defaultWidth: 220,
+        minWidth: 120
+      },
+      {
+        key: 'time',
+        label: tr('时间', 'Time', '時間'),
+        track: '112px',
+        defaultWidth: 112,
+        minWidth: 90
+      },
+      {
+        key: 'action',
+        label: tr('操作', 'Action', '操作'),
+        track: '92px',
+        defaultWidth: 92,
+        minWidth: 72,
+        hideable: false
+      }
+    ],
+    [tr]
+  )
 
   async function load(): Promise<void> {
     setLoading(true)
@@ -144,6 +212,15 @@ export function LoginLogsPage({
   const pageCount = Math.max(1, Math.ceil(filtered.length / pageSize))
   const currentPage = Math.min(page, pageCount)
   const visible = filtered.slice((currentPage - 1) * pageSize, currentPage * pageSize)
+  const tableColumns = useResizableColumns({
+    storageKey: 'autologin.loginLogs.columns',
+    columns: logColumns,
+    tableRef: logTableRef,
+    headerSelector: '.log-table__header',
+    rowSelector: '.log-table__row',
+    measureKey: visible.map((entry) => entry.id).join('|'),
+    menuLabel: tr('登录日志显示列', 'Login log columns', '登入日誌顯示欄位')
+  })
   const visibleSelectedCount = visible.filter((entry) => selectedIds.has(entry.id)).length
   const allPageSelected = visible.length > 0 && visibleSelectedCount === visible.length
   const somePageSelected = visibleSelectedCount > 0 && !allPageSelected
@@ -255,6 +332,81 @@ export function LoginLogsPage({
     } finally {
       setDeleting(false)
     }
+  }
+
+  function columnLabel(key: LoginLogColumnKey): string {
+    return logColumns.find((column) => column.key === key)?.label ?? key
+  }
+
+  function renderHeaderCell(key: LoginLogColumnKey): React.JSX.Element {
+    const label = columnLabel(key)
+    return (
+      <span data-column-key={key} key={key}>
+        {label}
+        {tableColumns.renderResizer(key, label)}
+      </span>
+    )
+  }
+
+  function renderBodyCell(entry: LoginLogEntry, key: LoginLogColumnKey): ReactNode {
+    if (key === 'status') {
+      return (
+        <span data-column-key={key} key={key}>
+          <span className={`log-status is-${entry.status}`}>
+            {statusLabel(entry.status, tr)}
+          </span>
+        </span>
+      )
+    }
+    if (key === 'account') {
+      return (
+        <strong data-column-key={key} key={key}>
+          {entry.accountLabel}
+        </strong>
+      )
+    }
+    if (key === 'site') {
+      return (
+        <span data-column-key={key} key={key}>
+          {entry.siteName}
+        </span>
+      )
+    }
+    if (key === 'group') {
+      return (
+        <span data-column-key={key} key={key}>
+          {displayGroup(entry.groupName, tr)}
+        </span>
+      )
+    }
+    if (key === 'details') {
+      return (
+        <p data-column-key={key} key={key}>
+          {entry.reason}
+        </p>
+      )
+    }
+    if (key === 'time') {
+      return (
+        <time data-column-key={key} key={key} dateTime={entry.timestamp}>
+          {formatDate(entry.timestamp, {
+            month: '2-digit',
+            day: '2-digit',
+            hour: '2-digit',
+            minute: '2-digit',
+            second: '2-digit'
+          })}
+        </time>
+      )
+    }
+    return (
+      <span data-column-key={key} key={key}>
+        <button className="text-button" onClick={() => setDetailEntry(entry)}>
+          <Eye size={14} />
+          {tr('查看详情', 'View details', '查看詳情')}
+        </button>
+      </span>
+    )
   }
 
   return (
@@ -403,8 +555,14 @@ export function LoginLogsPage({
               className="log-table"
               role="table"
               aria-label={tr('登录日志列表', 'Login log list', '登入日誌列表')}
+              ref={logTableRef}
             >
-              <div className="log-table__header log-table__grid" role="row">
+              <div
+                className="log-table__header log-table__grid"
+                role="row"
+                style={{ gridTemplateColumns: tableColumns.gridTemplateColumns }}
+                onContextMenu={tableColumns.openMenu}
+              >
                 <label className="log-checkbox" onClick={(event) => event.stopPropagation()}>
                   <input
                     ref={selectAllRef}
@@ -417,13 +575,7 @@ export function LoginLogsPage({
                     <Check size={12} />
                   </span>
                 </label>
-                <span>{tr('状态', 'Status', '狀態')}</span>
-                <span>{tr('账号', 'Account', '帳號')}</span>
-                <span>{tr('站点', 'Site', '站點')}</span>
-                <span>{tr('分组', 'Group', '分組')}</span>
-                <span>{tr('说明', 'Details', '說明')}</span>
-                <span>{tr('时间', 'Time', '時間')}</span>
-                <span>{tr('操作', 'Action', '操作')}</span>
+                {tableColumns.visibleOrderedColumns.map(renderHeaderCell)}
               </div>
               {visible.map((entry) => (
                 <article
@@ -432,6 +584,7 @@ export function LoginLogsPage({
                   }`}
                   role="row"
                   key={entry.id}
+                  style={{ gridTemplateColumns: tableColumns.gridTemplateColumns }}
                 >
                   <label className="log-checkbox" onClick={(event) => event.stopPropagation()}>
                     <input
@@ -448,27 +601,13 @@ export function LoginLogsPage({
                       <Check size={12} />
                     </span>
                   </label>
-                  <span className={`log-status is-${entry.status}`}>{statusLabel(entry.status, tr)}</span>
-                  <strong>{entry.accountLabel}</strong>
-                  <span>{entry.siteName}</span>
-                  <span>{displayGroup(entry.groupName, tr)}</span>
-                  <p>{entry.reason}</p>
-                  <time dateTime={entry.timestamp}>
-                    {formatDate(entry.timestamp, {
-                      month: '2-digit',
-                      day: '2-digit',
-                      hour: '2-digit',
-                      minute: '2-digit',
-                      second: '2-digit'
-                    })}
-                  </time>
-                  <button className="text-button" onClick={() => setDetailEntry(entry)}>
-                    <Eye size={14} />
-                    {tr('查看详情', 'View details', '查看詳情')}
-                  </button>
+                  {tableColumns.visibleOrderedColumns.map((key) =>
+                    renderBodyCell(entry, key)
+                  )}
                 </article>
               ))}
             </div>
+            {tableColumns.menu}
 
             <LogPagination
               count={filtered.length}

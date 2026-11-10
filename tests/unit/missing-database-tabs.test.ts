@@ -59,11 +59,41 @@ function account(id: string, tabId: string, siteId: string): StoredAccount {
 }
 
 describe('missing database tab cleanup', () => {
-  it('removes only file-backed tabs whose database file disappeared', () => {
+  it('keeps visible tabs whose file disappeared so the user can confirm removal', () => {
     const localTab = tab('local', '本地账号', 'local', '本地账号.autologin')
     const missingKdbxTab = tab('kdbx', '工作账号', 'kdbx', '工作账号.kdbx')
+    const data: VaultData = {
+      schemaVersion: 1,
+      tabs: [localTab, missingKdbxTab],
+      sites: [],
+      accounts: [],
+      groupDefinitions: [],
+      deletedAccounts: [],
+      favoriteGroups: [],
+      settings: DEFAULT_APP_SETTINGS
+    }
+
+    const result = removeMissingDatabaseTabs(
+      data,
+      (entry) => entry.id !== missingKdbxTab.id,
+      { hiddenOnly: true }
+    )
+
+    expect(result.removedTabs).toEqual([])
+    expect(data.tabs.map((entry) => entry.id)).toEqual(['local', 'kdbx'])
+  })
+
+  it('removes hidden database and bookmark tabs whose files disappeared', () => {
+    const localTab = tab('local', '本地账号', 'local', '本地账号.autologin')
+    const missingKdbxTab = {
+      ...tab('kdbx', '工作账号', 'kdbx', '工作账号.kdbx'),
+      hidden: true
+    }
     const csvTab = tab('csv', '财务数据', 'csv', '财务数据.csv')
-    const bookmarkTab = tab('bookmarks', '书签', 'bookmarks', '书签.html')
+    const missingBookmarkTab = {
+      ...tab('bookmarks', '书签', 'bookmarks', '书签.html'),
+      hidden: true
+    }
     const localSite = site('site-local', localTab.id)
     const kdbxSite = site('site-kdbx', missingKdbxTab.id)
     const localAccount = account('account-local', localTab.id, localSite.id)
@@ -83,7 +113,7 @@ describe('missing database tab cleanup', () => {
     }
     const data: VaultData = {
       schemaVersion: 1,
-      tabs: [localTab, missingKdbxTab, csvTab, bookmarkTab],
+      tabs: [localTab, missingKdbxTab, csvTab, missingBookmarkTab],
       sites: [localSite, kdbxSite],
       accounts: [localAccount, kdbxAccount],
       groupDefinitions: [group],
@@ -94,15 +124,20 @@ describe('missing database tab cleanup', () => {
 
     const result = removeMissingDatabaseTabs(
       data,
-      (entry) => entry.databaseFileName !== '工作账号.kdbx'
+      (entry) =>
+        entry.databaseFileName !== '工作账号.kdbx' &&
+        entry.databaseFileName !== '书签.html',
+      { hiddenOnly: true }
     )
 
-    expect(result.removedTabs.map((entry) => entry.id)).toEqual(['kdbx'])
+    expect(result.removedTabs.map((entry) => entry.id)).toEqual([
+      'kdbx',
+      'bookmarks'
+    ])
     expect(result.removedAccountIds).toEqual(['account-kdbx'])
     expect(data.tabs.map((entry) => entry.id)).toEqual([
       'local',
-      'csv',
-      'bookmarks'
+      'csv'
     ])
     expect(data.sites.map((entry) => entry.id)).toEqual(['site-local'])
     expect(data.accounts.map((entry) => entry.id)).toEqual(['account-local'])

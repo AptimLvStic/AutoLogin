@@ -35,6 +35,7 @@ import {
   clipboardSecretInputSchema,
   csvImportInputSchema,
   dataExportInputSchema,
+  dataLocationConflictInputSchema,
   favoriteGroupInputSchema,
   groupCreateInputSchema,
   groupDeleteInputSchema,
@@ -87,6 +88,8 @@ import type {
   BookmarkVisitResult,
   DataImportResult,
   DataExportFormat,
+  DataLocationChoiceResult,
+  DataLocationConflictAction,
   DataLocationInfo,
   DeletedAccountWithSite,
   ExistingDatabaseSelection,
@@ -140,6 +143,7 @@ import {
   type ParsedImport
 } from './data-transfer'
 import {
+  hasManagedDataDirectory,
   migrateDataDirectory,
   pathIsInside,
   readDataDirectory,
@@ -484,6 +488,12 @@ function syncTabSnapshotFiles(data: VaultData): void {
         vault.writeEncryptedSnapshot(databasePath, snapshot)
         pendingNewDatabaseTabIds.delete(tab.id)
       } else if (tab.source === 'bookmarks') {
+        if (
+          !pendingNewDatabaseTabIds.has(tab.id) &&
+          !existsSync(databasePath)
+        ) {
+          continue
+        }
         mkdirSync(dirname(databasePath), { recursive: true })
         writeFileSync(databasePath, serializeTabBookmarks(data, tab.id), {
           encoding: 'utf8',
@@ -542,7 +552,8 @@ function tabRevealDirectory(tab: AccountTab): string {
 function pruneMissingDatabaseTabs(data: VaultData): void {
   const result = removeMissingDatabaseTabs(
     data,
-    (tab) => tabDatabaseFileExists(tab)
+    (tab) => tabDatabaseFileExists(tab),
+    { hiddenOnly: true }
   )
   if (result.removedTabs.length === 0) return
 
@@ -553,16 +564,17 @@ function pruneMissingDatabaseTabs(data: VaultData): void {
   appendAppLog(dataDirectory, {
     level: 'warning',
     category: 'data',
-    message: `已清理 ${result.removedTabs.length} 个文件已丢失的数据库标签`,
+    message: `已清理 ${result.removedTabs.length} 个文件已丢失的标签页`,
     details: result.removedTabs.map((tab) => tab.name).join('、')
   })
 }
 
-function purgeMissingDatabaseTabs(): void {
+function purgeMissingDatabaseTabs(includeVisible = false): void {
   const data = vault.requireData()
   const result = removeMissingDatabaseTabs(
     data,
-    (tab) => tabDatabaseFileExists(tab)
+    (tab) => tabDatabaseFileExists(tab),
+    { hiddenOnly: !includeVisible }
   )
   if (result.removedTabs.length === 0) return
   vault.save()
@@ -574,7 +586,7 @@ function purgeMissingDatabaseTabs(): void {
   appendAppLog(dataDirectory, {
     level: 'warning',
     category: 'data',
-    message: `已清理 ${result.removedTabs.length} 个文件已丢失的数据库标签`,
+    message: `已清理 ${result.removedTabs.length} 个文件已丢失的标签页`,
     details: result.removedTabs.map((tab) => tab.name).join('、')
   })
 }
@@ -616,11 +628,16 @@ function reconcileTabDatabaseFiles(): void {
 function nextLocalDatabaseName(data: VaultData): string {
   let highest = 0
   for (const tab of data.tabs) {
-    const match = /^本地数据库\s*(\d+)$/.exec(tab.name.trim())
+    const name = tab.name.trim()
+    if (name === '本地数据库') {
+      highest = Math.max(highest, 1)
+      continue
+    }
+    const match = /^本地数据库\s*(\d+)$/.exec(name)
     if (!match) continue
     highest = Math.max(highest, Number(match[1]) || 0)
   }
-  return `本地数据库 ${highest + 1}`
+  return highest === 0 ? '本地数据库' : `本地数据库${highest + 1}`
 }
 
 function ensureLoginManagers(): void {
@@ -740,6 +757,15 @@ function registerIpc(): void {
   ipcMain.handle('tabs:list', (event): AccountTab[] => {
     assertTrustedSender(event)
     return structuredClone(vault.requireData().tabs)
+  })
+  ipcMain.handle('tabs:file-status', (event, tabId: unknown): { exists: boolean } => {
+    assertTrustedSender(event)
+    const id = requireId(tabId)
+    const tab = vault.requireData().tabs.find((entry) => entry.id === id)
+    if (!tab) {
+      throw new Error('标签页不存在')
+    }
+    return { exists: tabDatabaseFileExists(tab) }
   })
   ipcMain.handle('tabs:create', (event, payload: unknown): AccountTab => {
     assertTrustedSender(event)
@@ -1603,7 +1629,7 @@ function registerIpc(): void {
     if (!existsSync(path)) {
       throw new Error('所选数据库文件已被移动或删除，请重新选择')
     }
-    purgeMissingDatabaseTabs()
+    purgeMissingDatabaseTabs(true)
     const normalizedPath = path.toLocaleLowerCase()
     const kind: LocalDatabaseKind = normalizedPath.endsWith('.kdbx')
       ? 'kdbx'
@@ -1662,7 +1688,7 @@ function registerIpc(): void {
         pendingDatabaseSelections.delete(parsed.data.token)
         throw new Error('所选数据库文件已被移动或删除，请重新选择')
       }
-      purgeMissingDatabaseTabs()
+      purgeMissingDatabaseTabs(true)
       const existing = findExistingDatabaseTab(
         databasePath,
         selection.kind
@@ -1932,10 +1958,24 @@ function registerIpc(): void {
     assertTrustedSender(event)
     return dataLocationInfo()
   })
-  ipcMain.handle('app:choose-data-location', async (event): Promise<DataLocationInfo | null> => {
-    assertTrustedSender(event)
-    return chooseDataLocation()
-  })
+  ipcMain.handle(
+    'app:choose-data-location',
+    async (event): Promise<DataLocationChoiceResult | null> => {
+      assertTrustedSender(event)
+      return chooseDataLocation()
+    }
+  )
+  ipcMain.handle(
+    'app:resolve-data-location-conflict',
+    async (event, payload: unknown): Promise<DataLocationInfo> => {
+      assertTrustedSender(event)
+      const parsed = dataLocationConflictInputSchema.safeParse(payload)
+      if (!parsed.success) {
+        throw new Error(parsed.error.issues[0]?.message ?? '数据目录选项无效')
+      }
+      return resolveDataLocationConflict(parsed.data.directory, parsed.data.action)
+    }
+  )
   ipcMain.handle('app:restore-default-data-location', async (event): Promise<DataLocationInfo> => {
     assertTrustedSender(event)
     return restoreDefaultDataLocation()
@@ -3851,7 +3891,7 @@ function dataLocationInfo(restartRequired = false): DataLocationInfo {
   }
 }
 
-async function chooseDataLocation(): Promise<DataLocationInfo | null> {
+async function chooseDataLocation(): Promise<DataLocationChoiceResult | null> {
   if (!mainWindow) {
     return null
   }
@@ -3867,16 +3907,56 @@ async function chooseDataLocation(): Promise<DataLocationInfo | null> {
 
   const target = resolve(selected)
   if (sameDirectory(target, dataDirectory)) {
+    return { status: 'changed', info: dataLocationInfo() }
+  }
+  assertDataLocationTarget(target)
+  if (hasManagedDataDirectory(target)) {
+    return { status: 'occupied', directory: target }
+  }
+
+  return {
+    status: 'changed',
+    info: await applyDataLocationChange(target, 'migrate')
+  }
+}
+
+async function resolveDataLocationConflict(
+  directory: string,
+  action: DataLocationConflictAction
+): Promise<DataLocationInfo> {
+  const target = resolve(directory)
+  if (sameDirectory(target, dataDirectory)) {
     return dataLocationInfo()
   }
+  assertDataLocationTarget(target)
+  if (action === 'load' && !hasManagedDataDirectory(target)) {
+    throw new Error('目标目录中的旧数据已不存在，请重新选择目录')
+  }
+  return applyDataLocationChange(target, action)
+}
+
+function assertDataLocationTarget(target: string): void {
   if (pathIsInside(dirname(app.getPath('exe')), target)) {
     throw new Error('数据目录不能位于 AutoLogin 安装目录内，以免升级时丢失')
   }
+}
 
+async function applyDataLocationChange(
+  targetDirectory: string,
+  mode: 'migrate' | 'load' | 'overwrite'
+): Promise<DataLocationInfo> {
+  const target = resolve(targetDirectory)
+  assertDataLocationTarget(target)
   await closeLoginManagers()
   vault.lock()
   try {
-    migrateDataDirectory(dataLocationPointerDirectory, dataDirectory, target)
+    if (mode === 'load') {
+      writeDataDirectory(dataLocationPointerDirectory, target)
+    } else {
+      migrateDataDirectory(dataLocationPointerDirectory, dataDirectory, target, {
+        replaceExisting: mode === 'overwrite'
+      })
+    }
     writeDataDirectory(configDirectory, target)
     dataDirectory = target
     initializeDataStores()

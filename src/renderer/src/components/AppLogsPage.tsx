@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import {
   BookOpen,
   Check,
@@ -17,8 +17,13 @@ import {
 } from './LogPagination'
 import { LogsTabs, type LogView } from './LogsTabs'
 import { ConfirmDialog } from './Modal'
+import {
+  useResizableColumns,
+  type TableColumnDefinition
+} from './ResizableColumns'
 
 type AppLogStatusFilter = 'all' | AppLogLevel
+type AppLogColumnKey = 'status' | 'category' | 'details' | 'time'
 
 const MAX_DELETE_COUNT = 100
 
@@ -43,6 +48,40 @@ export function AppLogsPage({
   const [deleting, setDeleting] = useState(false)
   const [clearing, setClearing] = useState(false)
   const selectAllRef = useRef<HTMLInputElement>(null)
+  const logTableRef = useRef<HTMLDivElement>(null)
+  const logColumns = useMemo<TableColumnDefinition<AppLogColumnKey>[]>(
+    () => [
+      {
+        key: 'status',
+        label: tr('状态', 'Status', '狀態'),
+        track: 'minmax(66px, 0.5fr)',
+        defaultWidth: 76,
+        minWidth: 60
+      },
+      {
+        key: 'category',
+        label: tr('分类', 'Category', '分類'),
+        track: 'minmax(88px, 0.65fr)',
+        defaultWidth: 108,
+        minWidth: 72
+      },
+      {
+        key: 'details',
+        label: tr('说明', 'Details', '說明'),
+        track: 'minmax(220px, 2fr)',
+        defaultWidth: 360,
+        minWidth: 140
+      },
+      {
+        key: 'time',
+        label: tr('时间', 'Time', '時間'),
+        track: '132px',
+        defaultWidth: 132,
+        minWidth: 104
+      }
+    ],
+    [tr]
+  )
 
   useEffect(() => {
     void load()
@@ -61,6 +100,15 @@ export function AppLogsPage({
   const pageCount = Math.max(1, Math.ceil(filtered.length / pageSize))
   const currentPage = Math.min(page, pageCount)
   const visible = filtered.slice((currentPage - 1) * pageSize, currentPage * pageSize)
+  const tableColumns = useResizableColumns({
+    storageKey: 'autologin.appLogs.columns',
+    columns: logColumns,
+    tableRef: logTableRef,
+    headerSelector: '.app-log-table__header',
+    rowSelector: '.app-log-row',
+    measureKey: visible.map((entry) => entry.id).join('|'),
+    menuLabel: tr('软件日志显示列', 'App log columns', '軟體日誌顯示欄位')
+  })
   const visibleSelectedCount = visible.filter((entry) => selectedIds.has(entry.id)).length
   const allPageSelected = visible.length > 0 && visibleSelectedCount === visible.length
   const somePageSelected = visibleSelectedCount > 0 && !allPageSelected
@@ -217,6 +265,55 @@ export function AppLogsPage({
     }
   }
 
+  function columnLabel(key: AppLogColumnKey): string {
+    return logColumns.find((column) => column.key === key)?.label ?? key
+  }
+
+  function renderHeaderCell(key: AppLogColumnKey): React.JSX.Element {
+    const label = columnLabel(key)
+    return (
+      <span data-column-key={key} key={key}>
+        {label}
+        {tableColumns.renderResizer(key, label)}
+      </span>
+    )
+  }
+
+  function renderBodyCell(entry: AppLogEntry, key: AppLogColumnKey): ReactNode {
+    if (key === 'status') {
+      return (
+        <span data-column-key={key} key={key}>
+          <span className={`app-log-level is-${entry.level}`}>
+            {appLogLevelLabel(entry.level, tr)}
+          </span>
+        </span>
+      )
+    }
+    if (key === 'category') {
+      return (
+        <span className="app-log-category" data-column-key={key} key={key}>
+          {appLogCategoryLabel(entry.category, tr)}
+        </span>
+      )
+    }
+    if (key === 'details') {
+      return (
+        <div className="app-log-row__content" data-column-key={key} key={key}>
+          <strong>{entry.message}</strong>
+          {entry.details && <p>{entry.details}</p>}
+        </div>
+      )
+    }
+    return (
+      <time data-column-key={key} key={key} dateTime={entry.timestamp}>
+        {formatDate(entry.timestamp, {
+          dateStyle: 'short',
+          timeStyle: 'medium'
+        })}
+      </time>
+    )
+  }
+
   return (
     <>
       <section className="page-section logs-page app-logs-page">
@@ -332,8 +429,14 @@ export function AppLogsPage({
               className="app-log-table"
               role="table"
               aria-label={tr('软件日志列表', 'App log list', '軟體日誌列表')}
+              ref={logTableRef}
             >
-              <div className="app-log-table__header app-log-table__grid" role="row">
+              <div
+                className="app-log-table__header app-log-table__grid"
+                role="row"
+                style={{ gridTemplateColumns: tableColumns.gridTemplateColumns }}
+                onContextMenu={tableColumns.openMenu}
+              >
                 <label className="log-checkbox" onClick={(event) => event.stopPropagation()}>
                   <input
                     ref={selectAllRef}
@@ -346,10 +449,7 @@ export function AppLogsPage({
                     <Check size={12} />
                   </span>
                 </label>
-                <span>{tr('状态', 'Status', '狀態')}</span>
-                <span>{tr('分类', 'Category', '分類')}</span>
-                <span>{tr('说明', 'Details', '說明')}</span>
-                <span>{tr('时间', 'Time', '時間')}</span>
+                {tableColumns.visibleOrderedColumns.map(renderHeaderCell)}
               </div>
               {visible.map((entry) => (
                 <article
@@ -358,6 +458,7 @@ export function AppLogsPage({
                   }`}
                   role="row"
                   key={entry.id}
+                  style={{ gridTemplateColumns: tableColumns.gridTemplateColumns }}
                 >
                   <label className="log-checkbox" onClick={(event) => event.stopPropagation()}>
                     <input
@@ -374,25 +475,13 @@ export function AppLogsPage({
                       <Check size={12} />
                     </span>
                   </label>
-                  <span className={`app-log-level is-${entry.level}`}>
-                    {appLogLevelLabel(entry.level, tr)}
-                  </span>
-                  <span className="app-log-category">
-                    {appLogCategoryLabel(entry.category, tr)}
-                  </span>
-                  <div className="app-log-row__content">
-                    <strong>{entry.message}</strong>
-                    {entry.details && <p>{entry.details}</p>}
-                  </div>
-                  <time dateTime={entry.timestamp}>
-                    {formatDate(entry.timestamp, {
-                      dateStyle: 'short',
-                      timeStyle: 'medium'
-                    })}
-                  </time>
+                  {tableColumns.visibleOrderedColumns.map((key) =>
+                    renderBodyCell(entry, key)
+                  )}
                 </article>
               ))}
             </div>
+            {tableColumns.menu}
 
             <LogPagination
               count={filtered.length}

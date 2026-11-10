@@ -40,6 +40,7 @@ import {
   type AutoLockMinutes,
   type BackupRecord,
   type ColorMode,
+  type DataLocationConflictAction,
   type DataLocationInfo,
   type ProxySettings,
   type ProxyTestResult,
@@ -51,7 +52,7 @@ import {
   shortcutFromKeyboardEvent
 } from '@shared/shortcuts'
 import { translate, useI18n } from '../i18n'
-import { ConfirmDialog } from './Modal'
+import { ConfirmDialog, Modal } from './Modal'
 import { PasswordStrength } from './PasswordStrength'
 import { UpdateProgress } from './UpdateDialog'
 import { LoadingSpinner } from './LoadingSpinner'
@@ -103,6 +104,9 @@ export function SettingsPage({
   const [dataLocationLoading, setDataLocationLoading] = useState(true)
   const [dataLocationError, setDataLocationError] = useState('')
   const [locationBusy, setLocationBusy] = useState(false)
+  const [locationConflict, setLocationConflict] = useState<{ directory: string } | null>(null)
+  const [locationConflictBusy, setLocationConflictBusy] =
+    useState<DataLocationConflictAction | null>(null)
   const [openingDataLocation, setOpeningDataLocation] = useState(false)
   const [restartingApp, setRestartingApp] = useState(false)
   const [openingPrivacy, setOpeningPrivacy] = useState(false)
@@ -417,9 +421,13 @@ export function SettingsPage({
   async function chooseLocation(): Promise<void> {
     setLocationBusy(true)
     try {
-      const next = await window.autologin.app.chooseDataLocation()
-      if (next) {
-        setDataLocation(next)
+      const result = await window.autologin.app.chooseDataLocation()
+      if (result?.status === 'occupied') {
+        setLocationConflict({ directory: result.directory })
+        return
+      }
+      if (result?.status === 'changed') {
+        setDataLocation(result.info)
         notify(
           'success',
           tr(
@@ -438,6 +446,42 @@ export function SettingsPage({
       )
     } finally {
       setLocationBusy(false)
+    }
+  }
+
+  async function resolveLocationConflict(action: DataLocationConflictAction): Promise<void> {
+    if (!locationConflict || locationConflictBusy) return
+    setLocationConflictBusy(action)
+    try {
+      const next = await window.autologin.app.resolveDataLocationConflict(
+        locationConflict.directory,
+        action
+      )
+      setDataLocation(next)
+      setLocationConflict(null)
+      notify(
+        'success',
+        action === 'load'
+          ? tr(
+              '已切换到所选目录，重启 AutoLogin 后继续使用',
+              'Switched to the selected directory. Restart AutoLogin to continue.',
+              '已切換至所選目錄，重新啟動 AutoLogin 後繼續使用'
+            )
+          : tr(
+              '当前数据已迁移，目录中的旧数据已自动备份',
+              'Current data migrated. The previous directory contents were backed up automatically.',
+              '目前資料已遷移，目錄中的舊資料已自動備份'
+            )
+      )
+    } catch (error) {
+      notify(
+        'error',
+        error instanceof Error
+          ? error.message
+          : tr('处理旧数据目录失败', 'Could not resolve the existing data directory.', '處理舊資料目錄失敗')
+      )
+    } finally {
+      setLocationConflictBusy(null)
     }
   }
 
@@ -1711,6 +1755,79 @@ export function SettingsPage({
         </div>
 
       </section>
+
+      {locationConflict && (
+        <Modal
+          title={tr(
+            '检测到旧版 AutoLogin 数据',
+            'Existing AutoLogin data found',
+            '偵測到舊版 AutoLogin 資料'
+          )}
+          onClose={() => {
+            if (!locationConflictBusy) setLocationConflict(null)
+          }}
+          width="540px"
+          className="data-location-conflict-dialog"
+        >
+          <div className="data-location-conflict__body">
+            <p className="modal-description">
+              {tr(
+                '目标目录中已有 AutoLogin 数据。您希望直接加载该目录的数据，还是覆盖并迁移当前数据？',
+                'The target directory already contains AutoLogin data. Load that data, or overwrite it while migrating the current data?',
+                '目標目錄中已有 AutoLogin 資料。您希望直接載入該目錄的資料，還是覆蓋並遷移目前資料？'
+              )}
+            </p>
+            <code className="data-location-conflict__path">{locationConflict.directory}</code>
+            <p className="data-location-conflict__note">
+              <ArchiveRestore size={15} />
+              <span>
+                {tr(
+                  '选择覆盖后，目标目录中的旧数据会自动重命名为“旧数据备份_时间戳”，不会直接删除。',
+                  'When overwriting, existing target data is renamed to “旧数据备份_时间戳” instead of being deleted.',
+                  '選擇覆蓋後，目標目錄中的舊資料會自動重新命名為「旧数据备份_时间戳」，不會直接刪除。'
+                )}
+              </span>
+            </p>
+          </div>
+          <div className="modal-actions data-location-conflict__actions">
+            <button
+              className="button button--ghost"
+              onClick={() => setLocationConflict(null)}
+              disabled={Boolean(locationConflictBusy)}
+            >
+              {tr('取消', 'Cancel', '取消')}
+            </button>
+            <button
+              className="button button--ghost"
+              onClick={() => void resolveLocationConflict('load')}
+              disabled={Boolean(locationConflictBusy)}
+            >
+              {locationConflictBusy === 'load' ? (
+                <LoaderCircle size={15} className="spin" />
+              ) : (
+                <FolderOpen size={15} />
+              )}
+              {locationConflictBusy === 'load'
+                ? tr('正在加载…', 'Loading…', '正在載入…')
+                : tr('直接加载该目录的数据', 'Load this directory', '直接載入此目錄的資料')}
+            </button>
+            <button
+              className="button button--primary"
+              onClick={() => void resolveLocationConflict('overwrite')}
+              disabled={Boolean(locationConflictBusy)}
+            >
+              {locationConflictBusy === 'overwrite' ? (
+                <LoaderCircle size={15} className="spin" />
+              ) : (
+                <ArchiveRestore size={15} />
+              )}
+              {locationConflictBusy === 'overwrite'
+                ? tr('正在迁移…', 'Migrating…', '正在遷移…')
+                : tr('备份旧数据并覆盖', 'Back up and overwrite', '備份舊資料並覆蓋')}
+            </button>
+          </div>
+        </Modal>
+      )}
 
       {clearOpen && (
         <ConfirmDialog

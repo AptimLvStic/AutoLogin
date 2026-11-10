@@ -550,6 +550,13 @@ export const appLogDeleteSchema = z
   .max(100)
   .refine((ids) => new Set(ids).size === ids.length, { message: '日志标识不能重复' })
 
+export const dataLocationConflictInputSchema = z
+  .object({
+    directory: z.string().trim().min(1).max(32767),
+    action: z.enum(['load', 'overwrite'])
+  })
+  .strict()
+
 export const proxyTestInputSchema = proxySettingsSchema
 
 export const kdbxSelectionImportSchema = z

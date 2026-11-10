@@ -2,6 +2,7 @@ import {
   cpSync,
   existsSync,
   mkdirSync,
+  readdirSync,
   readFileSync,
   renameSync,
   rmSync,
@@ -26,6 +27,10 @@ const MANAGED_DATA_ENTRIES = [
 interface DataLocationFile {
   version: 1
   directory: string
+}
+
+interface MigrateDataDirectoryOptions {
+  replaceExisting?: boolean
 }
 
 export function readDataDirectory(
@@ -92,7 +97,8 @@ function writeAtomicPointer(pointerPath: string, payload: string): void {
 export function migrateDataDirectory(
   configDirectory: string,
   sourceDirectory: string,
-  targetDirectory: string
+  targetDirectory: string,
+  options: MigrateDataDirectoryOptions = {}
 ): string {
   const source = resolve(sourceDirectory)
   const target = resolve(targetDirectory)
@@ -109,7 +115,10 @@ export function migrateDataDirectory(
   mkdirSync(target, { recursive: true })
   const occupied = MANAGED_DATA_ENTRIES.some((entry) => existsSync(join(target, entry)))
   if (occupied) {
-    throw new Error('目标目录已包含 AutoLogin 数据，请选择空目录')
+    if (!options.replaceExisting) {
+      throw new Error('目标目录已包含 AutoLogin 数据，请选择加载旧数据或备份后覆盖')
+    }
+    backupTargetData(target)
   }
 
   for (const entry of MANAGED_DATA_ENTRIES) {
@@ -166,7 +175,9 @@ export function recoverDataDirectoryFromInstall(
     return current
   }
 
-  const target = hasManagedData(stable) ? nextRecoveryDirectory(configDirectory) : stable
+  const target = hasManagedDataDirectory(stable)
+    ? nextRecoveryDirectory(configDirectory)
+    : stable
   try {
     migrateDataDirectory(pointerDirectory, source, target)
     return target
@@ -195,8 +206,39 @@ function hasVault(directory: string): boolean {
   return existsSync(join(resolve(directory), 'vault.enc'))
 }
 
-function hasManagedData(directory: string): boolean {
+export function hasManagedDataDirectory(directory: string): boolean {
   return MANAGED_DATA_ENTRIES.some((entry) => existsSync(join(resolve(directory), entry)))
+}
+
+function backupTargetData(targetDirectory: string): string {
+  const target = resolve(targetDirectory)
+  const entries = readdirSync(target)
+  const backupDirectory = nextBackupDirectory(target)
+  mkdirSync(backupDirectory, { recursive: true })
+  for (const entry of entries) {
+    renameSync(join(target, entry), join(backupDirectory, entry))
+  }
+  return backupDirectory
+}
+
+function nextBackupDirectory(targetDirectory: string): string {
+  const now = new Date()
+  const stamp = [
+    now.getFullYear(),
+    String(now.getMonth() + 1).padStart(2, '0'),
+    String(now.getDate()).padStart(2, '0'),
+    '_',
+    String(now.getHours()).padStart(2, '0'),
+    String(now.getMinutes()).padStart(2, '0'),
+    String(now.getSeconds()).padStart(2, '0')
+  ].join('')
+  let candidate = join(resolve(targetDirectory), `旧数据备份_${stamp}`)
+  let sequence = 2
+  while (existsSync(candidate)) {
+    candidate = join(resolve(targetDirectory), `旧数据备份_${stamp}_${sequence}`)
+    sequence += 1
+  }
+  return candidate
 }
 
 function vaultFreshness(directory: string): number {
@@ -211,7 +253,7 @@ function nextRecoveryDirectory(configDirectory: string): string {
   const stamp = new Date().toISOString().replace(/[-:.TZ]/g, '').slice(0, 14)
   let candidate = join(resolve(configDirectory), `Data-recovered-${stamp}`)
   let sequence = 2
-  while (hasManagedData(candidate)) {
+  while (hasManagedDataDirectory(candidate)) {
     candidate = join(resolve(configDirectory), `Data-recovered-${stamp}-${sequence}`)
     sequence += 1
   }

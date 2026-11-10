@@ -15,9 +15,6 @@ jobs:
   release:
     if: github.repository == 'AptimLvStic/Tauri'
     runs-on: windows-latest
-    environment:
-      name: github-pages
-      url: ${{ steps.deployment.outputs.page_url }}
 
     steps:
       - name: Check out source
@@ -100,6 +97,7 @@ jobs:
             outputs/latest.yml
 
       - name: Stage CDN update feed
+        if: github.ref == 'refs/heads/main'
         shell: pwsh
         run: |
           $site = Join-Path $env:GITHUB_WORKSPACE "updates-site"
@@ -109,15 +107,25 @@ jobs:
           Copy-Item "outputs/$env:TAURI_INSTALLER_NAME" $updates
           New-Item -ItemType File -Path (Join-Path $site ".nojekyll") -Force | Out-Null
 
+      - name: Upload CDN update feed
+        if: github.ref == 'refs/heads/main'
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: updates-site
+
+  deploy-pages:
+    needs: release
+    if: github.repository == 'AptimLvStic/Tauri' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+
+    steps:
       - name: Configure GitHub Pages
         uses: actions/configure-pages@v5
         with:
           enablement: true
-
-      - name: Upload CDN update feed
-        uses: actions/upload-pages-artifact@v3
-        with:
-          path: updates-site
 
       - name: Deploy CDN update feed
         id: deployment

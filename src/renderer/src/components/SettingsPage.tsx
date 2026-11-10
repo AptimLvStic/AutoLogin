@@ -28,8 +28,6 @@ import {
   AUTO_LOCK_OPTIONS,
   DEFAULT_PROXY_TEST_URL,
   FONT_SIZE_SCALE_OPTIONS,
-  INTERFACE_SCALE_MAX,
-  INTERFACE_SCALE_MIN,
   INTERFACE_SCALE_STEP,
   PROXY_PROTOCOLS,
   type AboutInfo,
@@ -46,7 +44,13 @@ import {
   type ProxyTestResult,
   type UpdateCheckResult
 } from '@shared/types'
-import { DEFAULT_APP_SETTINGS } from '@shared/theme'
+import {
+  DEFAULT_APP_SETTINGS,
+  INTERFACE_SCALE_DISPLAY_MAX,
+  INTERFACE_SCALE_DISPLAY_MIN,
+  interfaceScaleActualToDisplay,
+  interfaceScaleDisplayToActual
+} from '@shared/theme'
 import {
   displayKeyboardShortcut,
   shortcutFromKeyboardEvent
@@ -116,7 +120,9 @@ export function SettingsPage({
   const [downloadUpdateBusy, setDownloadUpdateBusy] = useState(false)
   const [cancelUpdateBusy, setCancelUpdateBusy] = useState(false)
   const [installUpdateBusy, setInstallUpdateBusy] = useState(false)
-  const [interfaceScale, setInterfaceScale] = useState(settings.interfaceScale)
+  const [interfaceScale, setInterfaceScale] = useState(() =>
+    interfaceScaleActualToDisplay(settings.interfaceScale)
+  )
   const [fontSizeScale, setFontSizeScale] = useState(settings.fontSizeScale)
   const [proxy, setProxy] = useState<ProxySettings>(settings.proxy)
   const [proxySaving, setProxySaving] = useState(false)
@@ -135,7 +141,7 @@ export function SettingsPage({
   }, [settings.autoLockMinutes])
 
   useEffect(() => {
-    setInterfaceScale(settings.interfaceScale)
+    setInterfaceScale(interfaceScaleActualToDisplay(settings.interfaceScale))
     setFontSizeScale(settings.fontSizeScale)
     setProxy(settings.proxy)
   }, [settings.fontSizeScale, settings.interfaceScale, settings.proxy])
@@ -229,7 +235,7 @@ export function SettingsPage({
     if (scaleSaveTimer.current) window.clearTimeout(scaleSaveTimer.current)
     scaleSaveTimer.current = window.setTimeout(() => {
       void saveAppearance(
-        { interfaceScale: value },
+        { interfaceScale: interfaceScaleDisplayToActual(value) },
         tr(
           '界面比例已设为 {value}%',
           'Interface scale set to {value}%.',
@@ -271,7 +277,7 @@ export function SettingsPage({
     }
     setInterfaceScale(100)
     await saveAppearance(
-      { interfaceScale: 100 },
+      { interfaceScale: DEFAULT_APP_SETTINGS.interfaceScale },
       tr('界面比例已恢复默认', 'Interface scale reset to default.', '介面比例已恢復預設')
     )
   }
@@ -344,7 +350,7 @@ export function SettingsPage({
       scaleSaveTimer.current = null
     }
     setAutoLock(DEFAULT_APP_SETTINGS.autoLockMinutes)
-    setInterfaceScale(DEFAULT_APP_SETTINGS.interfaceScale)
+    setInterfaceScale(interfaceScaleActualToDisplay(DEFAULT_APP_SETTINGS.interfaceScale))
     setFontSizeScale(DEFAULT_APP_SETTINGS.fontSizeScale)
     setProxy(DEFAULT_APP_SETTINGS.proxy)
     setProxyResult(null)
@@ -934,8 +940,8 @@ export function SettingsPage({
               <div className="scale-control">
                 <input
                   type="range"
-                  min={INTERFACE_SCALE_MIN}
-                  max={INTERFACE_SCALE_MAX}
+                  min={INTERFACE_SCALE_DISPLAY_MIN}
+                  max={INTERFACE_SCALE_DISPLAY_MAX}
                   step={INTERFACE_SCALE_STEP}
                   value={interfaceScale}
                   onChange={(event) => scheduleScaleSave(Number(event.target.value))}
@@ -946,9 +952,9 @@ export function SettingsPage({
               <div className="settings-inline-actions settings-inline-actions--between">
                 <span className="settings-hint">
                   {tr(
-                    '可在 80% 至 125% 之间调整',
-                    'Adjustable from 80% to 125%.',
-                    '可在 80% 至 125% 之間調整'
+                    '可在 70% 至 115% 之间调整',
+                    'Adjustable from 70% to 115%.',
+                    '可在 70% 至 115% 之間調整'
                   )}
                 </span>
                 <button

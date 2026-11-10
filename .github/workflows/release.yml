@@ -13,7 +13,7 @@ permissions:
 
 jobs:
   release:
-    if: github.repository == 'AptimLvStic/Tauri'
+    if: github.repository == 'AptimLvStic/AutoLogin'
     runs-on: windows-latest
 
     steps:
@@ -115,7 +115,7 @@ jobs:
 
   deploy-pages:
     needs: release
-    if: github.repository == 'AptimLvStic/Tauri' && github.ref == 'refs/heads/main'
+    if: github.repository == 'AptimLvStic/AutoLogin' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     environment:
       name: github-pages

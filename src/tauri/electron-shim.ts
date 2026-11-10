@@ -849,7 +849,7 @@ class ShimAutoUpdater extends EventEmitter {
   private feed: UpdateFeed = {
     provider: 'github',
     owner: process.env.AUTOLOGIN_UPDATE_OWNER?.trim() || 'AptimLvStic',
-    repo: process.env.AUTOLOGIN_UPDATE_REPO?.trim() || 'Tauri'
+    repo: process.env.AUTOLOGIN_UPDATE_REPO?.trim() || 'AutoLogin'
   }
   private latest: LatestFeedEntry | null = null
   private installerPath = ''

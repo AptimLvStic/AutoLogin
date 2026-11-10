@@ -51,7 +51,8 @@ import {
   type GroupDefinition,
   type LoginBatchState,
   type LoginStrategy,
-  type ManualLoginSelectors,
+  type RecipeStep,
+  type SelectorTestResult,
   type Site,
   type TrashRetentionDays
 } from '@shared/types'
@@ -73,6 +74,14 @@ import {
 } from './BookmarkImportButton'
 import { LoadingSpinner } from './LoadingSpinner'
 import { LoginLogsPage } from './LoginLogsPage'
+import {
+  ManualStepEditor,
+  manualSelectorsToSteps,
+  manualStepSelector,
+  manualStepsAreComplete,
+  normalizeManualSteps,
+  selectorTestFieldForAction
+} from './ManualStepEditor'
 import { ConfirmDialog, Modal } from './Modal'
 import { PageSizePicker } from './PageSizePicker'
 import { PasswordGenerator } from './PasswordGenerator'
@@ -88,6 +97,7 @@ type LibraryView =
   | 'trash'
   | 'settings'
 type GroupDropPosition = 'before' | 'after' | 'inside'
+type ColumnDropPosition = 'before' | 'after'
 type DrawerState = { mode: 'create'; siteId?: string } | { mode: 'edit'; accountId: string }
 type AccountMenuState =
   | {
@@ -101,7 +111,7 @@ type AccountMenuState =
   | { kind: 'page'; anchorX: number; anchorY: number; left: number; top: number }
 type AccountColumnSizing = 'content' | 'window' | 'manual'
 type AccountPageSize = 10 | 20 | 50 | 100 | 200
-const ACCOUNT_COLUMN_KEYS = ['username', 'group', 'updated', 'status', 'url'] as const
+const ACCOUNT_COLUMN_KEYS = ['username', 'group', 'updated', 'url'] as const
 const ACCOUNT_PAGE_SIZES: AccountPageSize[] = [10, 20, 50, 100, 200]
 type AccountColumnKey = (typeof ACCOUNT_COLUMN_KEYS)[number]
 type AccountColumnResizeKey = 'site' | AccountColumnKey | 'actions'
@@ -116,7 +126,6 @@ const ACCOUNT_COLUMN_DEFAULT_WIDTHS: Record<AccountColumnResizeKey, number> = {
   username: 150,
   group: 90,
   updated: 86,
-  status: 72,
   url: 180,
   actions: 80
 }
@@ -125,10 +134,20 @@ const ACCOUNT_COLUMN_MIN_WIDTHS: Record<AccountColumnResizeKey, number> = {
   username: 58,
   group: 40,
   updated: 54,
-  status: 46,
   url: 68,
   actions: 52
 }
+
+function batchManualStepsSignature(steps: RecipeStep[]): string {
+  return JSON.stringify(
+    steps.map((step) => ({
+      type: step.type,
+      selector: manualStepSelector(step).trim(),
+      key: step.type === 'press' ? step.key.trim() : ''
+    }))
+  )
+}
+
 const ACCOUNT_COLUMN_TRACKS = {
   wide: {
     checkbox: '22px',
@@ -136,7 +155,6 @@ const ACCOUNT_COLUMN_TRACKS = {
     username: 'minmax(72px, 0.78fr)',
     group: 'minmax(48px, 0.5fr)',
     updated: '82px',
-    status: '70px',
     url: 'minmax(104px, 0.9fr)',
     actions: '90px'
   },
@@ -146,7 +164,6 @@ const ACCOUNT_COLUMN_TRACKS = {
     username: 'minmax(60px, 0.78fr)',
     group: 'minmax(40px, 0.48fr)',
     updated: '62px',
-    status: '56px',
     url: 'minmax(84px, 0.85fr)',
     actions: '86px'
   },
@@ -156,19 +173,17 @@ const ACCOUNT_COLUMN_TRACKS = {
     username: 'minmax(50px, 0.78fr)',
     group: 'minmax(34px, 0.5fr)',
     updated: '54px',
-    status: '46px',
     url: 'minmax(70px, 0.8fr)',
     actions: '82px'
   },
   narrow: {
-    checkbox: '20px',
+    checkbox: '18px',
     site: 'minmax(62px, 1.05fr)',
     username: 'minmax(42px, 0.72fr)',
     group: 'minmax(30px, 0.45fr)',
-    updated: '48px',
-    status: '42px',
+    updated: '44px',
     url: 'minmax(60px, 0.8fr)',
-    actions: '76px'
+    actions: '60px'
   }
 } as const
 type Translate = (
@@ -411,20 +426,8 @@ export function LibraryScreen({
       return new Set(ACCOUNT_COLUMN_KEYS)
     }
   })
-  const availableAccountColumnKeys = useMemo(
-    () =>
-      view === 'bookmarks'
-        ? ACCOUNT_COLUMN_KEYS.filter((key) => key !== 'status')
-        : [...ACCOUNT_COLUMN_KEYS],
-    [view]
-  )
-  const effectiveVisibleAccountColumns = useMemo(
-    () =>
-      view === 'bookmarks'
-        ? new Set([...visibleAccountColumns].filter((key) => key !== 'status'))
-        : visibleAccountColumns,
-    [view, visibleAccountColumns]
-  )
+  const availableAccountColumnKeys = ACCOUNT_COLUMN_KEYS
+  const effectiveVisibleAccountColumns = visibleAccountColumns
   const [accountColumnOrder, setAccountColumnOrder] = useState<AccountColumnKey[]>(
     () => {
       try {
@@ -473,12 +476,14 @@ export function LibraryScreen({
   const [draggedColumnKey, setDraggedColumnKey] = useState<AccountColumnKey | null>(
     null
   )
+  const [columnDropTarget, setColumnDropTarget] = useState<{
+    key: AccountColumnKey
+    position: ColumnDropPosition
+  } | null>(null)
   const [accountGroupTreeExpanded, setAccountGroupTreeExpanded] = useState(
     () => window.localStorage.getItem('autologin.account.groups.treeExpanded') !== '0'
   )
-  const [groupSearchExpanded, setGroupSearchExpanded] = useState(false)
   const [groupSearch, setGroupSearch] = useState('')
-  const groupSearchRef = useRef<HTMLInputElement>(null)
   const [collapsedGroupPaths, setCollapsedGroupPaths] = useState<Set<string>>(() => {
     try {
       const stored = window.localStorage.getItem('autologin.account.groups.collapsedPaths')
@@ -556,11 +561,6 @@ export function LibraryScreen({
   const [accountPage, setAccountPage] = useState(1)
   const [drawer, setDrawer] = useState<DrawerState | null>(null)
   const [draggedGroupPath, setDraggedGroupPath] = useState<string | null>(null)
-  const [draggedAccountIds, setDraggedAccountIds] = useState<string[]>([])
-  const [accountDropTarget, setAccountDropTarget] = useState<{
-    accountId: string
-    position: 'before' | 'after'
-  } | null>(null)
   const [groupDropTarget, setGroupDropTarget] = useState<{
     path: string
     position: GroupDropPosition
@@ -576,7 +576,11 @@ export function LibraryScreen({
   const [groupActionBusy, setGroupActionBusy] = useState(false)
   const [batchStrategyOpen, setBatchStrategyOpen] = useState(false)
   const [batchStrategy, setBatchStrategy] = useState<LoginStrategy>('auto')
-  const [batchSelectors, setBatchSelectors] = useState<ManualLoginSelectors>({})
+  const [batchSteps, setBatchSteps] = useState<RecipeStep[]>([])
+  const [batchStepTests, setBatchStepTests] = useState<
+    Record<string, SelectorTestResult>
+  >({})
+  const [batchStepTesting, setBatchStepTesting] = useState<string | null>(null)
   const [batchStrategyError, setBatchStrategyError] = useState('')
   const [batchStrategyBusy, setBatchStrategyBusy] = useState(false)
   const [batchIcon, setBatchIcon] = useState<string | null>(null)
@@ -599,11 +603,14 @@ export function LibraryScreen({
   const columnMenuRef = useRef<HTMLDivElement>(null)
   const accountMenuRef = useRef<HTMLDivElement>(null)
   const columnResizeCleanupRef = useRef<(() => void) | null>(null)
+  const columnDragCleanupRef = useRef<(() => void) | null>(null)
+  const groupDragCleanupRef = useRef<(() => void) | null>(null)
+  const suppressColumnClickRef = useRef(false)
+  const suppressGroupClickRef = useRef(false)
   const accountListRef = useRef<HTMLElement>(null)
   const accountTableScrollRef = useRef<HTMLDivElement>(null)
   const accountLayoutRef = useRef<HTMLDivElement>(null)
   const draggedGroupPathRef = useRef<string | null>(null)
-  const draggedAccountIdsRef = useRef<string[]>([])
   const subnavResizeRef = useRef<{
     startX: number
     startWidth: number
@@ -1272,6 +1279,8 @@ export function LibraryScreen({
 
   useEffect(() => () => subnavResizeCleanupRef.current?.(), [])
   useEffect(() => () => columnResizeCleanupRef.current?.(), [])
+  useEffect(() => () => columnDragCleanupRef.current?.(), [])
+  useEffect(() => () => groupDragCleanupRef.current?.(), [])
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent): void => {
@@ -1390,7 +1399,6 @@ export function LibraryScreen({
     setSearch('')
     setSearchExpanded(false)
     setGroupSearch('')
-    setGroupSearchExpanded(false)
     setColumnMenuOpen(false)
     setGroupFilter(null)
     setSelectedIds(new Set())
@@ -1413,15 +1421,123 @@ export function LibraryScreen({
     })
   }
 
-  function moveAccountColumn(source: AccountColumnKey, target: AccountColumnKey): void {
+  function beginAccountColumnPointerDrag(
+    event: React.PointerEvent<HTMLButtonElement>,
+    sourceKey: AccountColumnKey
+  ): void {
+    if (event.button !== 0) return
+    columnDragCleanupRef.current?.()
+    const source = event.currentTarget
+    const pointerId = event.pointerId
+    const startX = event.clientX
+    const startY = event.clientY
+    let active = false
+    let latestTarget: {
+      key: AccountColumnKey
+      position: ColumnDropPosition
+    } | null = null
+    try {
+      source.setPointerCapture(pointerId)
+    } catch {
+      // Document listeners below still provide pointer dragging without capture.
+    }
+
+    const cleanup = (): void => {
+      document.removeEventListener('pointermove', onPointerMove)
+      document.removeEventListener('pointerup', onPointerUp)
+      document.removeEventListener('pointercancel', onPointerCancel)
+      window.removeEventListener('blur', onPointerCancel)
+      if (source.hasPointerCapture(pointerId)) {
+        source.releasePointerCapture(pointerId)
+      }
+      document.body.classList.remove('is-dragging-account-column')
+      if (columnDragCleanupRef.current === cleanup) {
+        columnDragCleanupRef.current = null
+      }
+    }
+
+    const clearDragState = (): void => {
+      setDraggedColumnKey(null)
+      setColumnDropTarget(null)
+    }
+
+    const onPointerMove = (moveEvent: PointerEvent): void => {
+      if (moveEvent.pointerId !== pointerId) return
+      if (
+        !active &&
+        Math.hypot(moveEvent.clientX - startX, moveEvent.clientY - startY) < 5
+      ) {
+        return
+      }
+      if (!active) {
+        active = true
+        suppressColumnClickRef.current = true
+        setDraggedColumnKey(sourceKey)
+        document.body.classList.add('is-dragging-account-column')
+      }
+      moveEvent.preventDefault()
+      const target = (
+        document.elementFromPoint(moveEvent.clientX, moveEvent.clientY) as Element | null
+      )?.closest<HTMLElement>('[data-column-menu-key]')
+      const targetKey = target?.dataset.columnMenuKey as AccountColumnKey | undefined
+      if (
+        !target ||
+        !targetKey ||
+        targetKey === sourceKey ||
+        !ACCOUNT_COLUMN_KEYS.includes(targetKey)
+      ) {
+        latestTarget = null
+        setColumnDropTarget(null)
+        return
+      }
+      const rect = target.getBoundingClientRect()
+      const position: ColumnDropPosition =
+        moveEvent.clientY < rect.top + rect.height / 2 ? 'before' : 'after'
+      latestTarget = { key: targetKey, position }
+      setColumnDropTarget({ key: targetKey, position })
+    }
+
+    const onPointerUp = (upEvent: PointerEvent): void => {
+      if (upEvent.pointerId !== pointerId) return
+      upEvent.preventDefault()
+      cleanup()
+      const target = latestTarget
+      clearDragState()
+      if (active && target) {
+        moveAccountColumn(sourceKey, target.key, target.position)
+      }
+      if (active) {
+        window.setTimeout(() => {
+          suppressColumnClickRef.current = false
+        }, 0)
+      }
+    }
+
+    const onPointerCancel = (): void => {
+      cleanup()
+      clearDragState()
+      suppressColumnClickRef.current = false
+    }
+
+    columnDragCleanupRef.current = cleanup
+    document.addEventListener('pointermove', onPointerMove, { passive: false })
+    document.addEventListener('pointerup', onPointerUp)
+    document.addEventListener('pointercancel', onPointerCancel)
+    window.addEventListener('blur', onPointerCancel)
+  }
+
+  function moveAccountColumn(
+    source: AccountColumnKey,
+    target: AccountColumnKey,
+    position: ColumnDropPosition
+  ): void {
     if (source === target) return
     setAccountColumnOrder((current) => {
-      const from = current.indexOf(source)
-      const to = current.indexOf(target)
-      if (from < 0 || to < 0) return current
-      const next = [...current]
-      next.splice(from, 1)
-      next.splice(to, 0, source)
+      if (!current.includes(source) || !current.includes(target)) return current
+      const next = current.filter((key) => key !== source)
+      const targetIndex = next.indexOf(target)
+      if (targetIndex < 0) return current
+      next.splice(targetIndex + (position === 'after' ? 1 : 0), 0, source)
       return next
     })
   }
@@ -1510,7 +1626,6 @@ export function LibraryScreen({
     if (key === 'username') return tr('用户名', 'Username', '使用者名稱')
     if (key === 'group') return tr('分组', 'Group', '分組')
     if (key === 'updated') return tr('最后更新', 'Last updated', '最後更新')
-    if (key === 'status') return tr('状态', 'Status', '狀態')
     return tr('站点 URL', 'Site URL', '站點 URL')
   }
 
@@ -2392,17 +2507,137 @@ export function LibraryScreen({
     }
   }
 
-  function beginGroupDrag(
-    event: React.DragEvent<HTMLSpanElement>,
+  function groupDragPath(group: GroupSummary): string | null {
+    return group.actualName ?? (group.key === UNGROUPED_KEY ? UNGROUPED_KEY : null)
+  }
+
+  function groupAtPointer(
+    clientX: number,
+    clientY: number
+  ): { group: GroupSummary; row: HTMLElement } | null {
+    const row = (document.elementFromPoint(clientX, clientY) as Element | null)?.closest<
+      HTMLElement
+    >('.account-subnav__group-row')
+    const path = row?.dataset.groupPath
+    if (!row || !path) return null
+    const group = groups.find((candidate) => groupDragPath(candidate) === path)
+    return group ? { group, row } : null
+  }
+
+  function beginGroupPointerDrag(
+    event: React.PointerEvent<HTMLDivElement>,
     group: GroupSummary
   ): void {
-    const dragPath =
-      group.actualName ?? (group.key === UNGROUPED_KEY ? UNGROUPED_KEY : null)
+    if (event.button !== 0) return
+    if (
+      event.target instanceof Element &&
+      event.target.closest('.account-subnav__add-group')
+    ) {
+      return
+    }
+    const dragPath = groupDragPath(group)
     if (!dragPath) return
-    event.dataTransfer.effectAllowed = 'move'
-    event.dataTransfer.setData('text/plain', dragPath)
-    draggedGroupPathRef.current = dragPath
-    setDraggedGroupPath(dragPath)
+
+    groupDragCleanupRef.current?.()
+    const sourceRow = event.currentTarget
+    const pointerId = event.pointerId
+    const startX = event.clientX
+    const startY = event.clientY
+    let active = false
+    let latestTarget: {
+      group: GroupSummary
+      position: GroupDropPosition
+    } | null = null
+    const cleanup = (): void => {
+      document.removeEventListener('pointermove', onPointerMove)
+      document.removeEventListener('pointerup', onPointerUp)
+      document.removeEventListener('pointercancel', onPointerCancel)
+      window.removeEventListener('blur', onPointerCancel)
+      if (sourceRow.hasPointerCapture(pointerId)) {
+        sourceRow.releasePointerCapture(pointerId)
+      }
+      document.body.classList.remove('is-dragging-group')
+      if (groupDragCleanupRef.current === cleanup) {
+        groupDragCleanupRef.current = null
+      }
+    }
+
+    const clearDragState = (): void => {
+      draggedGroupPathRef.current = null
+      setDraggedGroupPath(null)
+      setGroupDropTarget(null)
+    }
+
+    const onPointerMove = (moveEvent: PointerEvent): void => {
+      if (moveEvent.pointerId !== pointerId) return
+      if (
+        !active &&
+        Math.hypot(moveEvent.clientX - startX, moveEvent.clientY - startY) < 6
+      ) {
+        return
+      }
+      if (!active) {
+        active = true
+        suppressGroupClickRef.current = true
+        draggedGroupPathRef.current = dragPath
+        setDraggedGroupPath(dragPath)
+        document.body.classList.add('is-dragging-group')
+        try {
+          sourceRow.setPointerCapture(pointerId)
+        } catch {
+          // Document listeners still handle the drag when capture is unavailable.
+        }
+      }
+      moveEvent.preventDefault()
+      const hit = groupAtPointer(moveEvent.clientX, moveEvent.clientY)
+      if (!hit) {
+        latestTarget = null
+        setGroupDropTarget(null)
+        return
+      }
+      const rect = hit.row.getBoundingClientRect()
+      const offset = (moveEvent.clientY - rect.top) / Math.max(1, rect.height)
+      const requested: GroupDropPosition =
+        offset < 0.3 ? 'before' : offset > 0.7 ? 'after' : 'inside'
+      const position = resolveGroupDropPosition(dragPath, hit.group, requested)
+      const targetPath = groupDragPath(hit.group)
+      if (!position || !targetPath) {
+        latestTarget = null
+        setGroupDropTarget(null)
+        return
+      }
+      latestTarget = { group: hit.group, position }
+      setGroupDropTarget({ path: targetPath, position })
+    }
+
+    const onPointerUp = (upEvent: PointerEvent): void => {
+      if (upEvent.pointerId !== pointerId) return
+      if (!active) {
+        cleanup()
+        clearDragState()
+        return
+      }
+      upEvent.preventDefault()
+      cleanup()
+      clearDragState()
+      const target = latestTarget
+      if (target) void moveGroupToTarget(dragPath, target.group, target.position)
+      window.setTimeout(() => {
+        suppressGroupClickRef.current = false
+      }, 0)
+    }
+
+    const onPointerCancel = (): void => {
+      cleanup()
+      clearDragState()
+      suppressGroupClickRef.current = false
+    }
+
+    groupDragCleanupRef.current = cleanup
+    document.addEventListener('pointermove', onPointerMove, { passive: false })
+    document.addEventListener('pointerup', onPointerUp)
+    document.addEventListener('pointercancel', onPointerCancel)
+    window.addEventListener('blur', onPointerCancel)
   }
 
   function resolveGroupDropPosition(
@@ -2445,70 +2680,15 @@ export function LibraryScreen({
     return position
   }
 
-  function hoverGroupDropTarget(
-    event: React.DragEvent<HTMLDivElement>,
-    group: GroupSummary
-  ): void {
-    if (draggedAccountIdsRef.current.length > 0) {
-      event.preventDefault()
-      event.dataTransfer.dropEffect = 'move'
-      const path = group.actualName ?? group.key
-      setGroupDropTarget((current) =>
-        current?.path === path && current.position === 'inside'
-          ? current
-          : { path, position: 'inside' }
-      )
-      return
-    }
-    const activePath = draggedGroupPathRef.current ?? draggedGroupPath
-    if (!activePath) return
-    const rect = event.currentTarget.getBoundingClientRect()
-    const offset = (event.clientY - rect.top) / Math.max(1, rect.height)
-    const requested: GroupDropPosition =
-      offset < 0.3 ? 'before' : offset > 0.7 ? 'after' : 'inside'
-    const resolved = resolveGroupDropPosition(activePath, group, requested)
-    if (!resolved) {
-      setGroupDropTarget(null)
-      return
-    }
-    event.preventDefault()
-    event.dataTransfer.dropEffect = 'move'
-    const path = group.actualName ?? group.key
-    setGroupDropTarget((current) =>
-      current?.path === path && current.position === resolved
-        ? current
-        : { path, position: resolved }
-    )
-  }
-
-  async function finishGroupDrop(
-    event: React.DragEvent<HTMLDivElement>,
-    target: GroupSummary
+  async function moveGroupToTarget(
+    draggedPath: string,
+    target: GroupSummary,
+    position: GroupDropPosition
   ): Promise<void> {
-    event.preventDefault()
-    const draggedAccounts = draggedAccountIdsRef.current
-    if (draggedAccounts.length > 0) {
-      draggedAccountIdsRef.current = []
-      setDraggedAccountIds([])
-      setGroupDropTarget(null)
-      await moveDraggedAccountsToGroup(
-        draggedAccounts,
-        target.actualName ?? undefined,
-        target.name
-      )
-      return
-    }
-    const draggedPath = draggedGroupPathRef.current ?? draggedGroupPath
-    const dropTarget = groupDropTarget
-    draggedGroupPathRef.current = null
-    setDraggedGroupPath(null)
-    setGroupDropTarget(null)
-    const targetPath =
-      target.actualName ?? (target.key === UNGROUPED_KEY ? UNGROUPED_KEY : null)
-    if (!draggedPath || !dropTarget || dropTarget.path !== targetPath) return
-
+    const targetPath = groupDragPath(target)
+    if (!targetPath) return
     const destinationParent =
-      dropTarget.position === 'inside'
+      position === 'inside'
         ? target.actualName ?? undefined
         : target.actualName
           ? groupParentPath(target.actualName) ?? undefined
@@ -2528,7 +2708,7 @@ export function LibraryScreen({
       const targetIndex = nextSiblings.indexOf(targetPath ?? '')
       if (targetIndex < 0) return
       nextSiblings.splice(
-        targetIndex + (dropTarget.position === 'after' ? 1 : 0),
+        targetIndex + (position === 'after' ? 1 : 0),
         0,
         draggedPath
       )
@@ -2581,134 +2761,6 @@ export function LibraryScreen({
       await refreshAll()
     } finally {
       setGroupActionBusy(false)
-    }
-  }
-
-  function beginAccountDrag(
-    event: React.DragEvent<HTMLElement>,
-    account: AccountWithSite
-  ): void {
-    const target = event.target instanceof Element ? event.target : null
-    if (target?.closest('button, input, label, a')) {
-      event.preventDefault()
-      return
-    }
-    const selected = selectedIds.has(account.id)
-      ? visibleSelectedIds
-      : [account.id]
-    const ids = selected.length > 0 ? selected : [account.id]
-    draggedAccountIdsRef.current = ids
-    setDraggedAccountIds(ids)
-    event.dataTransfer.effectAllowed = 'move'
-    event.dataTransfer.setData('text/plain', account.id)
-  }
-
-  function endAccountDrag(): void {
-    draggedAccountIdsRef.current = []
-    setDraggedAccountIds([])
-    setAccountDropTarget(null)
-    setGroupDropTarget(null)
-  }
-
-  function hoverAccountDropTarget(
-    event: React.DragEvent<HTMLElement>,
-    account: AccountWithSite
-  ): void {
-    if (
-      draggedAccountIdsRef.current.length === 0 ||
-      draggedAccountIdsRef.current.includes(account.id)
-    ) {
-      return
-    }
-    event.preventDefault()
-    event.dataTransfer.dropEffect = 'move'
-    const rect = event.currentTarget.getBoundingClientRect()
-    const position: 'before' | 'after' =
-      event.clientY < rect.top + rect.height / 2 ? 'before' : 'after'
-    setAccountDropTarget((current) =>
-      current?.accountId === account.id && current.position === position
-        ? current
-        : { accountId: account.id, position }
-    )
-  }
-
-  async function finishAccountDrop(
-    event: React.DragEvent<HTMLElement>,
-    targetAccount: AccountWithSite
-  ): Promise<void> {
-    event.preventDefault()
-    event.stopPropagation()
-    const dragged = draggedAccountIdsRef.current
-    const dropTarget = accountDropTarget
-    const targetRect = event.currentTarget.getBoundingClientRect()
-    const dropPosition =
-      dropTarget?.accountId === targetAccount.id
-        ? dropTarget.position
-        : event.clientY < targetRect.top + targetRect.height / 2
-          ? 'before'
-          : 'after'
-    endAccountDrag()
-    if (
-      dragged.length === 0 ||
-      dragged.includes(targetAccount.id)
-    ) {
-      return
-    }
-    const ordered = [...accounts]
-      .sort(compareAccounts)
-      .map((account) => account.id)
-    const moving = ordered.filter((id) => dragged.includes(id))
-    const remaining = ordered.filter((id) => !dragged.includes(id))
-    const targetIndex = remaining.indexOf(targetAccount.id)
-    if (targetIndex < 0) return
-    remaining.splice(
-      targetIndex + (dropPosition === 'after' ? 1 : 0),
-      0,
-      ...moving
-    )
-    try {
-      await window.autologin.accounts.reorder({
-        tabId: activeTabId,
-        accountIds: remaining
-      })
-      await refreshAll()
-    } catch (error) {
-      notify(
-        'error',
-        error instanceof Error
-          ? error.message
-          : tr('账号排序失败', 'Could not reorder accounts.', '帳號排序失敗')
-      )
-    }
-  }
-
-  async function moveDraggedAccountsToGroup(
-    accountIds: string[],
-    groupPath: string | undefined,
-    groupName: string
-  ): Promise<void> {
-    try {
-      await window.autologin.accounts.moveToGroup({
-        tabId: activeTabId,
-        accountIds,
-        ...(groupPath ? { groupPath } : {})
-      })
-      await refreshAll()
-      notify(
-        'success',
-        tr(
-          `已将 ${accountIds.length} 个账号移动到“${groupName}”`,
-          `Moved ${accountIds.length} account${accountIds.length === 1 ? '' : 's'} to “${groupName}”.`,
-          `已將 ${accountIds.length} 個帳號移動到「${groupName}」`
-        )
-      )
-    } catch (error) {
-      notify(
-        'error',
-        error instanceof Error
-          ? error.message
-          : tr('移动账号失败', 'Could not move accounts.', '移動帳號失敗')
-      )
     }
   }
 
@@ -2810,16 +2862,23 @@ export function LibraryScreen({
     const strategies = new Set(selectedAccounts.map((account) => account.loginStrategy))
     const sharedStrategy =
       strategies.size === 1 ? selectedAccounts[0]?.loginStrategy ?? 'auto' : 'auto'
-    const sharedSelector = (field: keyof ManualLoginSelectors): string => {
-      const values = selectedAccounts.map((account) => account.manualSelectors?.[field] ?? '')
-      return values.every((value) => value === values[0]) ? values[0] ?? '' : ''
-    }
-    setBatchStrategy(sharedStrategy)
-    setBatchSelectors({
-      username: sharedSelector('username'),
-      password: sharedSelector('password'),
-      submit: sharedSelector('submit')
+    const firstAccount = selectedAccounts[0]
+    const candidateSteps = firstAccount?.manualSteps?.length
+      ? structuredClone(firstAccount.manualSteps)
+      : manualSelectorsToSteps(firstAccount?.manualSelectors)
+    const candidateSignature = batchManualStepsSignature(candidateSteps)
+    const sharedSteps = selectedAccounts.every((account) => {
+      const steps = account.manualSteps?.length
+        ? account.manualSteps
+        : manualSelectorsToSteps(account.manualSelectors)
+      return batchManualStepsSignature(steps) === candidateSignature
     })
+      ? candidateSteps
+      : []
+    setBatchStrategy(sharedStrategy)
+    setBatchSteps(sharedSteps)
+    setBatchStepTests({})
+    setBatchStepTesting(null)
     setBatchIcon(null)
     setBatchStrategyError('')
     setBatchStrategyOpen(true)
@@ -2828,27 +2887,63 @@ export function LibraryScreen({
   function closeBatchStrategy(): void {
     if (batchStrategyBusy || batchIconBusy || batchIconFetchBusy) return
     setBatchStrategyOpen(false)
+    setBatchSteps([])
+    setBatchStepTests({})
+    setBatchStepTesting(null)
     setBatchIcon(null)
+  }
+
+  async function testBatchManualStep(step: RecipeStep): Promise<void> {
+    const account = selectedAccounts[0]
+    const selector = manualStepSelector(step).trim()
+    if (!account || !selector) {
+      notify(
+        'info',
+        selector
+          ? tr('请先选择账号', 'Select an account first.', '請先選擇帳號')
+          : tr('请先填写定位器', 'Enter a selector first.', '請先填寫定位器')
+      )
+      return
+    }
+    setBatchStepTesting(step.id)
+    try {
+      const result = await window.autologin.login.testSelector({
+        accountId: account.id,
+        field: selectorTestFieldForAction(step.type),
+        selector,
+        url: account.site.startUrl
+      })
+      setBatchStepTests((current) => ({ ...current, [step.id]: result }))
+      notify(result.found ? 'success' : 'error', result.message)
+    } catch (error) {
+      const message =
+        error instanceof Error
+          ? error.message
+          : tr('定位器测试失败', 'Element test failed.', '定位器測試失敗')
+      setBatchStepTests((current) => ({
+        ...current,
+        [step.id]: { found: false, visible: false, count: 0, message }
+      }))
+      notify('error', message)
+    } finally {
+      setBatchStepTesting(null)
+    }
   }
 
   async function applyBatchStrategy(): Promise<void> {
     if (batchIconFetchBusy) return
-    const selectors = {
-      username: batchSelectors.username?.trim() || undefined,
-      password: batchSelectors.password?.trim() || undefined,
-      submit: batchSelectors.submit?.trim() || undefined
-    }
-    const selectorsProvided = Object.values(selectors).some(Boolean)
+    const normalizedSteps = normalizeManualSteps(batchSteps)
+    const stepsProvided = normalizedSteps.length > 0
     if (
       batchStrategy === 'manual' &&
-      selectorsProvided &&
-      (!selectors.username || !selectors.password)
+      stepsProvided &&
+      !manualStepsAreComplete(normalizedSteps)
     ) {
       setBatchStrategyError(
         tr(
-          '填写统一定位器时，用户名和密码均不能为空',
-          'Enter both username and password selectors.',
-          '填寫統一定位器時，使用者名稱和密碼均不能為空'
+          '手动配置至少需要包含“输入用户名”和“输入密码”步骤，且每个步骤都要填写 Selector',
+          'Manual configuration needs username and password steps with selectors.',
+          '手動設定至少需要包含「輸入使用者名稱」和「輸入密碼」步驟，且每個步驟都要填寫 Selector'
         )
       )
       return
@@ -2860,12 +2955,15 @@ export function LibraryScreen({
       await window.autologin.accounts.setStrategyBatch({
         accountIds: [...selectedIds],
         loginStrategy: batchStrategy,
-        ...(batchStrategy === 'manual' && selectorsProvided
-          ? { manualSelectors: selectors }
+        ...(batchStrategy === 'manual' && stepsProvided
+          ? { manualSteps: normalizedSteps }
           : {})
       })
       await onRefresh()
       setBatchStrategyOpen(false)
+      setBatchSteps([])
+      setBatchStepTests({})
+      setBatchStepTesting(null)
       setSelectedIds(new Set())
       notify(
         'success',
@@ -3778,8 +3876,9 @@ export function LibraryScreen({
           title={tr('批量操作', 'Batch actions', '批次操作')}
           eyebrow="BATCH ACTIONS"
           onClose={closeBatchStrategy}
-          width="560px"
-          className="batch-strategy-modal"
+          width="720px"
+          className="batch-strategy-modal batch-strategy-drawer"
+          placement="right"
         >
           <form
             className="batch-strategy-form"
@@ -3909,9 +4008,9 @@ export function LibraryScreen({
                   <strong>{tr('手动配置', 'Manual configuration', '手動設定')}</strong>
                   <small>
                     {tr(
-                      '使用用户名、密码和提交按钮定位器',
-                      'Use username, password and submit selectors',
-                      '使用使用者名稱、密碼和提交按鈕定位器'
+                      '按顺序配置输入、点击和验证码步骤',
+                      'Order input, click and challenge steps explicitly',
+                      '按順序設定輸入、點擊和驗證碼步驟'
                     )}
                   </small>
                 </span>
@@ -3919,47 +4018,52 @@ export function LibraryScreen({
             </div>
 
             {batchStrategy === 'manual' && (
-              <div className="batch-selector-fields">
-                <p className="settings-hint">
-                  {tr(
-                    '可填写统一适用的定位器；留空时会检查每个账号是否已有完整配置。',
-                    'Optionally apply shared selectors. Leave blank to keep each account’s existing selectors.',
-                    '可填寫統一適用的定位器；留空時會檢查每個帳號是否已有完整設定。'
+              <section
+                className="drawer-recipes manual-selector-panel batch-manual-selector"
+                aria-label={tr('批量手动配置', 'Batch manual configuration', '批次手動設定')}
+              >
+                <header className="drawer-recipes__header">
+                  <div>
+                    <strong>{tr('元素定位器', 'Element selectors', '元素定位器')}</strong>
+                    <small>
+                      {tr(
+                        '这些步骤会应用到所有所选账号；留空则保留各账号现有配置',
+                        'These steps apply to every selected account. Leave empty to keep existing setup.',
+                        '這些步驟會套用到所有所選帳號；留空則保留各帳號現有設定'
+                      )}
+                    </small>
+                  </div>
+                </header>
+                <ManualStepEditor
+                  steps={batchSteps}
+                  onChange={(nextSteps, invalidatedStepId) => {
+                    setBatchSteps(nextSteps)
+                    if (!invalidatedStepId) return
+                    setBatchStepTests((current) => {
+                      if (!current[invalidatedStepId]) return current
+                      const next = { ...current }
+                      delete next[invalidatedStepId]
+                      return next
+                    })
+                  }}
+                  selectorTests={batchStepTests}
+                  selectorTesting={batchStepTesting}
+                  onTest={(step) => void testBatchManualStep(step)}
+                  disabled={
+                    batchStrategyBusy || batchIconBusy || batchIconFetchBusy
+                  }
+                  emptyText={tr(
+                    '留空会保留各账号现有手动配置；需要统一配置时，点击下方“添加步骤”。',
+                    'Leave empty to keep each account’s manual setup, or add steps to apply one shared flow.',
+                    '留空會保留各帳號現有手動設定；需要統一設定時，點擊下方「新增步驟」。'
                   )}
-                </p>
-                {(
-                  [
-                    ['username', tr('用户名定位器', 'Username selector', '使用者名稱定位器')],
-                    ['password', tr('密码定位器', 'Password selector', '密碼定位器')],
-                    ['submit', tr('提交按钮定位器', 'Submit selector', '提交按鈕定位器')]
-                  ] as const
-                ).map(([field, label]) => (
-                  <label className="field" key={field}>
-                    <span className="field__label">{label}</span>
-                    <span className="input-shell">
-                      <SlidersHorizontal size={15} />
-                      <input
-                        value={batchSelectors[field] ?? ''}
-                        onChange={(event) =>
-                          setBatchSelectors((current) => ({
-                            ...current,
-                            [field]: event.target.value
-                          }))
-                        }
-                        placeholder={
-                          field === 'username'
-                            ? 'input[name="username"], #username'
-                            : field === 'password'
-                              ? 'input[type="password"], #password'
-                              : 'button[type="submit"], #login'
-                        }
-                        spellCheck={false}
-                        autoComplete="off"
-                      />
-                    </span>
-                  </label>
-                ))}
-              </div>
+                  footerText={tr(
+                    '按从上到下的顺序执行，可拖拽调整',
+                    'Steps run top to bottom and can be reordered',
+                    '步驟由上到下執行，可拖曳調整'
+                  )}
+                />
+              </section>
             )}
 
             {batchStrategyError && <p className="form-error">{batchStrategyError}</p>}
@@ -4304,6 +4408,21 @@ export function LibraryScreen({
                   className="account-subnav"
                   aria-label={tr('账号分组', 'Account groups', '帳號分組')}
                 >
+                  <div className="account-subnav__search-bar" role="search">
+                    <Search size={13} aria-hidden="true" />
+                    <input
+                      id="account-group-search"
+                      value={groupSearch}
+                      onChange={(event) => setGroupSearch(event.target.value)}
+                      onKeyDown={(event) => {
+                        if (event.key !== 'Escape') return
+                        setGroupSearch('')
+                        event.currentTarget.blur()
+                      }}
+                      placeholder={tr('筛选分组', 'Filter groups', '篩選分組')}
+                      aria-label={tr('筛选分组', 'Filter groups', '篩選分組')}
+                    />
+                  </div>
                   <div className="account-subnav__all-row">
                     <button
                       type="button"
@@ -4345,26 +4464,6 @@ export function LibraryScreen({
                     </button>
                     <button
                       type="button"
-                      className="account-subnav__search-toggle"
-                      onClick={() => {
-                        if (groupSearchExpanded) {
-                          setGroupSearch('')
-                          setGroupSearchExpanded(false)
-                        } else {
-                          setGroupSearchExpanded(true)
-                          window.requestAnimationFrame(() =>
-                            groupSearchRef.current?.focus()
-                          )
-                        }
-                      }}
-                      aria-label={tr('搜索分组', 'Search groups', '搜尋分組')}
-                      aria-expanded={groupSearchExpanded}
-                      title={tr('搜索分组', 'Search groups', '搜尋分組')}
-                    >
-                      <Search size={14} />
-                    </button>
-                    <button
-                      type="button"
                       className="account-subnav__add-group"
                       onClick={(event) => openGroupCreate(event, null)}
                       aria-label={tr('新增一级分组', 'Add top-level group', '新增第一層分組')}
@@ -4373,22 +4472,6 @@ export function LibraryScreen({
                       <Plus size={14} />
                     </button>
                   </div>
-                  {groupSearchExpanded && (
-                    <div className="account-subnav__header">
-                      <input
-                        ref={groupSearchRef}
-                        value={groupSearch}
-                        onChange={(event) => setGroupSearch(event.target.value)}
-                        onKeyDown={(event) => {
-                          if (event.key !== 'Escape') return
-                          setGroupSearch('')
-                          setGroupSearchExpanded(false)
-                        }}
-                        placeholder={tr('筛选分组', 'Filter groups', '篩選分組')}
-                        aria-label={tr('筛选分组', 'Filter groups', '篩選分組')}
-                      />
-                    </div>
-                  )}
                   <div
                     className={`account-subnav__groups-accordion${
                       accountGroupTreeExpanded ? ' is-expanded' : ''
@@ -4409,37 +4492,19 @@ export function LibraryScreen({
                               }${draggedGroupPath === group.key ? ' is-dragging' : ''}`}
                               key={group.key}
                               data-group-path={group.key}
-                              onDragOver={(event) => hoverGroupDropTarget(event, group)}
-                              onDragLeave={(event) => {
-                                if (
-                                  event.relatedTarget instanceof Node &&
-                                  event.currentTarget.contains(event.relatedTarget)
-                                ) {
-                                  return
-                                }
-                                setGroupDropTarget(null)
-                              }}
-                              onDrop={(event) => void finishGroupDrop(event, group)}
+                              onPointerDown={(event) =>
+                                beginGroupPointerDrag(event, group)
+                              }
                             >
-                              <span
-                                className="account-subnav__drag-handle"
-                                draggable
-                                onDragStart={(event) => beginGroupDrag(event, group)}
-                                onDragEnd={() => {
-                                  draggedGroupPathRef.current = null
-                                  setDraggedGroupPath(null)
-                                  setGroupDropTarget(null)
-                                }}
-                                aria-hidden="true"
-                              >
-                                <GripVertical size={13} />
-                              </span>
                               <button
                                 type="button"
                                 className={`account-subnav__item account-subnav__item--group account-subnav__item--text-only${
                                   groupFilter === UNGROUPED_KEY ? ' is-active' : ''
                                 }`}
-                                onClick={() => chooseGroup(group)}
+                                onClick={() => {
+                                  if (suppressGroupClickRef.current) return
+                                  chooseGroup(group)
+                                }}
                                 aria-label={tr(
                                   '未分组，无子分组',
                                   'Ungrouped, no subgroups',
@@ -4467,42 +4532,24 @@ export function LibraryScreen({
                               }${draggedGroupPath === group.actualName ? ' is-dragging' : ''}`}
                               key={group.key}
                               data-group-path={group.actualName ?? group.key}
-                              onDragOver={(event) => hoverGroupDropTarget(event, group)}
-                              onDragLeave={(event) => {
-                                if (
-                                  event.relatedTarget instanceof Node &&
-                                  event.currentTarget.contains(event.relatedTarget)
-                                ) {
-                                  return
-                                }
-                                setGroupDropTarget(null)
-                              }}
-                              onDrop={(event) => void finishGroupDrop(event, group)}
+                              onPointerDown={(event) =>
+                                beginGroupPointerDrag(event, group)
+                              }
                               style={
                                 {
                                   '--group-depth': Math.max(0, group.level - 1)
                                 } as React.CSSProperties
                               }
                             >
-                              <span
-                                className="account-subnav__drag-handle"
-                                draggable
-                                onDragStart={(event) => beginGroupDrag(event, group)}
-                                onDragEnd={() => {
-                                  draggedGroupPathRef.current = null
-                                  setDraggedGroupPath(null)
-                                  setGroupDropTarget(null)
-                                }}
-                                aria-hidden="true"
-                              >
-                                <GripVertical size={13} />
-                              </span>
                               <button
                                 type="button"
                                 className={`account-subnav__item account-subnav__item--group account-subnav__item--text-only${
                                   groupFilter === group.key ? ' is-active' : ''
                                 }`}
-                                onClick={() => chooseGroupFromTree(group, hasChildren)}
+                                onClick={() => {
+                                  if (suppressGroupClickRef.current) return
+                                  chooseGroupFromTree(group, hasChildren)
+                                }}
                                 onContextMenu={(event) => openGroupMenu(event, group)}
                                 onKeyDown={(event) => openGroupMenuFromKeyboard(event, group)}
                                 aria-haspopup="menu"
@@ -4865,22 +4912,6 @@ export function LibraryScreen({
                       {tr('最后更新', 'Last updated', '最後更新')}
                       {accountColumnResizer('updated', tr('最后更新', 'updated', '最後更新'))}
                     </span>
-                    {view !== 'bookmarks' && (
-                      <span
-                        className={`account-col--status${
-                          effectiveVisibleAccountColumns.has('status')
-                            ? ''
-                            : ' is-column-hidden'
-                        }`}
-                        data-column-key="status"
-                        style={{
-                          order: accountColumnOrderStyle(accountColumnOrder, 'status')
-                        }}
-                      >
-                        {tr('状态', 'Status', '狀態')}
-                        {accountColumnResizer('status', tr('状态', 'status', '狀態'))}
-                      </span>
-                    )}
                     <span
                       className={`account-col--url${
                         effectiveVisibleAccountColumns.has('url') ? '' : ' is-column-hidden'
@@ -4940,9 +4971,9 @@ export function LibraryScreen({
                             <button
                               type="button"
                               role="menuitemradio"
-                              aria-checked={accountColumnSizing !== 'content'}
+                              aria-checked={accountColumnSizing === 'window'}
                               className={
-                                accountColumnSizing !== 'content'
+                                accountColumnSizing === 'window'
                                   ? 'is-checked'
                                   : undefined
                               }
@@ -4953,6 +4984,21 @@ export function LibraryScreen({
                               </span>
                               <span>{tr('适应窗口', 'Fit window', '適應視窗')}</span>
                             </button>
+                            {accountColumnSizing === 'manual' && (
+                              <button
+                                type="button"
+                                role="menuitemradio"
+                                aria-checked="true"
+                                className="is-checked"
+                              >
+                                <span className="account-column-menu__icon">
+                                  <SlidersHorizontal size={14} />
+                                </span>
+                                <span>
+                                  {tr('自定义列宽', 'Custom widths', '自訂欄寬')}
+                                </span>
+                              </button>
+                            )}
                             <div
                               className="account-column-menu__divider"
                               aria-hidden="true"
@@ -4971,31 +5017,26 @@ export function LibraryScreen({
                                   type="button"
                                   role="menuitemcheckbox"
                                   aria-checked={checked}
-                                  className={`${checked ? 'is-checked' : ''}${
-                                    draggedColumnKey === key ? ' is-dragging' : ''
-                                  }`}
+                                  className={[
+                                    checked ? 'is-checked' : '',
+                                    draggedColumnKey === key ? 'is-dragging' : '',
+                                    columnDropTarget?.key === key
+                                      ? `is-drop-${columnDropTarget.position}`
+                                      : ''
+                                  ]
+                                    .filter(Boolean)
+                                    .join(' ')}
                                   key={key}
-                                  onClick={() => toggleAccountColumn(key)}
-                                  draggable
-                                  onDragStart={(event) => {
-                                    event.dataTransfer.effectAllowed = 'move'
-                                    event.dataTransfer.setData('text/plain', key)
-                                    setDraggedColumnKey(key)
+                                  data-column-menu-key={key}
+                                  onClick={() => {
+                                    if (suppressColumnClickRef.current) return
+                                    toggleAccountColumn(key)
                                   }}
-                                  onDragEnd={() => setDraggedColumnKey(null)}
-                                  onDragOver={(event) => {
-                                    event.preventDefault()
-                                    event.dataTransfer.dropEffect = 'move'
-                                  }}
-                                  onDrop={(event) => {
-                                    event.preventDefault()
-                                    if (draggedColumnKey) {
-                                      moveAccountColumn(draggedColumnKey, key)
-                                    }
-                                    setDraggedColumnKey(null)
-                                  }}
+                                  onPointerDown={(event) =>
+                                    beginAccountColumnPointerDrag(event, key)
+                                  }
                                   title={tr(
-                                    '拖拽调整列顺序',
+                                    '拖动调整列顺序',
                                     'Drag to reorder columns',
                                     '拖曳調整欄位順序'
                                   )}
@@ -5037,16 +5078,6 @@ export function LibraryScreen({
                       onEdit={() => setDrawer({ mode: 'edit', accountId: account.id })}
                       onContextMenu={(event) => openAccountMenu(event, account)}
                       onLogin={() => void openAccount(account)}
-                      dragged={draggedAccountIds.includes(account.id)}
-                      dropPosition={
-                        accountDropTarget?.accountId === account.id
-                          ? accountDropTarget.position
-                          : null
-                      }
-                      onDragStart={(event) => beginAccountDrag(event, account)}
-                      onDragEnd={endAccountDrag}
-                      onDragOver={(event) => hoverAccountDropTarget(event, account)}
-                      onDrop={(event) => void finishAccountDrop(event, account)}
                     />
                   ))}
 
@@ -5550,13 +5581,7 @@ function AccountListRow({
   onShiftSelect,
   onEdit,
   onContextMenu,
-  onLogin,
-  dragged,
-  dropPosition,
-  onDragStart,
-  onDragEnd,
-  onDragOver,
-  onDrop
+  onLogin
 }: {
   account: AccountWithSite
   bookmark: boolean
@@ -5571,43 +5596,15 @@ function AccountListRow({
   onEdit: () => void
   onContextMenu: (event: React.MouseEvent<HTMLElement>) => void
   onLogin: () => void
-  dragged: boolean
-  dropPosition: 'before' | 'after' | null
-  onDragStart: (event: React.DragEvent<HTMLElement>) => void
-  onDragEnd: () => void
-  onDragOver: (event: React.DragEvent<HTMLElement>) => void
-  onDrop: (event: React.DragEvent<HTMLElement>) => void
 }): React.JSX.Element {
-  const recorded = (account.recipes?.length ?? 0) > 0 || Boolean(account.site.recipe)
-  const statusLabel = bookmark
-    ? tr('书签', 'Bookmark', '書籤')
-    : account.loginStrategy === 'manual'
-      ? tr('手动配置', 'Manual setup', '手動設定')
-      : recorded
-        ? tr('已录制', 'Recorded', '已錄製')
-        : tr('自动识别', 'Auto detect', '自動識別')
-  const statusKind = bookmark
-    ? 'bookmark'
-    : account.loginStrategy === 'manual'
-      ? 'manual'
-      : recorded
-        ? 'recorded'
-        : 'auto'
   const actionLabel = bookmark
     ? tr('访问', 'Visit', '造訪')
     : tr('登录', 'Sign in', '登入')
 
   return (
     <article
-      className={`account-row${checked ? ' is-selected' : ''}${
-        dragged ? ' is-dragging' : ''
-      }${dropPosition ? ` is-drop-${dropPosition}` : ''}`}
+      className={`account-row${checked ? ' is-selected' : ''}`}
       style={{ '--row-index': index } as React.CSSProperties}
-      draggable
-      onDragStart={onDragStart}
-      onDragEnd={onDragEnd}
-      onDragOver={onDragOver}
-      onDrop={onDrop}
       title={tr(
         '双击编辑，右键查看更多操作',
         'Double-click to edit, right-click for more actions',
@@ -5645,9 +5642,6 @@ function AccountListRow({
         data-column-key="site"
         style={{ order: accountColumnOrderStyle(columnOrder, 'site') }}
       >
-        <span className="account-row-drag-handle" aria-hidden="true">
-          <GripVertical size={12} />
-        </span>
         <SiteMark site={account.site} />
         <div>
           <div className="account-name-line">
@@ -5685,23 +5679,6 @@ function AccountListRow({
       >
         {formatLastUsed(account.updatedAt)}
       </time>
-      {!bookmark && (
-        <div
-          className={`account-status-cell${
-            visibleColumns.has('status') ? '' : ' is-column-hidden'
-          }`}
-          data-column-key="status"
-          style={{ order: accountColumnOrderStyle(columnOrder, 'status') }}
-        >
-          <span
-            className={`recipe-badge is-${statusKind}`}
-            title={statusLabel}
-          >
-            <span />
-            {statusLabel}
-          </span>
-        </div>
-      )}
       <div
         className={`account-site-url${
           visibleColumns.has('url') ? '' : ' is-column-hidden'

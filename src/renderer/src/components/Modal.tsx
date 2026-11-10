@@ -9,7 +9,8 @@ export function Modal({
   children,
   onClose,
   width = '560px',
-  className = ''
+  className = '',
+  placement = 'center'
 }: {
   title: string
   eyebrow?: string
@@ -17,6 +18,7 @@ export function Modal({
   onClose: () => void
   width?: string
   className?: string
+  placement?: 'center' | 'right'
 }): React.JSX.Element {
   const { tr } = useI18n()
   const panelRef = useRef<HTMLDivElement>(null)
@@ -72,7 +74,10 @@ export function Modal({
   }, [])
 
   return createPortal(
-    <div className="modal-layer" role="presentation">
+    <div
+      className={`modal-layer${placement === 'right' ? ' modal-layer--drawer' : ''}`}
+      role="presentation"
+    >
       <button
         className="modal-backdrop"
         aria-label={tr('关闭', 'Close', '關閉')}

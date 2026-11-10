@@ -605,9 +605,12 @@ p {
 
 .switch-row input {
   position: absolute;
-  width: 1px;
-  height: 1px;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  margin: 0;
   opacity: 0;
+  cursor: inherit;
 }
 
 .switch {
@@ -4204,8 +4207,11 @@ p {
 
 .selection-checkbox input {
   position: absolute;
-  width: 1px;
-  height: 1px;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  cursor: inherit;
   opacity: 0;
 }
 
@@ -5845,8 +5851,11 @@ p {
 
 .log-checkbox input {
   position: absolute;
-  width: 1px;
-  height: 1px;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  cursor: inherit;
   opacity: 0;
 }
 
@@ -15130,24 +15139,6 @@ html[data-color-mode='dark'] .account-workspace .account-tab.is-active {
   gap: 4px;
 }
 
-.account-subnav__search-toggle {
-  display: inline-grid;
-  width: 26px;
-  height: 26px;
-  flex: 0 0 26px;
-  place-items: center;
-  border: 0;
-  border-radius: 6px;
-  background: transparent;
-  color: var(--muted-light);
-}
-
-.account-subnav__search-toggle:hover,
-.account-subnav__search-toggle[aria-expanded='true'] {
-  background: color-mix(in srgb, var(--ink) 5%, transparent);
-  color: var(--ink);
-}
-
 .account-subnav__header input {
   width: 100%;
   min-width: 0;
@@ -15248,7 +15239,7 @@ html[data-color-mode='dark'] .account-subnav__item.is-active small {
 }
 
 .account-workspace .account-subnav__all-row {
-  grid-template-columns: minmax(0, 1fr) 22px 22px;
+  grid-template-columns: minmax(0, 1fr) 22px;
   gap: 2px;
 }
 
@@ -15257,7 +15248,6 @@ html[data-color-mode='dark'] .account-subnav__item.is-active small {
   padding-inline: 6px;
 }
 
-.account-workspace .account-subnav__search-toggle,
 .account-workspace .account-subnav__add-group {
   width: 22px;
   height: 26px;
@@ -15330,4 +15320,217 @@ html[data-color-mode='dark'] .account-subnav__item.is-active small {
 body.is-resizing-table-column {
   cursor: col-resize;
   user-select: none;
+}
+
+/* v0.10.5 batch drawer, centered status cells and whole-row group dragging. */
+.modal-layer--drawer {
+  align-items: stretch;
+  justify-content: flex-end;
+  padding: 12px;
+}
+
+.modal-panel.batch-strategy-drawer {
+  display: flex;
+  width: min(720px, calc(100vw - 24px));
+  height: 100%;
+  max-height: none;
+  flex-direction: column;
+  overflow: hidden;
+  border-radius: 14px;
+  animation: drawer-in 240ms cubic-bezier(0.2, 0.8, 0.2, 1) both;
+}
+
+.batch-strategy-drawer .modal-header {
+  flex: 0 0 auto;
+  border-bottom: 1px solid var(--content-divider);
+}
+
+.batch-strategy-drawer .batch-strategy-form {
+  min-height: 0;
+  flex: 1;
+  overflow-y: auto;
+  padding-bottom: 20px;
+}
+
+.batch-strategy-drawer .batch-manual-selector {
+  flex: 0 0 auto;
+}
+
+.batch-strategy-drawer .manual-step-row {
+  grid-template-columns: 22px minmax(118px, 0.72fr) minmax(190px, 1.55fr) auto 32px;
+}
+
+.account-row,
+.account-row:active {
+  cursor: default;
+}
+
+.account-row > .account-status-cell {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+}
+
+.account-row > .account-status-cell .recipe-badge {
+  align-items: center;
+  justify-content: center;
+}
+
+.settings-page--controlled .settings-control-row {
+  align-items: center;
+}
+
+.account-subnav__group-row,
+.account-subnav__group-row--ungrouped,
+.account-workspace .account-subnav__group-row,
+.account-workspace .account-subnav__group-row--ungrouped {
+  grid-template-columns: minmax(0, 1fr) 26px;
+  cursor: default;
+}
+
+.account-subnav__item--group,
+.account-subnav__item--group * {
+  cursor: default;
+}
+
+.account-workspace .account-subnav__item--group {
+  padding-left: calc(28px + var(--group-depth, 0) * 12px);
+}
+
+@media (max-width: 760px) {
+  .modal-layer--drawer {
+    padding: 0;
+  }
+
+  .modal-panel.batch-strategy-drawer {
+    width: 100%;
+    border-radius: 0;
+  }
+
+  .batch-strategy-drawer .manual-step-row {
+    grid-template-columns: 22px minmax(0, 1fr) 32px;
+  }
+
+  .batch-strategy-drawer .manual-step-row__action,
+  .batch-strategy-drawer .manual-step-row__selector-cell {
+    grid-column: 2 / -1;
+  }
+
+  .batch-strategy-drawer .manual-step-row > .button {
+    grid-column: 2;
+    justify-self: start;
+  }
+}
+
+/* v0.10.6 persistent group search, responsive columns and pointer-based drag. */
+.account-workspace
+  > .library-view-layout--accounts
+  > .library-view-main {
+  padding-top: 16px;
+}
+
+.account-workspace .account-subnav-shell .account-subnav {
+  padding-top: 16px;
+}
+
+.account-subnav__search-bar {
+  display: grid;
+  height: 30px;
+  grid-template-columns: 14px minmax(0, 1fr);
+  align-items: center;
+  gap: 6px;
+  margin: 0 0 6px;
+  padding: 0 8px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background: color-mix(in srgb, var(--card) 82%, transparent);
+  color: var(--muted-light);
+}
+
+.account-subnav__search-bar:focus-within {
+  border-color: color-mix(in srgb, var(--accent) 52%, var(--line));
+  background: var(--card);
+}
+
+.account-subnav__search-bar svg {
+  pointer-events: none;
+}
+
+.account-subnav__search-bar input {
+  width: 100%;
+  min-width: 0;
+  height: 100%;
+  padding: 0;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  color: var(--ink);
+  font: inherit;
+  font-size: calc(9.5px * var(--font-scale, 1));
+}
+
+.account-subnav__all-row {
+  align-items: center;
+}
+
+.account-list__header,
+.account-row {
+  grid-template-columns: var(--account-columns-wide);
+}
+
+@media (max-width: 1040px) {
+  .account-list__header,
+  .account-row {
+    grid-template-columns: var(--account-columns-medium);
+  }
+}
+
+@container account-main (max-width: 700px) {
+  .account-list__header,
+  .account-row {
+    grid-template-columns: var(--account-columns-compact);
+  }
+}
+
+@container account-main (max-width: 560px) {
+  .account-list__header,
+  .account-row {
+    grid-template-columns: var(--account-columns-narrow);
+  }
+}
+
+.account-subnav__group-row.is-dragging {
+  background: color-mix(in srgb, var(--accent) 8%, transparent);
+  opacity: 0.62;
+}
+
+body.is-dragging-group,
+body.is-dragging-account-column {
+  cursor: default;
+  user-select: none;
+}
+
+.account-column-menu button {
+  position: relative;
+}
+
+.account-column-menu button.is-drop-before::before,
+.account-column-menu button.is-drop-after::after {
+  position: absolute;
+  right: 6px;
+  left: 6px;
+  height: 2px;
+  border-radius: 999px;
+  background: var(--accent);
+  content: '';
+  pointer-events: none;
+}
+
+.account-column-menu button.is-drop-before::before {
+  top: -2px;
+}
+
+.account-column-menu button.is-drop-after::after {
+  bottom: -2px;
 }

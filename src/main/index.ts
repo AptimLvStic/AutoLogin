@@ -239,10 +239,10 @@ const pendingNewDatabaseTabIds = new Set<string>()
 
 const REPOSITORY_URL =
   process.env.AUTOLOGIN_REPOSITORY_URL?.trim() ||
-  ['https:', '//github.com', '/AptimLvStic/Tauri'].join('')
+  ['https:', '//github.com', '/AptimLvStic/AutoLogin'].join('')
 const RELEASES_URL = `${REPOSITORY_URL}/releases`
 const UPDATE_OWNER = process.env.AUTOLOGIN_UPDATE_OWNER?.trim() || 'AptimLvStic'
-const UPDATE_REPO = process.env.AUTOLOGIN_UPDATE_REPO?.trim() || 'Tauri'
+const UPDATE_REPO = process.env.AUTOLOGIN_UPDATE_REPO?.trim() || 'AutoLogin'
 const GITHUB_UPDATE_FEED = {
   provider: 'github' as const,
   owner: UPDATE_OWNER,
@@ -2893,15 +2893,26 @@ function setAccountStrategyBatch(
     return account
   })
   const sharedSelectors = normalizeManualSelectors(input.manualSelectors)
+  const sharedSteps = input.manualSteps?.length
+    ? structuredClone(input.manualSteps)
+    : undefined
 
   if (
     input.loginStrategy === 'manual' &&
+    !sharedSteps &&
     input.manualSelectors &&
     (!sharedSelectors?.username || !sharedSelectors.password)
   ) {
     throw new Error('批量手动配置需要同时填写用户名和密码定位器')
   }
-  if (input.loginStrategy === 'manual' && !sharedSelectors) {
+  if (
+    input.loginStrategy === 'manual' &&
+    sharedSteps &&
+    !hasManualLoginSteps(sharedSteps)
+  ) {
+    throw new Error('批量手动配置至少需要包含输入用户名和输入密码步骤')
+  }
+  if (input.loginStrategy === 'manual' && !sharedSelectors && !sharedSteps) {
     const incomplete = accounts.some(
       (account) =>
         !hasManualLoginSteps(account.manualSteps) &&
@@ -2915,7 +2926,10 @@ function setAccountStrategyBatch(
   const now = new Date().toISOString()
   for (const account of accounts) {
     account.loginStrategy = input.loginStrategy
-    if (input.loginStrategy === 'manual' && sharedSelectors) {
+    if (input.loginStrategy === 'manual' && sharedSteps) {
+      account.manualSelectors = undefined
+      account.manualSteps = structuredClone(sharedSteps)
+    } else if (input.loginStrategy === 'manual' && sharedSelectors) {
       account.manualSelectors = structuredClone(sharedSelectors)
       account.manualSteps = undefined
     }

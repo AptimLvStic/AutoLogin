@@ -5,7 +5,17 @@ import type {
   ThemeColors,
   ThemePreset
 } from './types'
-import { DEFAULT_TRASH_RETENTION_DAYS } from './types'
+import {
+  DEFAULT_TRASH_RETENTION_DAYS,
+  INTERFACE_SCALE_MAX,
+  INTERFACE_SCALE_MIN
+} from './types'
+
+export const INTERFACE_SCALE_DISPLAY_OFFSET = 10
+export const INTERFACE_SCALE_DISPLAY_MIN =
+  INTERFACE_SCALE_MIN - INTERFACE_SCALE_DISPLAY_OFFSET
+export const INTERFACE_SCALE_DISPLAY_MAX =
+  INTERFACE_SCALE_MAX - INTERFACE_SCALE_DISPLAY_OFFSET
 
 export const DEFAULT_THEME_COLORS: ThemeColors = {
   background: '#F7F8FA',
@@ -31,13 +41,29 @@ export const DEFAULT_APP_SETTINGS: AppSettings = {
   language: 'zh-CN',
   themePreset: 'magpie',
   customTheme: DEFAULT_THEME_COLORS,
-  interfaceScale: 100,
+  interfaceScale: 110,
   fontSizeScale: 100,
   accountCopyShortcutEnabled: false,
   accountCopyShortcut: 'Ctrl+C',
   proxy: DEFAULT_PROXY_SETTINGS,
   groupOrder: [],
   groupOrders: {}
+}
+
+export function interfaceScaleActualToDisplay(actualScale: number): number {
+  return (
+    Math.min(INTERFACE_SCALE_MAX, Math.max(INTERFACE_SCALE_MIN, actualScale)) -
+    INTERFACE_SCALE_DISPLAY_OFFSET
+  )
+}
+
+export function interfaceScaleDisplayToActual(displayScale: number): number {
+  return (
+    Math.min(
+      INTERFACE_SCALE_DISPLAY_MAX,
+      Math.max(INTERFACE_SCALE_DISPLAY_MIN, displayScale)
+    ) + INTERFACE_SCALE_DISPLAY_OFFSET
+  )
 }
 
 interface ThemePresetDefinition {

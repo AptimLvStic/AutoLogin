@@ -1,6 +1,6 @@
 {
   "name": "autologin",
-  "version": "0.10.4",
+  "version": "1.0.0",
   "description": "A calm, local-first login workspace for Windows.",
   "main": "./out/main/index.js",
   "author": "AutoLogin",
@@ -107,7 +107,7 @@
       {
         "provider": "github",
         "owner": "AptimLvStic",
-        "repo": "Tauri",
+        "repo": "AutoLogin",
         "releaseType": "release"
       }
     ],

@@ -1,6 +1,6 @@
 [package]
 name = "autologin-tauri"
-version = "0.10.4"
+version = "1.0.0"
 description = "AutoLogin desktop application"
 authors = ["AutoLogin"]
 license = "UNLICENSED"

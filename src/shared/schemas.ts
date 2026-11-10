@@ -289,7 +289,7 @@ export const appSettingsSchema = z.object({
   language: languageSchema.default('zh-CN'),
   themePreset: themePresetSchema.default('magpie'),
   customTheme: themeColorsSchema.default(defaultThemeColors),
-  interfaceScale: interfaceScaleSchema.default(100),
+  interfaceScale: interfaceScaleSchema.default(110),
   fontSizeScale: fontSizeScaleSchema.default(100).catch(100),
   accountCopyShortcutEnabled: z.boolean().default(false),
   accountCopyShortcut: z.string().trim().min(1).max(40).default('Ctrl+C'),
@@ -428,7 +428,8 @@ export const accountBatchStrategyInputSchema = z
       .max(500)
       .refine((ids) => new Set(ids).size === ids.length, '账号标识不能重复'),
     loginStrategy: z.enum(LOGIN_STRATEGIES),
-    manualSelectors: manualLoginSelectorsSchema.optional()
+    manualSelectors: manualLoginSelectorsSchema.optional(),
+    manualSteps: z.array(recipeStepSchema).max(30).optional()
   })
   .strict()
 

@@ -75,7 +75,7 @@ impl BackendClient {
             .env(
                 "AUTOLOGIN_REPOSITORY_URL",
                 std::env::var("AUTOLOGIN_REPOSITORY_URL")
-                    .unwrap_or_else(|_| "https://github.com/AptimLvStic/Tauri".into()),
+                    .unwrap_or_else(|_| "https://github.com/AptimLvStic/AutoLogin".into()),
             )
             .env(
                 "AUTOLOGIN_UPDATE_OWNER",
@@ -83,7 +83,7 @@ impl BackendClient {
             )
             .env(
                 "AUTOLOGIN_UPDATE_REPO",
-                std::env::var("AUTOLOGIN_UPDATE_REPO").unwrap_or_else(|_| "Tauri".into()),
+                std::env::var("AUTOLOGIN_UPDATE_REPO").unwrap_or_else(|_| "AutoLogin".into()),
             );
 
         #[cfg(windows)]

@@ -119,7 +119,7 @@ describe('VaultManager', () => {
         colorMode: 'light',
         language: 'zh-CN',
         themePreset: 'magpie',
-        interfaceScale: 100
+        interfaceScale: 110
       })
     )
   })

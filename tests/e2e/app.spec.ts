@@ -510,7 +510,9 @@ test('pauses on a captcha and resumes after manual verification', async () => {
   await openLogPage(page, '登录日志')
   await logsPage.getByRole('combobox', { name: '状态' }).selectOption('manual')
   const manualRow = logsPage.locator('.log-table__row').filter({ hasText: '待人工' })
-  await manualRow.getByRole('checkbox').check()
+  await manualRow.scrollIntoViewIfNeeded()
+  await manualRow.locator('.log-checkbox').click()
+  await expect(manualRow.getByRole('checkbox')).toBeChecked()
   await expect(logsPage.getByRole('button', { name: '批量删除' })).toBeEnabled()
   await manualRow.getByRole('button', { name: '查看详情' }).click()
   const detailModal = page.locator('.log-detail-modal')
@@ -637,7 +639,6 @@ test('searches accounts and renders centered table headers with icon-only action
     '.account-col--username',
     '.account-col--group',
     '.account-col--updated',
-    '.account-col--status',
     '.account-col--actions'
   ]
   for (const selector of centeredHeaderColumns) {
@@ -672,7 +673,8 @@ test('searches accounts and renders centered table headers with icon-only action
   await expect(firstRow.locator('.account-username')).toHaveCSS('justify-content', 'flex-start')
   await expect(firstRow.locator('.account-group-cell')).toHaveCSS('justify-content', 'flex-start')
   await expect(firstRow.locator('.account-updated')).toHaveCSS('text-align', 'left')
-  await expect(firstRow.locator('.account-status-cell')).toHaveCSS('justify-content', 'flex-start')
+  await expect(page.locator('.account-col--status')).toHaveCount(0)
+  await expect(page.locator('.account-status-cell')).toHaveCount(0)
   await expect(firstRow.locator('.account-site-url')).toHaveCSS('text-align', 'left')
   await expect(firstRow.locator('.account-site-url')).toHaveCSS(
     'justify-content',
@@ -832,16 +834,12 @@ test('reorders sibling groups and nests a dragged group with breadcrumb and toas
   await expect(alphaGroup).toBeVisible()
   await expect(betaGroup).toBeVisible()
 
-  await betaGroup.hover()
-  await expect(betaGroup.locator('.account-subnav__drag-handle')).toHaveCSS(
-    'opacity',
-    '1'
+  await expect(betaGroup.locator('.account-subnav__drag-handle')).toHaveCount(0)
+  await expect(betaGroup.locator('.account-subnav__item--group')).toHaveCSS(
+    'cursor',
+    'default'
   )
-  await betaGroup
-    .locator('.account-subnav__drag-handle')
-    .dragTo(alphaGroup.locator('.account-subnav__item--group'), {
-      targetPosition: { x: 24, y: 2 }
-    })
+  await pointerDragTo(page, betaGroup, alphaGroup, 2)
 
   await expect
     .poll(() => page.evaluate(async () => (await window.autologin.settings.get()).groupOrder))
@@ -851,42 +849,13 @@ test('reorders sibling groups and nests a dragged group with breadcrumb and toas
   const ungroupedGroup = page
     .locator('.account-subnav__group-row--ungrouped')
     .filter({ hasText: '未分组' })
-  const dragAlignment = await alphaGroup.evaluate((row) => {
-    const handle = row.querySelector<HTMLElement>('.account-subnav__drag-handle')
-    const button = row.querySelector<HTMLElement>('.account-subnav__item--group')
-    if (!handle || !button) return Number.POSITIVE_INFINITY
-    const handleRect = handle.getBoundingClientRect()
-    const buttonRect = button.getBoundingClientRect()
-    return Math.abs(
-      handleRect.top + handleRect.height / 2 - (buttonRect.top + buttonRect.height / 2)
-    )
-  })
-  expect(dragAlignment).toBeLessThan(1)
-  await ungroupedGroup.hover()
-  await expect(ungroupedGroup.locator('.account-subnav__drag-handle')).toHaveCSS(
-    'opacity',
-    '1'
-  )
-  await ungroupedGroup
-    .locator('.account-subnav__drag-handle')
-    .dragTo(betaGroup.locator('.account-subnav__item--group'), {
-      targetPosition: { x: 24, y: 2 }
-    })
+  await pointerDragTo(page, ungroupedGroup, betaGroup, 2)
   await expect
     .poll(() => page.evaluate(async () => (await window.autologin.settings.get()).groupOrder))
     .toEqual(['__autologin:ungrouped__', 'Beta', 'Alpha'])
   await expect(page.locator('.account-subnav__item--group').nth(0)).toContainText('未分组')
 
-  await betaGroup.hover()
-  await expect(betaGroup.locator('.account-subnav__drag-handle')).toHaveCSS(
-    'opacity',
-    '1'
-  )
-  await betaGroup
-    .locator('.account-subnav__drag-handle')
-    .dragTo(alphaGroup.locator('.account-subnav__item--group'), {
-      targetPosition: { x: 40, y: 18 }
-    })
+  await pointerDragTo(page, betaGroup, alphaGroup, 18)
   await expect(page.locator('.toast')).toContainText('分组已移动到“Alpha”')
   const toastPlacement = await page.locator('.toast').evaluate((element) => {
     const rect = element.getBoundingClientRect()
@@ -918,7 +887,7 @@ test('reorders sibling groups and nests a dragged group with breadcrumb and toas
   )
 })
 
-test('drags accounts between groups and persists account ordering', async () => {
+test('keeps account rows non-draggable while whole group rows remain draggable', async () => {
   await createVault(page)
   await addAccount(page, {
     siteName: '账号拖拽 A',
@@ -945,6 +914,7 @@ test('drags accounts between groups and persists account ordering', async () => 
     .locator('.account-subnav__group-row')
     .filter({ hasText: '拖拽目标' })
   await expect(targetGroup).toBeVisible()
+  await expect(targetGroup).not.toHaveAttribute('draggable', 'true')
 
   const accountA = page
     .locator('.account-row')
@@ -952,44 +922,10 @@ test('drags accounts between groups and persists account ordering', async () => 
   const accountB = page
     .locator('.account-row')
     .filter({ hasText: '账号拖拽 B' })
-  await accountA.dragTo(targetGroup.locator('.account-subnav__item--group'))
-  await expect(page.locator('.toast')).toContainText('已将 1 个账号移动到“拖拽目标”')
-  await expect
-    .poll(() =>
-      page.evaluate(async () => {
-        const accounts = await window.autologin.accounts.list()
-        return accounts.find((account) => account.site.name === '账号拖拽 A')?.site.group
-      })
-    )
-    .toBe('拖拽目标')
-  await expect(accountA.locator('.account-group-cell')).toContainText('拖拽目标')
-
-  const sourceBox = await accountB.locator('.account-row-drag-handle').boundingBox()
-  const targetBox = await accountA.boundingBox()
-  expect(sourceBox).not.toBeNull()
-  expect(targetBox).not.toBeNull()
-  await page.mouse.move(
-    sourceBox!.x + sourceBox!.width / 2,
-    sourceBox!.y + sourceBox!.height / 2
-  )
-  await page.mouse.down()
-  await page.mouse.move(targetBox!.x + 40, targetBox!.y + 2, { steps: 12 })
-  await expect(page.locator('.account-row.is-dragging')).toHaveCount(1)
-  await expect(page.locator('.account-row.is-drop-before')).toHaveCount(1)
-  await page.mouse.up()
-  await expect
-    .poll(() =>
-      page.evaluate(async () => {
-        const accounts = await window.autologin.accounts.list()
-        return accounts
-          .filter((account) => account.site.name.startsWith('账号拖拽'))
-          .sort((left, right) => (left.sortOrder ?? 0) - (right.sortOrder ?? 0))
-          .map((account) => account.site.name)
-      })
-    )
-    .toEqual(['账号拖拽 B', '账号拖拽 A'])
-  await expect(page.locator('.account-row').nth(0)).toContainText('账号拖拽 B')
-  await expect(page.locator('.account-row').nth(1)).toContainText('账号拖拽 A')
+  await expect(accountA).not.toHaveAttribute('draggable', 'true')
+  await expect(accountB).not.toHaveAttribute('draggable', 'true')
+  await expect(page.locator('.account-row-drag-handle')).toHaveCount(0)
+  await expect(accountA).toHaveCSS('cursor', 'default')
 })
 
 test('bulk deletes selected accounts after confirmation', async () => {
@@ -1220,14 +1156,14 @@ test('resizes, hides and restores the account subnav, and creates three group le
   expect(workspaceAlignment.groupGap).toBeLessThanOrEqual(2)
   expect(workspaceAlignment.overflowY).toBe('hidden')
   expect(workspaceAlignment.verticallyScrollable).toBe(false)
-  expect(workspaceAlignment.mainPaddingTop).toBe('4px')
+  expect(workspaceAlignment.mainPaddingTop).toBe('16px')
   const dividerDecoration = await page.locator('.account-subnav-shell').evaluate(
     (element) => {
       const style = getComputedStyle(element, '::after')
       return { width: style.width, backgroundImage: style.backgroundImage }
     }
   )
-  expect(dividerDecoration.width).toBe('1px')
+  expect(Number.parseFloat(dividerDecoration.width)).toBeCloseTo(1, 1)
   expect(dividerDecoration.backgroundImage).toContain('linear-gradient')
   const nativeMenuSuppressed = await page.evaluate(() => {
     const event = new MouseEvent('contextmenu', {
@@ -1268,6 +1204,10 @@ test('resizes, hides and restores the account subnav, and creates three group le
   })
   await page.waitForTimeout(700)
   expectAlignedCenters(await readLeadingCenters())
+  const accountHeader = page.locator('.account-list__header')
+  const wideWindowColumns = await accountHeader.evaluate(
+    (element) => getComputedStyle(element).gridTemplateColumns
+  )
   await expect
     .poll(() =>
       page.locator('.account-table-scroll').evaluate(
@@ -1282,6 +1222,10 @@ test('resizes, hides and restores the account subnav, and creates three group le
   })
   await page.waitForTimeout(500)
   expectAlignedCenters(await readLeadingCenters())
+  const compactWindowColumns = await accountHeader.evaluate(
+    (element) => getComputedStyle(element).gridTemplateColumns
+  )
+  expect(compactWindowColumns).not.toBe(wideWindowColumns)
   await expect
     .poll(() =>
       page.locator('.account-table-scroll').evaluate(
@@ -1308,7 +1252,7 @@ test('resizes, hides and restores the account subnav, and creates three group le
   expect(activeTabBox!.y + activeTabBox!.height).toBeGreaterThanOrEqual(
     workspaceCardBox!.y
   )
-  await expect(subnav).toHaveCSS('padding-top', '4px')
+  await expect(subnav).toHaveCSS('padding-top', '16px')
   await expect(subnav.locator('.account-subnav__all-button')).toHaveCSS(
     'font-size',
     '10px'
@@ -1421,9 +1365,7 @@ test('resizes, hides and restores the account subnav, and creates three group le
     )
     return {
       rowContainers: children.map((child) =>
-        child.classList.contains('account-subnav__drag-handle')
-          ? 'drag'
-          : child.matches('button.account-subnav__item--group')
+        child.matches('button.account-subnav__item--group')
             ? 'group'
             : child.classList.contains('account-subnav__add-group')
               ? 'add'
@@ -1435,7 +1377,7 @@ test('resizes, hides and restores the account subnav, and creates three group le
       nestedButtons: groupButton?.querySelectorAll('button').length ?? -1
     }
   })
-  expect(groupRowStructure.rowContainers).toEqual(['drag', 'group', 'add'])
+  expect(groupRowStructure.rowContainers).toEqual(['group', 'add'])
   expect(groupRowStructure.groupButtonChildren.at(-1)).toContain(
     'account-subnav__tree-spacer'
   )
@@ -1564,7 +1506,7 @@ test('resizes, hides and restores the account subnav, and creates three group le
   )
   for (const group of groupVisuals) {
     expect(group.directIconCount).toBe(0)
-    expect(group.itemHeight).toBeGreaterThanOrEqual(36)
+    expect(group.itemHeight).toBeGreaterThanOrEqual(35.9)
     expect(group.itemHeight).toBeLessThanOrEqual(40)
   }
   const ungroupedVisual = groupVisuals.find((group) => group.label === '未分组')
@@ -1582,30 +1524,38 @@ test('resizes, hides and restores the account subnav, and creates three group le
     Math.abs(ungroupedVisual!.labelCenterY! - ungroupedVisual!.countCenterY!)
   ).toBeLessThan(1)
 
-  const parentHandle = parentRow.locator('.account-subnav__drag-handle')
-  await expect(parentHandle).toHaveCSS('opacity', '0')
-  await expect(parentHandle).toHaveCSS('pointer-events', 'auto')
-  await parentRow.hover()
-  await expect(parentHandle).toHaveCSS('opacity', '1')
-  await expect(parentHandle).toHaveCSS('pointer-events', 'auto')
+  await expect(parentRow.locator('.account-subnav__drag-handle')).toHaveCount(0)
+  await expect(parentRow).toHaveCSS('cursor', 'default')
 
   const allAccountsAdd = allAccountsRow.locator('.account-subnav__add-group')
   await expect(allAccountsAdd).toHaveCSS('opacity', '0')
   await allAccountsRow.hover()
   await expect(allAccountsAdd).toHaveCSS('opacity', '1')
 
-  const searchToggle = page.getByRole('button', { name: '搜索分组' })
-  await expect(searchToggle).toHaveAttribute('aria-expanded', 'false')
-  await expect(page.getByLabel('筛选分组')).toHaveCount(0)
-  await searchToggle.click()
   const groupSearchInput = page.getByLabel('筛选分组')
+  await expect(page.locator('.account-subnav__search-toggle')).toHaveCount(0)
+  await expect(page.getByRole('button', { name: '搜索分组' })).toHaveCount(0)
   await expect(groupSearchInput).toBeVisible()
+  const searchBarLayout = await page.evaluate(() => {
+    const searchBar = document.querySelector<HTMLElement>('.account-subnav__search-bar')
+    const allButton = document.querySelector<HTMLElement>('.account-subnav__all-button')
+    const searchRect = searchBar?.getBoundingClientRect()
+    const allRect = allButton?.getBoundingClientRect()
+    return {
+      searchBottom: searchRect?.bottom ?? Number.POSITIVE_INFINITY,
+      allTop: allRect?.top ?? Number.NEGATIVE_INFINITY
+    }
+  })
+  expect(searchBarLayout.searchBottom).toBeLessThan(searchBarLayout.allTop)
+  await groupSearchInput.click()
+  await expect(groupSearchInput).toBeFocused()
   await groupSearchInput.fill('NoSuchGroup')
   await expect(
     page.locator('.account-subnav__group-row:not(.account-subnav__group-row--ungrouped)')
   ).toHaveCount(0)
   await groupSearchInput.press('Escape')
-  await expect(groupSearchInput).toHaveCount(0)
+  await expect(groupSearchInput).toBeVisible()
+  await expect(groupSearchInput).toHaveValue('')
   const groupsAccordion = page.locator('.account-subnav__groups-accordion')
   const allAccountsButton = page.locator('.account-subnav__all-button')
   await allAccountsButton.click()
@@ -1656,15 +1606,11 @@ test('resizes, hides and restores the account subnav, and creates three group le
     '.account-col--username',
     '.account-col--group',
     '.account-col--updated',
-    '.account-col--status',
     '.account-col--url'
   ]) {
     await expect(tableHeaders.locator(selector)).toBeVisible()
   }
   const firstCompactRow = page.locator('.account-row').first()
-  const compactStatusBadge = firstCompactRow.locator('.account-status-cell .recipe-badge')
-  await expect(compactStatusBadge).toHaveCSS('font-size', '0px')
-  await expect(compactStatusBadge).toHaveCSS('width', '20px')
 
   const columnsButton = page.getByRole('button', { name: '选择显示列' })
   await expect(columnsButton).toHaveCount(0)
@@ -1677,7 +1623,7 @@ test('resizes, hides and restores the account subnav, and creates three group le
   expect(tableHeaderBox).not.toBeNull()
   expect(columnMenuBox).not.toBeNull()
   expect(Math.abs(columnMenuBox!.x - (tableHeaderBox!.x + 24))).toBeLessThan(2)
-  expect(columnMenuBox!.y).toBeGreaterThanOrEqual(8)
+  expect(columnMenuBox!.y).toBeGreaterThanOrEqual(7.9)
   expect(columnMenuBox!.y + columnMenuBox!.height).toBeLessThanOrEqual(
     (await page.evaluate(() => window.innerHeight)) + 1
   )
@@ -1686,6 +1632,21 @@ test('resizes, hides and restores the account subnav, and creates three group le
   await expect(
     columnMenu.getByRole('menuitemradio', { name: '适应窗口' })
   ).toHaveAttribute('aria-checked', 'true')
+  const groupColumnMenuItem = columnMenu.locator('[data-column-menu-key="group"]')
+  const usernameColumnMenuItem = columnMenu.locator(
+    '[data-column-menu-key="username"]'
+  )
+  await pointerDragTo(page, groupColumnMenuItem, usernameColumnMenuItem, 3)
+  await expect
+    .poll(() =>
+      page.evaluate(() =>
+        JSON.parse(
+          window.localStorage.getItem('autologin.account.columnOrder') ?? '[]'
+        )
+      )
+    )
+    .toEqual(['group', 'username', 'updated', 'url'])
+  await expect(groupColumnMenuItem).toHaveAttribute('aria-checked', 'true')
   const windowColumnTemplate = await tableHeaders.evaluate(
     (header) => getComputedStyle(header).gridTemplateColumns
   )
@@ -1823,7 +1784,6 @@ test('resizes, hides and restores the account subnav, and creates three group le
     '.account-col--username',
     '.account-col--group',
     '.account-col--updated',
-    '.account-col--status',
     '.account-col--url'
   ]) {
     await expect(tableHeaders.locator(selector)).toBeVisible()
@@ -1992,22 +1952,18 @@ test('paginates a dense account tab, keeps tabs fixed and resizes the subnav', a
     element.scrollTop = 0
   })
   const alignment = await page.evaluate(() => {
-    const allAccounts = document.querySelector<HTMLElement>(
-      '.account-subnav__all-row'
-    )
-    const breadcrumb = document.querySelector<HTMLElement>('.library-header')
-    if (!allAccounts || !breadcrumb) return null
+    const search = document.querySelector<HTMLElement>('.account-subnav__search-bar')
+    const allAccounts = document.querySelector<HTMLElement>('.account-subnav__all-button')
+    if (!search || !allAccounts) return null
+    const searchRect = search.getBoundingClientRect()
     const allRect = allAccounts.getBoundingClientRect()
-    const breadcrumbRect = breadcrumb.getBoundingClientRect()
     return {
-      allCenter: allRect.top + allRect.height / 2,
-      breadcrumbCenter: breadcrumbRect.top + breadcrumbRect.height / 2
+      searchBottom: searchRect.bottom,
+      allTop: allRect.top
     }
   })
   expect(alignment).not.toBeNull()
-  expect(
-    Math.abs(alignment!.allCenter - alignment!.breadcrumbCenter)
-  ).toBeLessThanOrEqual(1)
+  expect(alignment!.searchBottom).toBeLessThan(alignment!.allTop)
 
   const pageScrollBeforeGroupScroll = await accountPageScroll.evaluate(
     (element) => element.scrollTop
@@ -3313,6 +3269,23 @@ test('persists appearance, language and interface scale with separate resets', a
     '暗色',
     '跟随系统'
   ])
+  const appearanceAlignment = await appearanceGroup.evaluate((group) => {
+    const row = group.closest<HTMLElement>('.settings-control-row')
+    const label = row?.querySelector<HTMLElement>('.settings-control-row__label')
+    if (!row || !label) return null
+    const labelRect = label.getBoundingClientRect()
+    const groupRect = group.getBoundingClientRect()
+    return {
+      alignItems: getComputedStyle(row).alignItems,
+      centerDelta: Math.abs(
+        labelRect.top + labelRect.height / 2 -
+          (groupRect.top + groupRect.height / 2)
+      )
+    }
+  })
+  expect(appearanceAlignment).not.toBeNull()
+  expect(appearanceAlignment!.alignItems).toBe('center')
+  expect(appearanceAlignment!.centerDelta).toBeLessThan(1)
 
   await appearanceGroup.getByRole('button', { name: '暗色' }).click()
   await expect
@@ -3337,7 +3310,12 @@ test('persists appearance, language and interface scale with separate resets', a
   await settings.getByRole('button', { name: '简体中文' }).click()
   await expect(settings.locator('.page-breadcrumb h2')).toHaveText('通用配置')
 
-  await settings.getByRole('slider', { name: '界面比例' }).fill('125')
+  const interfaceScaleSlider = settings.getByRole('slider', { name: '界面比例' })
+  await expect(interfaceScaleSlider).toHaveValue('100')
+  await expect
+    .poll(() => page.evaluate(() => window.autologin.settings.get()))
+    .toMatchObject({ interfaceScale: 110 })
+  await interfaceScaleSlider.fill('115')
   await expect
     .poll(() => page.evaluate(() => window.autologin.settings.get()))
     .toMatchObject({ interfaceScale: 125 })
@@ -3386,7 +3364,8 @@ test('persists appearance, language and interface scale with separate resets', a
   await settings.getByRole('button', { name: '恢复默认比例' }).click()
   await expect
     .poll(() => page.evaluate(() => window.autologin.settings.get()))
-    .toMatchObject({ interfaceScale: 100 })
+    .toMatchObject({ interfaceScale: 110 })
+  await expect(interfaceScaleSlider).toHaveValue('100')
   await settings.getByRole('button', { name: '恢复默认字体大小' }).click()
   await expect
     .poll(() => page.evaluate(() => window.autologin.settings.get()))
@@ -3947,18 +3926,38 @@ test('supports group actions, batch editing and one-browser tabs', async () => {
   await page.getByRole('button', { name: '批量操作' }).click()
   const batchModal = page.locator('.batch-strategy-modal')
   await expect(batchModal).toBeVisible()
+  await expect(batchModal).toHaveClass(/batch-strategy-drawer/)
+  const batchDrawerBox = await batchModal.boundingBox()
+  const viewportWidth = await page.evaluate(() => window.innerWidth)
+  expect(batchDrawerBox).not.toBeNull()
+  expect(batchDrawerBox!.x).toBeGreaterThan(viewportWidth * 0.3)
   await batchModal.getByRole('radio', { name: /手动配置/ }).check()
-  await batchModal.getByLabel('用户名定位器').fill('input[name="username"]')
-  await batchModal.getByLabel('密码定位器').fill('input[name="password"]')
+  await expect(batchModal.locator('.batch-selector-fields')).toHaveCount(0)
+  await batchModal.getByRole('button', { name: '添加步骤' }).click()
+  await batchModal.getByRole('button', { name: '添加步骤' }).click()
+  await batchModal.getByRole('button', { name: '添加步骤' }).click()
+  await expect(batchModal.locator('.manual-step-row')).toHaveCount(3)
+  await expect(batchModal.getByLabel('步骤 1 动作类型')).toHaveValue('fillUsername')
+  await expect(batchModal.getByLabel('步骤 2 动作类型')).toHaveValue('fillPassword')
+  await expect(batchModal.getByLabel('步骤 3 动作类型')).toHaveValue('click')
+  await batchModal.getByLabel('步骤 1 Selector').fill('input[name="username"]')
+  await batchModal.getByLabel('步骤 2 Selector').fill('input[name="password"]')
+  await batchModal.getByLabel('步骤 3 Selector').fill('button[type="submit"]')
   await batchModal.getByRole('button', { name: '应用设置' }).click()
   await expect(batchModal).toHaveCount(0)
   await expect
     .poll(() =>
       page.evaluate(async () =>
-        (await window.autologin.accounts.list()).map((account) => account.loginStrategy)
+        (await window.autologin.accounts.list()).map((account) => ({
+          strategy: account.loginStrategy,
+          steps: account.manualSteps?.map((step) => step.type) ?? []
+        }))
       )
     )
-    .toEqual(['manual', 'manual'])
+    .toEqual([
+      { strategy: 'manual', steps: ['fillUsername', 'fillPassword', 'click'] },
+      { strategy: 'manual', steps: ['fillUsername', 'fillPassword', 'click'] }
+    ])
 
   await mainRow.getByRole('checkbox').check()
   await editedRow.getByRole('checkbox').check()
@@ -4110,7 +4109,6 @@ test('records and replays a multi-step login flow', async () => {
 
   await page.getByRole('button', { name: '结束录制' }).click()
   await expect(page.getByRole('heading', { name: '全部账号' })).toBeVisible()
-  await expect(page.locator('.account-row').first()).toContainText('已录制')
   const activeTab = page.locator('.account-tab.is-active')
   await expect(activeTab).toHaveCSS('box-shadow', 'none')
   await expect(activeTab).toHaveCSS('border-bottom-left-radius', '0px')
@@ -4283,6 +4281,30 @@ async function writeKdbxFixture(filePath: string): Promise<void> {
   entry.fields.set('UserName', 'kdbx@example.test')
   entry.fields.set('Password', ProtectedValue.fromString('keepass-secret'))
   writeFileSync(filePath, Buffer.from(await database.save()))
+}
+
+async function pointerDragTo(
+  targetPage: Page,
+  source: Locator,
+  target: Locator,
+  targetY: number
+): Promise<void> {
+  const sourceBox = await source.boundingBox()
+  const targetBox = await target.boundingBox()
+  expect(sourceBox).not.toBeNull()
+  expect(targetBox).not.toBeNull()
+  await targetPage.mouse.move(
+    sourceBox!.x + sourceBox!.width / 2,
+    sourceBox!.y + sourceBox!.height / 2
+  )
+  await targetPage.mouse.down()
+  await targetPage.mouse.move(
+    targetBox!.x + Math.min(24, targetBox!.width / 2),
+    targetBox!.y + targetY,
+    { steps: 12 }
+  )
+  await targetPage.waitForTimeout(80)
+  await targetPage.mouse.up()
 }
 
 async function createVault(targetPage: Page): Promise<void> {

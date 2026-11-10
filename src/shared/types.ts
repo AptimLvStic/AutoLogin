@@ -406,6 +406,7 @@ export interface AccountBatchStrategyInput {
   accountIds: string[]
   loginStrategy: LoginStrategy
   manualSelectors?: ManualLoginSelectors
+  manualSteps?: RecipeStep[]
 }
 
 export interface AccountRecipeUpdateInput {

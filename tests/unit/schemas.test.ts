@@ -71,7 +71,7 @@ describe('shared input schemas', () => {
         text: '#1F2328',
         accent: '#5C6BFF'
       },
-      interfaceScale: 100,
+      interfaceScale: 110,
       fontSizeScale: 100,
       accountCopyShortcutEnabled: false,
       accountCopyShortcut: 'Ctrl+C',

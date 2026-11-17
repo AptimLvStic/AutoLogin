@@ -1,4 +1,18 @@
-import { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, net, session, shell } from 'electron'
+import {
+  app,
+  autoUpdater,
+  BrowserWindow,
+  CancellationToken,
+  clipboard,
+  dialog,
+  ipcMain,
+  Menu,
+  net,
+  session,
+  shell,
+  type IpcMainEvent,
+  type IpcMainInvokeEvent
+} from '../tauri/backend-runtime'
 import {
   copyFileSync,
   existsSync,
@@ -11,9 +25,6 @@ import {
 import { basename, dirname, join, resolve } from 'node:path'
 import { randomUUID } from 'node:crypto'
 import { fileURLToPath } from 'node:url'
-import type { IpcMainEvent, IpcMainInvokeEvent } from 'electron'
-import { autoUpdater } from 'electron-updater'
-import { CancellationToken } from 'builder-util-runtime'
 import {
   accountBatchIconFetchInputSchema,
   accountBatchIconInputSchema,
@@ -36,6 +47,7 @@ import {
   csvImportInputSchema,
   dataExportInputSchema,
   dataLocationConflictInputSchema,
+  embeddedBrowserBoundsSchema,
   favoriteGroupInputSchema,
   groupCreateInputSchema,
   groupDeleteInputSchema,
@@ -43,6 +55,7 @@ import {
   groupRenameInputSchema,
   kdbxSelectionImportSchema,
   loginBatchStartSchema,
+  loginFinishRecordingSchema,
   loginLogDeleteSchema,
   loginLogQuerySchema,
   loginStartSchema,
@@ -70,7 +83,9 @@ import {
   normalizeDatabaseName,
   shouldWriteEncryptedTabSnapshot
 } from '@shared/database-files'
+import { interfaceScaleToZoom } from '@shared/theme'
 import type {
+  AccountBatchIconFetchProgress,
   AccountBatchIconFetchResult,
   AccountBatchIconInput,
   AccountBatchStrategyInput,
@@ -86,6 +101,8 @@ import type {
   AppSettings,
   BackupRecord,
   BookmarkVisitResult,
+  CredentialHistoryEntry,
+  CredentialHistoryReveal,
   DataImportResult,
   DataExportFormat,
   DataLocationChoiceResult,
@@ -109,6 +126,7 @@ import type {
   LoginMode,
   LoginBatchState,
   LoginViewState,
+  EmbeddedBrowserTab,
   PasswordReveal,
   ProxySettings,
   ProxyTestResult,
@@ -130,6 +148,15 @@ import {
   readAppLogs,
   removeLegacyAccessLog
 } from './app-log'
+import { startBlockWatchdog } from './block-watchdog'
+import {
+  clearCredentialHistory as clearAccountCredentialHistory,
+  deleteCredentialHistoryEntry,
+  listCredentialHistory as listAccountCredentialHistory,
+  recordCredentialSnapshot,
+  restoreCredentialHistory as restoreAccountCredentialHistory,
+  revealCredentialHistory as revealAccountCredentialHistory
+} from './credential-history'
 import {
   CSV_TEMPLATE,
   mergeAutologinSnapshot,
@@ -157,12 +184,20 @@ import {
   LoginBatchManager,
   readLoginLogs
 } from './login-batch'
-import { clearManagedSessionDirectories, LoginSessionManager } from './login-session'
+import {
+  clearManagedSessionDirectories,
+  clearManagedSessionDirectoriesWithRetry,
+  LoginSessionManager,
+  mergePendingRecipes,
+  migratePendingRecipeFiles,
+  resolveRecordingDraftDirectory
+} from './login-session'
 import {
   assertChromiumBrowser,
   discoverDefaultBrowser
 } from './browser-discovery'
 import { ExternalBrowserHost } from './external-browser'
+import { EmbeddedBrowserController } from './embedded-browser'
 import { isTrashItemExpired } from './trash-retention'
 import { migrateTabDatabaseFiles } from './tab-database-files'
 import { buildTabSnapshot, indexVaultDataByTab } from './tab-snapshots'
@@ -174,6 +209,7 @@ import {
 } from './update-progress'
 import { resolveUpdateCdnBaseUrl } from './update-source'
 import {
+  browserProfileDirectory,
   discoverManagedBrowserProfileIds,
   discoverManagedPartitionIds,
   SessionIndex
@@ -182,6 +218,12 @@ import { VaultManager } from './vault'
 
 app.setName('AutoLogin')
 app.setAppUserModelId('com.autologin.desktop')
+/** 每次发布前更新，用于在日志里识别 Tauri 后台构建版本。 */
+const BUILD_TAG = '2026-11-17.recording-draft-tauri-deadlock-fix'
+const backendEntryPath = process.argv[1]
+  ? resolve(process.argv[1])
+  : 'unknown'
+
 const allowDevelopmentOverrides = !app.isPackaged
 const disableSandboxForE2E =
   allowDevelopmentOverrides && process.env.AUTOLOGIN_E2E_DISABLE_SANDBOX === '1'
@@ -197,6 +239,10 @@ if (allowDevelopmentOverrides && process.env.AUTOLOGIN_USER_DATA_DIR) {
 let mainWindow: BrowserWindow | null = null
 let loginManager: LoginSessionManager | null = null
 let batchManager: LoginBatchManager | null = null
+const embeddedBrowserController = new EmbeddedBrowserController((tabs) => {
+  sendToRenderer('browser:tabs', tabs)
+})
+let iconFetchAbortController: AbortController | null = null
 let vault: VaultManager
 let backupManager: BackupManager
 let sessionIndex: SessionIndex
@@ -280,10 +326,23 @@ app.whenReady().then(() => {
     writeDataDirectory(configDirectory, dataDirectory)
   }
   initializeDataStores()
+  startBlockWatchdog((durationMs, trace) => {
+    appendAppLog(dataDirectory, {
+      level: 'error',
+      category: 'startup',
+      message: `主进程事件循环阻塞 ${Math.round(durationMs)}ms`,
+      details: `阶段：${trace.stage || '未标记'}；通道：${
+        trace.channel || '未标记'
+      }；距上次标记 ${Math.round((Date.now() - trace.at) / 1000)} 秒`
+    })
+  })
   appendAppLog(dataDirectory, {
     level: 'info',
     category: 'startup',
-    message: `AutoLogin v${app.getVersion()} 已启动`
+    message: `AutoLogin v${app.getVersion()} 已启动`,
+    // 构建指纹：用来确认当前运行的二进制是否包含录制实时落盘等修复。
+    // 在日志里搜 recording-draft 即可判断。
+    details: `build: ${BUILD_TAG}；backend: ${backendEntryPath}`
   })
   registerDiagnosticLogging()
   try {
@@ -343,7 +402,6 @@ function createWindow(): void {
     },
     autoHideMenuBar: true,
     webPreferences: {
-      preload: join(__dirname, '../preload/index.js'),
       sandbox: !disableSandboxForE2E,
       contextIsolation: true,
       nodeIntegration: false,
@@ -402,12 +460,6 @@ function createWindow(): void {
 
   ensureLoginManagers()
 
-  if (allowDevelopmentOverrides && process.env.ELECTRON_RENDERER_URL) {
-    void window.loadURL(process.env.ELECTRON_RENDERER_URL)
-  } else {
-    void window.loadFile(join(__dirname, '../renderer/index.html'))
-  }
-
   registerIpc()
 }
 
@@ -449,12 +501,14 @@ function initializeDataStores(): void {
   vault.setBeforeSaveListener((data) => {
     pruneMissingDatabaseTabs(data)
   })
-  vault.setSaveListener((data) => syncTabSnapshotFiles(data))
+  vault.setSaveListener((data, options) =>
+    syncTabSnapshotFiles(data, options?.tabIds)
+  )
   backupManager = new BackupManager(dataDirectory)
   sessionIndex = new SessionIndex(dataDirectory)
 }
 
-function syncTabSnapshotFiles(data: VaultData): void {
+function syncTabSnapshotFiles(data: VaultData, tabIds?: string[]): void {
   const tabsDirectory = join(dataDirectory, 'tabs')
   try {
     mkdirSync(tabsDirectory, { recursive: true })
@@ -469,7 +523,11 @@ function syncTabSnapshotFiles(data: VaultData): void {
   }
 
   const dataByTab = indexVaultDataByTab(data)
-  for (const tab of data.tabs) {
+  const requestedTabIds = tabIds?.length ? new Set(tabIds) : null
+  const tabs = requestedTabIds
+    ? data.tabs.filter((tab) => requestedTabIds.has(tab.id))
+    : data.tabs
+  for (const tab of tabs) {
     const databasePath = tabDatabasePath(tab)
     try {
       if (shouldWriteEncryptedTabSnapshot(tab)) {
@@ -647,7 +705,9 @@ function ensureLoginManagers(): void {
       dataDirectory,
       allowDevelopmentOverrides ? process.env.AUTOLOGIN_BROWSER_EXECUTABLE : undefined,
       allowDevelopmentOverrides && process.env.AUTOLOGIN_BROWSER_HEADLESS === '1',
-      (state) => sendToRenderer('login:state', state)
+      (state) => sendToRenderer('login:state', state),
+      null,
+      embeddedBrowserController
     )
   }
   if (!batchManager) {
@@ -670,7 +730,8 @@ function ensureLoginManagers(): void {
             details: `批次 ${state.batchId}，共 ${state.total} 个账号`
           })
         }
-      }
+      },
+      embeddedBrowserController
     )
   }
 }
@@ -684,6 +745,7 @@ async function closeLoginManagers(): Promise<void> {
     currentLoginManager?.close() ?? Promise.resolve(),
     currentBatchManager?.close() ?? Promise.resolve()
   ])
+  embeddedBrowserController.closeAll()
 }
 
 function registerIpc(): void {
@@ -732,6 +794,11 @@ function registerIpc(): void {
     applyInterfaceScale(vault.getSettings().interfaceScale)
     await applySystemProxy(vault.getSettings().proxy)
     reconcileTabDatabaseFiles()
+    await mergePendingRecipes(
+      dataDirectory,
+      vault,
+      vault.getSettings().recordingDraftDirectory
+    )
     return status
   })
   ipcMain.handle('vault:lock', (event) => {
@@ -1012,16 +1079,41 @@ function registerIpc(): void {
     if (!parsed.success) {
       throw new Error(firstIssue(parsed.error))
     }
-    const result = await fetchAccountIconsFromSites(parsed.data)
-    appendAppLog(dataDirectory, {
-      level: result.failedSites.length > 0 ? 'warning' : 'success',
-      category: 'data',
-      message: `批量获取站点图标：更新 ${result.updatedSites} 个站点、${result.updatedAccounts} 个账号`,
-      ...(result.failedSites.length > 0
-        ? { details: `未获取到图标：${result.failedSites.join('、')}` }
-        : {})
-    })
-    return result
+    if (iconFetchAbortController) {
+      throw new Error('已有网站图标获取任务正在进行')
+    }
+    const controller = new AbortController()
+    iconFetchAbortController = controller
+    try {
+      const result = await fetchAccountIconsFromSites(
+        parsed.data,
+        (progress) => sendToRenderer('accounts:icon-fetch-progress', progress),
+        controller.signal
+      )
+      appendAppLog(dataDirectory, {
+        level: result.canceled
+          ? 'info'
+          : result.failedSites.length > 0
+            ? 'warning'
+            : 'success',
+        category: 'data',
+        message: `${result.canceled ? '已中断批量获取站点图标' : '批量获取站点图标'}：更新 ${result.updatedSites} 个站点、${result.updatedAccounts} 个账号`,
+        ...(result.failedSites.length > 0
+          ? { details: `未获取到图标：${result.failedSites.join('、')}` }
+          : {})
+      })
+      return result
+    } finally {
+      if (iconFetchAbortController === controller) {
+        iconFetchAbortController = null
+      }
+    }
+  })
+  ipcMain.handle('accounts:cancel-icon-fetch-batch', (event) => {
+    assertTrustedSender(event)
+    if (!iconFetchAbortController) return false
+    iconFetchAbortController.abort()
+    return true
   })
   ipcMain.handle('accounts:duplicate', (event, payload: unknown) => {
     assertTrustedSender(event)
@@ -1085,7 +1177,7 @@ function registerIpc(): void {
     }
     await batchManager?.clearSession(id)
     await loginManager?.clearSession(id)
-    clearManagedSessionDirectories(dataDirectory, id)
+    await clearManagedSessionDirectoriesWithRetry(dataDirectory, id)
     moveAccountsToTrash([id])
     sessionIndex.remove(id)
     appendAppLog(dataDirectory, {
@@ -1194,6 +1286,79 @@ function registerIpc(): void {
     }
     return { password: account.password, expiresAt: Date.now() + 10_000 }
   })
+  ipcMain.handle(
+    'accounts:list-credential-history',
+    (event, accountId: unknown): CredentialHistoryEntry[] => {
+      assertTrustedSender(event)
+      const { account } = requireAccountAndSite(requireId(accountId))
+      return listAccountCredentialHistory(account)
+    }
+  )
+  ipcMain.handle(
+    'accounts:reveal-credential-history',
+    (event, accountId: unknown, historyId: unknown): CredentialHistoryReveal => {
+      assertTrustedSender(event)
+      const { account } = requireAccountAndSite(requireId(accountId))
+      return revealAccountCredentialHistory(account, requireId(historyId))
+    }
+  )
+  ipcMain.handle(
+    'accounts:restore-credential-history',
+    (event, accountId: unknown, historyId: unknown): AccountWithSite => {
+      assertTrustedSender(event)
+      const { account, site } = requireAccountAndSite(requireId(accountId))
+      const restored = restoreAccountCredentialHistory(
+        account,
+        requireId(historyId),
+        new Date().toISOString()
+      )
+      if (!restored) {
+        return toPublicAccount(account, site)
+      }
+      account.updatedAt = new Date().toISOString()
+      vault.save()
+      appendAppLog(dataDirectory, {
+        level: 'success',
+        category: 'data',
+        message: `账号凭据已从历史版本还原：${site.name}`
+      })
+      return toPublicAccount(account, site)
+    }
+  )
+  ipcMain.handle(
+    'accounts:delete-credential-history',
+    (event, accountId: unknown, historyId: unknown) => {
+      assertTrustedSender(event)
+      const { account, site } = requireAccountAndSite(requireId(accountId))
+      if (!deleteCredentialHistoryEntry(account, requireId(historyId))) {
+        throw new Error('历史凭据版本不存在')
+      }
+      account.updatedAt = new Date().toISOString()
+      vault.save()
+      appendAppLog(dataDirectory, {
+        level: 'success',
+        category: 'data',
+        message: `已删除一条账号历史凭据：${site.name}`
+      })
+    }
+  )
+  ipcMain.handle(
+    'accounts:clear-credential-history',
+    (event, accountId: unknown) => {
+      assertTrustedSender(event)
+      const { account, site } = requireAccountAndSite(requireId(accountId))
+      const removed = clearAccountCredentialHistory(account)
+      if (removed === 0) return
+      account.updatedAt = new Date().toISOString()
+      vault.save()
+      appendAppLog(dataDirectory, {
+        level: 'success',
+        category: 'data',
+        message: `已清空账号历史凭据：${site.name}`,
+        details: `删除 ${removed} 个历史版本`
+      })
+    }
+  )
   ipcMain.handle('accounts:copy', async (event, accountId: unknown) => {
     assertTrustedSender(event)
     const id = requireId(accountId)
@@ -1201,7 +1366,15 @@ function registerIpc(): void {
     if (!account) {
       throw new Error('账号不存在')
     }
-    await copySecret(account.password)
+    const recording = loginManager?.getState()
+    const recordingThisAccount =
+      recording?.recording === true && recording.accountId === account.id
+    await copySecret(account.password, recordingThisAccount ? 120_000 : 30_000)
+    await loginManager?.rememberClipboardSource(
+      account.id,
+      'password',
+      account.password
+    )
     appendAppLog(dataDirectory, {
       level: 'info',
       category: 'data',
@@ -1216,6 +1389,11 @@ function registerIpc(): void {
       throw new Error('账号不存在')
     }
     await clipboard.writeText(account.username)
+    await loginManager?.rememberClipboardSource(
+      account.id,
+      'username',
+      account.username
+    )
     appendAppLog(dataDirectory, {
       level: 'info',
       category: 'data',
@@ -1286,11 +1464,7 @@ function registerIpc(): void {
       let status: 'success' | 'error' = 'success'
       let reason = '已在系统默认浏览器中打开'
       try {
-        ensureLoginManagers()
-        if (!batchManager) {
-          throw new Error('本地浏览器尚未准备好')
-        }
-        await batchManager.openUrl(site.startUrl)
+        await shell.openExternal(site.startUrl)
       } catch (error) {
         status = 'error'
         reason =
@@ -1374,16 +1548,52 @@ function registerIpc(): void {
     assertTrustedSender(event)
     await loginManager?.focusBrowser()
   })
-  ipcMain.handle('login:finish-recording', async (event) => {
+  ipcMain.handle('login:finish-recording', async (event, payload: unknown) => {
     assertTrustedSender(event)
     if (!loginManager) {
       throw new Error('登录窗口尚未准备好')
     }
-    return loginManager.finishRecording()
+    const parsed = loginFinishRecordingSchema.safeParse(payload)
+    if (!parsed.success) {
+      throw new Error(firstIssue(parsed.error))
+    }
+    const recordingState = loginManager.getState()
+    appendAppLog(dataDirectory, {
+      level: 'info',
+      category: 'login',
+      message: '收到登录流程录制保存请求',
+      details: `账号：${recordingState.accountLabel || '未知'}；步骤：${recordingState.recordingStepCount}`
+    })
+    return loginManager.finishRecording(parsed.data?.name)
+  })
+  ipcMain.handle('login:recording-save-status', (event) => {
+    assertTrustedSender(event)
+    return loginManager?.getRecordingSaveStatus() ?? { state: 'idle' }
   })
   ipcMain.handle('login:cancel-recording', (event) => {
     assertTrustedSender(event)
     loginManager?.cancelRecording()
+  })
+  ipcMain.handle('login:undo-recording-step', async (event) => {
+    assertTrustedSender(event)
+    if (!loginManager) {
+      throw new Error('登录窗口尚未准备好')
+    }
+    return loginManager.undoRecordingStep()
+  })
+  ipcMain.handle('login:pause-recording', async (event) => {
+    assertTrustedSender(event)
+    if (!loginManager) {
+      throw new Error('登录窗口尚未准备好')
+    }
+    return loginManager.pauseRecording()
+  })
+  ipcMain.handle('login:resume-recording', async (event) => {
+    assertTrustedSender(event)
+    if (!loginManager) {
+      throw new Error('登录窗口尚未准备好')
+    }
+    return loginManager.resumeRecording()
   })
   ipcMain.handle('login:test-selector', async (event, payload: unknown): Promise<SelectorTestResult> => {
     assertTrustedSender(event)
@@ -1398,11 +1608,95 @@ function registerIpc(): void {
     const id = requireId(accountId)
     await batchManager?.clearSession(id)
     await loginManager?.clearSession(id)
-    clearManagedSessionDirectories(dataDirectory, id)
+    await clearManagedSessionDirectoriesWithRetry(dataDirectory, id)
   })
   ipcMain.handle('login:get-state', (event) => {
     assertTrustedSender(event)
     return loginManager?.getState() ?? null
+  })
+  ipcMain.handle('login:set-embedded-bounds', (event, payload: unknown) => {
+    assertTrustedSender(event)
+    const parsed = embeddedBrowserBoundsSchema.safeParse(payload)
+    if (!parsed.success) {
+      throw new Error(firstIssue(parsed.error))
+    }
+    if (loginManager?.getState().active) {
+      loginManager.setEmbeddedBounds(parsed.data)
+    } else {
+      batchManager?.setEmbeddedBounds(parsed.data)
+    }
+  })
+  ipcMain.handle('login:set-embedded-active', (event, accountId: unknown) => {
+    assertTrustedSender(event)
+    if (loginManager?.getState().active) {
+      loginManager.setEmbeddedActive()
+    } else {
+      batchManager?.setEmbeddedActive(requireId(accountId))
+    }
+  })
+  ipcMain.handle('login:close-embedded-tabs', (event) => {
+    assertTrustedSender(event)
+    batchManager?.closeEmbeddedTabs()
+  })
+
+  ipcMain.handle('browser:list-tabs', (event): EmbeddedBrowserTab[] => {
+    assertTrustedSender(event)
+    return embeddedBrowserController.list()
+  })
+  ipcMain.handle('browser:open-url', async (event, value: unknown) => {
+    assertTrustedSender(event)
+    if (typeof value !== 'string') {
+      throw new Error('请输入有效的 http 或 https 地址')
+    }
+    return embeddedBrowserController.openUrl(
+      normalizeUrl(value),
+      browserProfileDirectory(dataDirectory, 'manual')
+    )
+  })
+  ipcMain.handle('browser:activate', (event, label: unknown) => {
+    assertTrustedSender(event)
+    embeddedBrowserController.activate(requireId(label))
+  })
+  ipcMain.handle('browser:close', (event, label: unknown) => {
+    assertTrustedSender(event)
+    const id = requireId(label)
+    embeddedBrowserController.close(id)
+    loginManager?.forgetEmbeddedLabel(id)
+    batchManager?.forgetEmbeddedLabel(id)
+  })
+  ipcMain.handle('browser:navigate', async (event, payload: unknown) => {
+    assertTrustedSender(event)
+    const parsed = payload as { label?: unknown; url?: unknown } | null
+    const label = requireId(parsed?.label)
+    if (typeof parsed?.url !== 'string') {
+      throw new Error('请输入有效的 http 或 https 地址')
+    }
+    return embeddedBrowserController.navigate(label, normalizeUrl(parsed.url))
+  })
+  ipcMain.handle('browser:back', async (event, label: unknown) => {
+    assertTrustedSender(event)
+    await embeddedBrowserController.back(requireId(label))
+  })
+  ipcMain.handle('browser:reload', async (event, label: unknown) => {
+    assertTrustedSender(event)
+    await embeddedBrowserController.reload(requireId(label))
+  })
+  ipcMain.handle('browser:set-bounds', (event, payload: unknown) => {
+    assertTrustedSender(event)
+    const parsed = payload as {
+      label?: unknown
+      bounds?: unknown
+    } | null
+    const label = requireId(parsed?.label)
+    const bounds = embeddedBrowserBoundsSchema.safeParse(parsed?.bounds)
+    if (!bounds.success) {
+      throw new Error(firstIssue(bounds.error))
+    }
+    embeddedBrowserController.setBounds(label, bounds.data)
+  })
+  ipcMain.handle('browser:hide-all', (event) => {
+    assertTrustedSender(event)
+    embeddedBrowserController.hideAll()
   })
 
   ipcMain.handle('settings:get', (event) => {
@@ -1417,6 +1711,19 @@ function registerIpc(): void {
     }
     if (parsed.data.proxy) {
       parsed.data.proxy.enabled = parsed.data.proxy.mode === 'custom'
+    }
+    const previousSettings = vault.getSettings()
+    if (parsed.data.recordingDraftDirectory !== undefined) {
+      migratePendingRecipeFiles(
+        resolveRecordingDraftDirectory(
+          dataDirectory,
+          previousSettings.recordingDraftDirectory
+        ),
+        resolveRecordingDraftDirectory(
+          dataDirectory,
+          parsed.data.recordingDraftDirectory
+        )
+      )
     }
     const settings = vault.updateSettings(parsed.data)
     if (parsed.data.trashRetentionDays) {
@@ -1592,19 +1899,24 @@ function registerIpc(): void {
     if (selection.canceled || !path) {
       return null
     }
-    const parsed = await parseCsvImport(path)
-    const result = applyDataImport(
-      parsed,
-      'csv',
-      basename(path),
-      parsedInput.data.mode,
-      parsedInput.data.tabId,
-      parsedInput.data.mode === 'new'
-        ? { sourcePath: normalizeSelectedPath(path) }
-        : undefined
-    )
-    appendImportLog(result, basename(path))
-    return result
+    try {
+      const parsed = await parseCsvImport(path)
+      const result = applyDataImport(
+        parsed,
+        'csv',
+        basename(path),
+        parsedInput.data.mode,
+        parsedInput.data.tabId,
+        parsedInput.data.mode === 'new'
+          ? { sourcePath: normalizeSelectedPath(path) }
+          : undefined
+      )
+      appendImportLog(result, basename(path))
+      return result
+    } catch (error) {
+      appendImportFailureLog('CSV 账号', basename(path), error)
+      throw error
+    }
   })
   ipcMain.handle('data:choose-database', async (event): Promise<LocalDatabaseOpenSelection | null> => {
     assertTrustedSender(event)
@@ -1680,61 +1992,70 @@ function registerIpc(): void {
       if (!selection) {
         throw new Error('数据库选择已过期，请重新选择文件')
       }
-      const databasePath = resolveSelectedDatabasePath(
-        selection.path,
-        selection.kind
-      )
-      if (!databasePath) {
-        pendingDatabaseSelections.delete(parsed.data.token)
-        throw new Error('所选数据库文件已被移动或删除，请重新选择')
-      }
-      purgeMissingDatabaseTabs(true)
-      const existing = findExistingDatabaseTab(
-        databasePath,
-        selection.kind
-      )
-      if (existing) {
-        const active = activateExistingDatabaseTab(
-          existing,
-          selection.kind,
-          selection.fileName
+      try {
+        const databasePath = resolveSelectedDatabasePath(
+          selection.path,
+          selection.kind
         )
-        pendingDatabaseSelections.delete(parsed.data.token)
-        return {
-          source: active.source,
-          tabId: active.tabId,
-          tabName: active.tabName,
-          sitesCreated: 0,
-          accountsCreated: 0,
-          skipped: 0,
-          warnings: []
+        if (!databasePath) {
+          pendingDatabaseSelections.delete(parsed.data.token)
+          throw new Error('所选数据库文件已被移动或删除，请重新选择')
         }
-      }
+        purgeMissingDatabaseTabs(true)
+        const existing = findExistingDatabaseTab(
+          databasePath,
+          selection.kind
+        )
+        if (existing) {
+          const active = activateExistingDatabaseTab(
+            existing,
+            selection.kind,
+            selection.fileName
+          )
+          pendingDatabaseSelections.delete(parsed.data.token)
+          return {
+            source: active.source,
+            tabId: active.tabId,
+            tabName: active.tabName,
+            sitesCreated: 0,
+            accountsCreated: 0,
+            skipped: 0,
+            warnings: []
+          }
+        }
 
-      const result =
-        selection.kind === 'autologin'
-          ? applyAutologinImport(
-              await vault.readEncryptedSnapshot(
-                databasePath,
-                parsed.data.password
-              ),
-              {
-                fileName: selection.fileName,
-                sourcePath: databasePath,
-                exactFileName: true
-              }
-            )
-          : applyDataImport(
-              await parseKdbxImport(databasePath, parsed.data.password),
-              'kdbx',
-              selection.fileName,
-              'new',
-              undefined,
-              { sourcePath: databasePath }
-            )
-      pendingDatabaseSelections.delete(parsed.data.token)
-      appendImportLog(result, selection.fileName)
-      return result
+        const result =
+          selection.kind === 'autologin'
+            ? applyAutologinImport(
+                await vault.readEncryptedSnapshot(
+                  databasePath,
+                  parsed.data.password
+                ),
+                {
+                  fileName: selection.fileName,
+                  sourcePath: databasePath,
+                  exactFileName: true
+                }
+              )
+            : applyDataImport(
+                await parseKdbxImport(databasePath, parsed.data.password),
+                'kdbx',
+                selection.fileName,
+                'new',
+                undefined,
+                { sourcePath: databasePath }
+              )
+        pendingDatabaseSelections.delete(parsed.data.token)
+        appendImportLog(result, selection.fileName)
+        return result
+      } catch (error) {
+        appendImportFailureLog(
+          selection.kind === 'kdbx' ? 'KDBX 数据库' : 'AutoLogin 配置',
+          selection.fileName,
+          error
+        )
+        throw error
+      }
     }
   )
   ipcMain.handle('data:choose-kdbx', async (event): Promise<KdbxSelection | null> => {
@@ -1782,26 +2103,31 @@ function registerIpc(): void {
       if (!selection) {
         throw new Error('KeePassXC 数据库选择已过期，请重新选择文件')
       }
-      const databasePath = resolveSelectedDatabasePath(
-        selection.path,
-        'kdbx'
-      )
-      if (!databasePath) {
+      try {
+        const databasePath = resolveSelectedDatabasePath(
+          selection.path,
+          'kdbx'
+        )
+        if (!databasePath) {
+          pendingKdbxSelections.delete(parsed.data.token)
+          throw new Error('所选数据库文件已被移动或删除，请重新选择')
+        }
+        const imported = await parseKdbxImport(databasePath, parsed.data.password)
+        const result = applyDataImport(
+          imported,
+          'kdbx',
+          selection.fileName,
+          'new',
+          undefined,
+          { sourcePath: databasePath }
+        )
         pendingKdbxSelections.delete(parsed.data.token)
-        throw new Error('所选数据库文件已被移动或删除，请重新选择')
+        appendImportLog(result, selection.fileName)
+        return result
+      } catch (error) {
+        appendImportFailureLog('KDBX 数据库', selection.fileName, error)
+        throw error
       }
-      const imported = await parseKdbxImport(databasePath, parsed.data.password)
-      const result = applyDataImport(
-        imported,
-        'kdbx',
-        selection.fileName,
-        'new',
-        undefined,
-        { sourcePath: databasePath }
-      )
-      pendingKdbxSelections.delete(parsed.data.token)
-      appendImportLog(result, selection.fileName)
-      return result
     }
   )
   ipcMain.handle('data:choose-autologin', async (event) => {
@@ -1882,10 +2208,15 @@ function registerIpc(): void {
     })
     const path = selection.filePaths[0]
     if (selection.canceled || !path) return null
-    const parsed = await parseBookmarksImport(path)
-    const result = applyDataImport(parsed, 'bookmarks', basename(path))
-    appendImportLog(result, basename(path))
-    return result
+    try {
+      const parsed = await parseBookmarksImport(path)
+      const result = applyDataImport(parsed, 'bookmarks', basename(path))
+      appendImportLog(result, basename(path))
+      return result
+    } catch (error) {
+      appendImportFailureLog('浏览器书签', basename(path), error)
+      throw error
+    }
   })
   ipcMain.handle('data:list-backups', (event): BackupRecord[] => {
     assertTrustedSender(event)
@@ -1965,6 +2296,25 @@ function registerIpc(): void {
       return chooseDataLocation()
     }
   )
+  ipcMain.handle(
+    'app:choose-recording-draft-directory',
+    async (event): Promise<string | null> => {
+      assertTrustedSender(event)
+      return chooseRecordingDraftDirectory()
+    }
+  )
+  ipcMain.handle('app:open-recording-draft-directory', async (event) => {
+    assertTrustedSender(event)
+    const directory = resolveRecordingDraftDirectory(
+      dataDirectory,
+      vault.getSettings().recordingDraftDirectory
+    )
+    mkdirSync(directory, { recursive: true })
+    const error = await shell.openPath(directory)
+    if (error) {
+      throw new Error(`无法打开录制副本目录：${error}`)
+    }
+  })
   ipcMain.handle(
     'app:resolve-data-location-conflict',
     async (event, payload: unknown): Promise<DataLocationInfo> => {
@@ -2061,6 +2411,30 @@ function registerIpc(): void {
   ipcMain.on('app:activity', (event) => {
     assertTrustedSender(event)
     vault.touch()
+  })
+  ipcMain.handle('app:report-ui-failure', (event, payload: unknown) => {
+    assertTrustedSender(event)
+    if (!payload || typeof payload !== 'object') return
+    const record = payload as Record<string, unknown>
+    const message =
+      typeof record.message === 'string' ? record.message.trim().slice(0, 800) : ''
+    if (!message) return
+    const context =
+      typeof record.context === 'string'
+        ? record.context.trim().slice(0, 120)
+        : ''
+    const durationMs =
+      typeof record.durationMs === 'number' && Number.isFinite(record.durationMs)
+        ? Math.max(0, Math.round(record.durationMs))
+        : 0
+    appendAppLog(dataDirectory, {
+      level: 'error',
+      category: 'error',
+      message: `界面操作失败：${context || '未指定操作'}`,
+      details: sanitizeLogDetails(
+        `${durationMs > 0 ? `耗时 ${durationMs} 毫秒；` : ''}${message}`
+      )
+    })
   })
   ipcMain.handle('app:clear-all-data', async (event) => {
     assertTrustedSender(event)
@@ -2656,6 +3030,7 @@ function createAccount(input: {
   password: string
   favorite?: boolean
   loginStrategy?: 'auto' | 'manual'
+  loginBrowser?: 'standalone' | 'builtin'
   manualSelectors?: {
     username?: string
     password?: string
@@ -2677,6 +3052,7 @@ function createAccount(input: {
     throw new Error('请输入密码')
   }
   const loginStrategy = input.loginStrategy ?? 'auto'
+  const loginBrowser = input.loginBrowser ?? 'standalone'
   const manualSelectors = normalizeManualSelectors(input.manualSelectors)
   const manualSteps = input.manualSteps?.length
     ? structuredClone(input.manualSteps)
@@ -2690,8 +3066,10 @@ function createAccount(input: {
     label: site.name,
     username: input.username.trim(),
     password: input.password,
+    credentialUpdatedAt: now,
     favorite: input.favorite ?? false,
     loginStrategy,
+    loginBrowser,
     manualSelectors,
     manualSteps,
     sortOrder: nextAccountSortOrder(data, site.tabId),
@@ -2829,6 +3207,7 @@ function updateAccount(
     favorite?: boolean
     activeRecipeId?: string
     loginStrategy?: 'auto' | 'manual'
+    loginBrowser?: 'standalone' | 'builtin'
     manualSelectors?: {
       username?: string
       password?: string
@@ -2846,11 +3225,19 @@ function updateAccount(
   if (!site) {
     throw new Error('站点不存在')
   }
+  const now = new Date().toISOString()
+  const nextUsername = patch.username !== undefined ? patch.username.trim() : account.username
+  const nextPassword = patch.password !== undefined ? patch.password : account.password
+  if (nextUsername !== account.username || nextPassword !== account.password) {
+    recordCredentialSnapshot(account, now)
+    account.credentialUpdatedAt = now
+  }
   if (patch.label !== undefined) account.label = patch.label.trim()
   if (patch.username !== undefined) account.username = patch.username.trim()
   if (patch.password !== undefined) account.password = patch.password
   if (patch.favorite !== undefined) account.favorite = patch.favorite
   if (patch.loginStrategy !== undefined) account.loginStrategy = patch.loginStrategy
+  if (patch.loginBrowser !== undefined) account.loginBrowser = patch.loginBrowser
   if (patch.manualSelectors !== undefined) {
     account.manualSelectors = normalizeManualSelectors({
       ...account.manualSelectors,
@@ -2876,7 +3263,7 @@ function updateAccount(
     account.manualSelectors,
     account.manualSteps
   )
-  account.updatedAt = new Date().toISOString()
+  account.updatedAt = now
   vault.save()
   return toPublicAccount(account, site)
 }
@@ -2926,6 +3313,7 @@ function setAccountStrategyBatch(
   const now = new Date().toISOString()
   for (const account of accounts) {
     account.loginStrategy = input.loginStrategy
+    account.loginBrowser = input.loginBrowser ?? 'standalone'
     if (input.loginStrategy === 'manual' && sharedSteps) {
       account.manualSelectors = undefined
       account.manualSteps = structuredClone(sharedSteps)
@@ -2969,34 +3357,62 @@ function setAccountIconBatch(input: AccountBatchIconInput): AccountWithSite[] {
 }
 
 async function fetchAccountIconsFromSites(
-  accountIds: string[]
+  accountIds: string[],
+  onProgress?: (progress: AccountBatchIconFetchProgress) => void,
+  signal?: AbortSignal
 ): Promise<AccountBatchIconFetchResult> {
   const data = vault.requireData()
   const siteMap = new Map(data.sites.map((site) => [site.id, site]))
   const selectedIds = new Set(accountIds)
   const uniqueSites = new Map<string, Site>()
+  const accountCountsBySite = new Map<string, number>()
 
   for (const account of data.accounts) {
     if (!selectedIds.has(account.id)) continue
     const site = siteMap.get(account.siteId)
     if (!site) throw new Error('所选账号包含失效的站点')
     uniqueSites.set(site.id, site)
+    accountCountsBySite.set(site.id, (accountCountsBySite.get(site.id) ?? 0) + 1)
   }
   if (uniqueSites.size === 0) throw new Error('所选账号中包含不存在的记录')
 
   const queue = [...uniqueSites.values()]
   const results = new Map<string, string>()
+  const totalAccounts = [...accountCountsBySite.values()].reduce(
+    (total, count) => total + count,
+    0
+  )
+  let completedAccounts = 0
+  let updatedSiteCount = 0
+  let failedSiteCount = 0
+  const reportProgress = (): void => {
+    onProgress?.({
+      totalAccounts,
+      completedAccounts,
+      updatedSiteCount,
+      failedSiteCount
+    })
+  }
+  reportProgress()
+
   let cursor = 0
   const worker = async (): Promise<void> => {
     while (cursor < queue.length) {
+      if (signal?.aborted) return
       const site = queue[cursor]
       cursor += 1
       if (!site) continue
       try {
-        results.set(site.id, await fetchSiteIcon(site.startUrl))
+        const icon = await fetchSiteIcon(site.startUrl, signal)
+        if (signal?.aborted) return
+        results.set(site.id, icon)
+        updatedSiteCount += 1
       } catch {
-        // Continue with the remaining sites and report failures together.
+        if (signal?.aborted) return
+        failedSiteCount += 1
       }
+      completedAccounts += accountCountsBySite.get(site.id) ?? 0
+      reportProgress()
     }
   }
   await Promise.all(
@@ -3034,7 +3450,8 @@ async function fetchAccountIconsFromSites(
   return {
     updatedAccounts: updatedAccountIds.size,
     updatedSites: updatedSiteIds.size,
-    failedSites
+    failedSites,
+    canceled: signal?.aborted ?? false
   }
 }
 
@@ -3093,6 +3510,7 @@ function duplicateAccounts(accountIds: string[]): AccountWithSite[] {
         ? recipeIds.get(original.account.activeRecipeId)
         : undefined,
       lastUsedAt: undefined,
+      credentialUpdatedAt: now,
       sortOrder: nextAccountSortOrder(data, tabId),
       createdAt: now,
       updatedAt: now
@@ -3188,6 +3606,22 @@ function listAccounts(): AccountWithSite[] {
   })
 }
 
+function requireAccountAndSite(accountId: string): {
+  account: StoredAccount
+  site: Site
+} {
+  const data = vault.requireData()
+  const account = data.accounts.find((entry) => entry.id === accountId)
+  if (!account) {
+    throw new Error('账号不存在')
+  }
+  const site = data.sites.find((entry) => entry.id === account.siteId)
+  if (!site) {
+    throw new Error('站点不存在')
+  }
+  return { account, site }
+}
+
 function toPublicAccount(
   account: Omit<AccountWithSite, 'site'>,
   site: Site
@@ -3200,6 +3634,7 @@ function toPublicAccount(
     username: account.username,
     favorite: account.favorite,
     loginStrategy: account.loginStrategy ?? 'auto',
+    loginBrowser: account.loginBrowser ?? 'standalone',
     manualSelectors: structuredClone(account.manualSelectors),
     manualSteps: structuredClone(account.manualSteps),
     recipes: structuredClone(account.recipes ?? []),
@@ -3781,15 +4216,36 @@ function activateExistingDatabaseTab(
 }
 
 function appendImportLog(result: DataImportResult, fileName: string): void {
+  const warningDetails =
+    result.warnings.length > 0
+      ? `；警告 ${result.warnings.length} 条：${result.warnings[0]}`
+      : ''
   appendAppLog(dataDirectory, {
     level: result.accountsCreated > 0 ? 'success' : 'warning',
     category: 'data',
     message: `账号导入完成：${result.tabName}`,
-    details: `${fileName}；新增 ${result.sitesCreated} 个站点、${result.accountsCreated} 个账号，跳过 ${result.skipped} 条`
+    details: sanitizeLogDetails(
+      `${fileName}；新增 ${result.sitesCreated} 个站点、${result.accountsCreated} 个账号，跳过 ${result.skipped} 条${warningDetails}`
+    )
   })
 }
 
-async function copySecret(value: string): Promise<void> {
+function appendImportFailureLog(
+  label: string,
+  fileName: string,
+  error: unknown
+): void {
+  appendAppLog(dataDirectory, {
+    level: 'error',
+    category: 'data',
+    message: `${label}导入失败`,
+    details: sanitizeLogDetails(
+      `${fileName}；${error instanceof Error ? error.message : String(error)}`
+    )
+  })
+}
+
+async function copySecret(value: string, clearAfterMilliseconds = 30_000): Promise<void> {
   await clipboard.writeText(value)
   if (clipboardClearTimer) {
     clearTimeout(clipboardClearTimer)
@@ -3798,7 +4254,7 @@ async function copySecret(value: string): Promise<void> {
     if ((await clipboard.readText()) === value) {
       await clipboard.clear()
     }
-  }, 30_000)
+  }, clearAfterMilliseconds)
   clipboardClearTimer.unref()
 }
 
@@ -3932,6 +4388,31 @@ async function chooseDataLocation(): Promise<DataLocationChoiceResult | null> {
     status: 'changed',
     info: await applyDataLocationChange(target, 'migrate')
   }
+}
+
+async function chooseRecordingDraftDirectory(): Promise<string | null> {
+  if (!mainWindow) {
+    return null
+  }
+  const selection = await dialog.showOpenDialog(mainWindow, {
+    title: '选择录制副本保存目录',
+    buttonLabel: '使用此文件夹',
+    properties: ['openDirectory', 'createDirectory']
+  })
+  const selected = selection.filePaths[0]
+  if (selection.canceled || !selected) {
+    return null
+  }
+
+  const target = resolve(selected)
+  mkdirSync(target, { recursive: true })
+  const probe = join(target, `.autologin-write-test-${randomUUID()}`)
+  try {
+    writeFileSync(probe, '', { encoding: 'utf8', mode: 0o600 })
+  } finally {
+    rmSync(probe, { force: true })
+  }
+  return target
 }
 
 async function resolveDataLocationConflict(
@@ -4588,7 +5069,7 @@ function applyInterfaceScale(interfaceScale: number): void {
   if (!mainWindow || mainWindow.isDestroyed()) {
     return
   }
-  mainWindow.webContents.setZoomFactor(Math.min(1.25, Math.max(0.8, interfaceScale / 100)))
+  mainWindow.webContents.setZoomFactor(interfaceScaleToZoom(interfaceScale))
 }
 
 function requireId(value: unknown): string {
@@ -4646,9 +5127,18 @@ function normalizeSiteName(value: string): string {
 const SITE_ICON_MAX_BYTES = 512 * 1024
 const PAGE_ICON_SCAN_MAX_BYTES = 1024 * 1024
 
-async function fetchSiteIcon(pageUrl: string): Promise<string> {
+async function fetchSiteIcon(
+  pageUrl: string,
+  externalSignal?: AbortSignal
+): Promise<string> {
   const startUrl = new URL(normalizeUrl(pageUrl))
   const controller = new AbortController()
+  const abortFromExternal = (): void => controller.abort()
+  if (externalSignal?.aborted) {
+    controller.abort()
+  } else {
+    externalSignal?.addEventListener('abort', abortFromExternal, { once: true })
+  }
   const timer = setTimeout(() => controller.abort(), 10_000)
   timer.unref()
   const candidates = new Set<string>()
@@ -4717,12 +5207,16 @@ async function fetchSiteIcon(pageUrl: string): Promise<string> {
       }
     }
   } catch (error) {
+    if (externalSignal?.aborted) {
+      throw new Error('已中断获取网站图标')
+    }
     if (error instanceof Error && error.name === 'AbortError') {
       throw new Error('获取站点图标超时，请稍后重试或上传本地图片')
     }
     throw new Error('无法从该站点获取图标，请上传本地图片')
   } finally {
     clearTimeout(timer)
+    externalSignal?.removeEventListener('abort', abortFromExternal)
   }
   throw new Error('该站点没有可用的图标，请上传本地图片')
 }

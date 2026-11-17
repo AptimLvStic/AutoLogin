@@ -25,6 +25,7 @@ export interface StepResult {
   found: boolean
   challengeDetected: boolean
   clicked: boolean
+  manualRequired?: boolean
 }
 
 interface FillOptions {
@@ -146,6 +147,10 @@ export function executeStep(
   username: string,
   password: string
 ): StepResult {
+  if (step.type === 'acceptCertWarning') {
+    return { stepId: step.id, found: false, challengeDetected: false, clicked: false }
+  }
+
   if (step.type === 'focusChallenge') {
     const challenge = step.selector ? findBySelector(step.selector) : findChallengeField()
     if (challenge instanceof HTMLInputElement) {
@@ -172,6 +177,23 @@ export function executeStep(
 
   if (step.type === 'fillPassword' && element instanceof HTMLInputElement) {
     fillInput(element, password)
+    return { stepId: step.id, found: true, challengeDetected: false, clicked: false }
+  }
+
+  if (
+    step.type === 'paste' &&
+    (element instanceof HTMLInputElement || element instanceof HTMLTextAreaElement)
+  ) {
+    if (step.source === 'literal') {
+      return {
+        stepId: step.id,
+        found: true,
+        challengeDetected: false,
+        clicked: false,
+        manualRequired: true
+      }
+    }
+    fillTextControl(element, step.source === 'password' ? password : username)
     return { stepId: step.id, found: true, challengeDetected: false, clicked: false }
   }
 
@@ -386,8 +408,19 @@ function fieldMetadata(input: HTMLInputElement): string {
 }
 
 export function fillInput(input: HTMLInputElement, value: string): void {
+  fillTextControl(input, value)
+}
+
+function fillTextControl(
+  input: HTMLInputElement | HTMLTextAreaElement,
+  value: string
+): void {
   input.focus()
-  const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set
+  const prototype =
+    input instanceof HTMLTextAreaElement
+      ? HTMLTextAreaElement.prototype
+      : HTMLInputElement.prototype
+  const setter = Object.getOwnPropertyDescriptor(prototype, 'value')?.set
   if (setter) {
     setter.call(input, value)
   } else {

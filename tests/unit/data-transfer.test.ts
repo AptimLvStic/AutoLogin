@@ -95,7 +95,7 @@ describe('data transfer', () => {
     expect(merged.data.accounts[1]?.favorite).toBe(true)
   })
 
-  it('skips duplicate credentials and rejects conflicting site URLs', async () => {
+  it('skips duplicate credentials without creating duplicate sites', async () => {
     const directory = createDirectory()
     const path = join(directory, 'duplicates.csv')
     writeFileSync(
@@ -113,6 +113,65 @@ describe('data transfer', () => {
     expect(second.result.accountsCreated).toBe(0)
     expect(second.result.skipped).toBe(1)
     expect(second.result.warnings[0]).toContain('相同用户名')
+  })
+
+  it('imports same-title KDBX entries with different URLs under unique names', () => {
+    const parsed = {
+      candidates: [
+        {
+          siteName: 'VPN',
+          startUrl: 'https://vpn-a.example/login',
+          siteGroup: '大兴',
+          username: 'user-a',
+          password: 'secret-a',
+          autoSubmit: true,
+          favorite: false,
+          rowNumber: 1
+        },
+        {
+          siteName: 'VPN',
+          startUrl: 'https://vpn-b.example/login',
+          siteGroup: '亦庄',
+          username: 'user-b',
+          password: 'secret-b',
+          autoSubmit: true,
+          favorite: false,
+          rowNumber: 2
+        },
+        {
+          siteName: 'VPN',
+          startUrl: 'https://vpn-a.example/login',
+          siteGroup: '大兴',
+          username: 'user-c',
+          password: 'secret-c',
+          autoSubmit: true,
+          favorite: false,
+          rowNumber: 3
+        }
+      ],
+      warnings: [],
+      skipped: 0
+    }
+
+    const merged = mergeImportedLogins(emptyVault(), 'kdbx', parsed)
+
+    expect(merged.result).toMatchObject({
+      sitesCreated: 2,
+      accountsCreated: 3,
+      skipped: 0
+    })
+    expect(merged.data.sites.map((site) => site.name)).toEqual([
+      'VPN',
+      'VPN (2)'
+    ])
+    expect(merged.result.warnings[0]).toContain(
+      '同名但登录地址不同，已导入为“VPN (2)”'
+    )
+    expect(
+      merged.data.accounts.filter(
+        (account) => account.siteId === merged.data.sites[0]?.id
+      )
+    ).toHaveLength(2)
   })
 
   it('opens an AutoLogin snapshot with its exact file name instead of appending a copy suffix', () => {
@@ -143,6 +202,7 @@ describe('data transfer', () => {
         password: 'secret',
         favorite: false,
         loginStrategy: 'auto',
+        loginBrowser: 'standalone',
         createdAt: '2026-01-01T00:00:00.000Z',
         updatedAt: '2026-01-01T00:00:00.000Z'
       }
@@ -182,10 +242,67 @@ describe('data transfer', () => {
     })
   })
 
+  it('accepts literal quotes and hash characters in CSV password fields', async () => {
+    const directory = createDirectory()
+    const path = join(directory, 'literal-quotes.csv')
+    writeFileSync(
+      path,
+      [
+        '\uFEFF站点名称,登录地址,分组,用户名,密码,自动提交',
+        '# 这一行是模板注释，不应影响后面的字段',
+        '站点 A,https://a.example/login,分组,admin,eY%zE/_"s9GY,TRUE',
+        '站点 B,https://b.example/login,分组,admin,#acTe"\'8>yae,TRUE',
+        '站点 C,https://c.example/login,分组,admin,"BZbA|mT,e7C1",TRUE'
+      ].join('\r\n'),
+      'utf8'
+    )
+
+    const parsed = await parseCsvImport(path)
+    expect(parsed.candidates.map((candidate) => candidate.password)).toEqual([
+      'eY%zE/_"s9GY',
+      '#acTe"\'8>yae',
+      'BZbA|mT,e7C1'
+    ])
+  })
+
+  it('turns slash-delimited CSV groups into parent and child groups', async () => {
+    const directory = createDirectory()
+    const path = join(directory, 'nested-groups.csv')
+    writeFileSync(
+      path,
+      [
+        '\uFEFF站点名称,登录地址,分组,用户名,密码,自动提交',
+        '站点 A,https://a.example/login,中联航/亦庄,user-a,one,true',
+        '站点 B,https://b.example/login,中联航 / 大兴,user-b,two,true'
+      ].join('\r\n'),
+      'utf8'
+    )
+
+    const parsed = await parseCsvImport(path)
+    expect(parsed.candidates.map((candidate) => candidate.siteGroup)).toEqual([
+      '中联航 / 亦庄',
+      '中联航 / 大兴'
+    ])
+
+    const merged = mergeImportedLogins(emptyVault(), 'csv', parsed)
+    expect(
+      merged.data.groupDefinitions
+        .filter((group) => group.tabId === 'local')
+        .map((group) => group.path)
+    ).toEqual(['中联航', '中联航 / 亦庄', '中联航 / 大兴'])
+    expect(merged.data.sites.map((site) => site.group)).toEqual([
+      '中联航 / 亦庄',
+      '中联航 / 大兴'
+    ])
+  })
+
   it('exports and imports the localized CSV template without a favorite column', async () => {
     expect(CSV_TEMPLATE.split(/\r?\n/)[4]).toBe(
       '站点名称,登录地址,分组,用户名,密码,自动提交'
     )
+    expect(CSV_TEMPLATE).toContain('父分组 / 子分组')
+    expect(CSV_TEMPLATE).toContain('中联航/亦庄')
+    expect(CSV_TEMPLATE.split(/\r?\n/)[5]).toContain('"中联航 / 亦庄"')
     expect(CSV_TEMPLATE).not.toContain('favorite')
 
     const directory = createDirectory()

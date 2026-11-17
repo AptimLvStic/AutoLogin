@@ -15,7 +15,7 @@ const pageAgentPlugin = {
       { filter: /.*/, namespace: 'autologin-virtual' },
       async () => {
         const result = await build({
-          entryPoints: [resolve(root, 'src/preload/agent.ts')],
+          entryPoints: [resolve(root, 'src/agent/page-agent.ts')],
           absWorkingDir: root,
           bundle: true,
           format: 'iife',
@@ -41,9 +41,6 @@ const pageAgentPlugin = {
 const aliasPlugin = {
   name: 'autologin-backend-aliases',
   setup(buildContext) {
-    buildContext.onResolve({ filter: /^electron(?:-updater)?$/ }, () => ({
-      path: resolve(root, 'src/tauri/electron-shim.ts')
-    }))
     buildContext.onResolve({ filter: /^@shared\// }, (args) => ({
       path: resolve(root, `src/shared/${args.path.slice('@shared/'.length)}.ts`)
     }))

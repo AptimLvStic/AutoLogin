@@ -117,4 +117,40 @@ describe('group definition repair', () => {
     })
     expect(repairGroupDefinitions(data)).toBe(false)
   })
+
+  it('repairs unspaced imported group paths into a parent and child hierarchy', () => {
+    const data = vault()
+    data.sites = [
+      site('yizhuang', 'local', '中联航/亦庄'),
+      site('daxing', 'local', '中联航/大兴')
+    ]
+    data.groupDefinitions = [
+      group('local', '中联航/亦庄'),
+      group('local', '中联航/大兴')
+    ]
+    data.settings.groupOrders = {
+      local: ['中联航/亦庄', '中联航/大兴']
+    }
+    data.settings.groupOrder = ['中联航/亦庄', '中联航/大兴']
+
+    expect(repairGroupDefinitions(data)).toBe(true)
+    expect(data.sites.map((entry) => entry.group)).toEqual([
+      '中联航 / 亦庄',
+      '中联航 / 大兴'
+    ])
+    const repairedPaths = data.groupDefinitions
+      .filter((entry) => entry.tabId === 'local')
+      .map((entry) => entry.path)
+    expect(repairedPaths).toHaveLength(3)
+    expect(repairedPaths).toEqual(
+      expect.arrayContaining(['中联航', '中联航 / 亦庄', '中联航 / 大兴'])
+    )
+    expect(data.settings.groupOrders.local).toEqual([
+      '中联航 / 亦庄',
+      '中联航 / 大兴',
+      '中联航'
+    ])
+    expect(data.settings.groupOrder).toEqual(data.settings.groupOrders.local)
+    expect(repairGroupDefinitions(data)).toBe(false)
+  })
 })

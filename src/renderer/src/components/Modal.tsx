@@ -1,6 +1,6 @@
 import { useEffect, useId, useRef } from 'react'
 import { createPortal } from 'react-dom'
-import { X } from 'lucide-react'
+import { LoaderCircle, X } from 'lucide-react'
 import { useI18n } from '../i18n'
 
 export function Modal({
@@ -118,7 +118,8 @@ export function ConfirmDialog({
   danger = false,
   onConfirm,
   onClose,
-  busy = false
+  busy = false,
+  closeWhileBusy = false
 }: {
   title: string
   description: string
@@ -127,21 +128,29 @@ export function ConfirmDialog({
   onConfirm: () => void
   onClose: () => void
   busy?: boolean
+  closeWhileBusy?: boolean
 }): React.JSX.Element {
   const { tr } = useI18n()
   const label = confirmLabel ?? tr('确认', 'Confirm', '確認')
+  const closeEnabled = !busy || closeWhileBusy
   return (
     <Modal title={title} onClose={onClose} width="440px" className="confirm-dialog">
       <p className="modal-description">{description}</p>
       <div className="modal-actions">
-        <button className="button button--ghost" onClick={onClose} disabled={busy}>
-          {tr('取消', 'Cancel', '取消')}
+        <button className="button button--ghost" onClick={onClose} disabled={!closeEnabled}>
+          {busy && closeWhileBusy
+            ? tr('关闭', 'Close', '關閉')
+            : tr('取消', 'Cancel', '取消')}
         </button>
         <button
-          className={'button ' + (danger ? 'button--danger' : 'button--primary')}
+          className={`button ${
+            danger ? 'button--danger' : 'button--primary'
+          }${busy ? ' is-loading' : ''}`}
           onClick={onConfirm}
           disabled={busy}
+          aria-busy={busy}
         >
+          {busy && <LoaderCircle size={14} className="spin" />}
           {busy ? tr('处理中…', 'Working…', '處理中…') : label}
         </button>
       </div>

@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
@@ -137,6 +137,7 @@ describe('login log persistence', () => {
           accountLabel: 'Done',
           siteName: 'Done',
           groupName: 'Work',
+          loginBrowser: 'standalone',
           status: 'success',
           message: '登录成功'
         },
@@ -146,6 +147,7 @@ describe('login log persistence', () => {
           accountLabel: 'Queued',
           siteName: 'Queued',
           groupName: 'Work',
+          loginBrowser: 'standalone',
           status: 'queued',
           message: '等待打开'
         },
@@ -155,6 +157,7 @@ describe('login log persistence', () => {
           accountLabel: 'Running',
           siteName: 'Running',
           groupName: 'Work',
+          loginBrowser: 'standalone',
           status: 'opening',
           message: '正在启动默认浏览器'
         }
@@ -183,5 +186,30 @@ describe('login log persistence', () => {
       readLoginLogs(directory, { status: 'timeout' }).map((entry) => entry.accountId)
     ).toEqual(expect.arrayContaining(['account-2', 'account-3']))
     await manager.close()
+  })
+
+  it('clears profile directories even when browser shutdown does not settle', async () => {
+    const directory = createLogFixture()
+    mkdirSync(join(directory, 'BrowserProfiles', 'personal'), { recursive: true })
+    mkdirSync(join(directory, 'BrowserProfiles', 'batch'), { recursive: true })
+    const manager = new LoginBatchManager(
+      {} as never,
+      directory,
+      undefined,
+      true,
+      () => undefined
+    )
+    const internals = manager as unknown as {
+      closeRuntime: () => Promise<void>
+    }
+    internals.closeRuntime = vi.fn(() => new Promise<never>(() => undefined))
+    vi.useFakeTimers()
+
+    const pending = manager.clearSession('account-1')
+    await vi.advanceTimersByTimeAsync(5_100)
+    await pending
+
+    expect(existsSync(join(directory, 'BrowserProfiles', 'personal'))).toBe(false)
+    expect(existsSync(join(directory, 'BrowserProfiles', 'batch'))).toBe(false)
   })
 })

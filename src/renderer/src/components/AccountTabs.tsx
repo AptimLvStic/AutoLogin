@@ -8,7 +8,6 @@ interface AccountTabsProps {
   activeTabId: string
   bookmarkMode: boolean
   busy: boolean
-  accountCounts: ReadonlyMap<string, number>
   controls: ReactNode
   onSelect: (tab: AccountTab) => void
   onOpenMenu: (event: MouseEvent<HTMLElement>, tab: AccountTab) => void
@@ -20,7 +19,6 @@ export const AccountTabs = memo(function AccountTabs({
   activeTabId,
   bookmarkMode,
   busy,
-  accountCounts,
   controls,
   onSelect,
   onOpenMenu,
@@ -61,9 +59,6 @@ export const AccountTabs = memo(function AccountTabs({
             >
               <span className="account-tab__marker" aria-hidden="true" />
               <span className="account-tab__name">{tab.name}</span>
-              <span className="account-tab__count">
-                {accountCounts.get(tab.id) ?? 0}
-              </span>
               <span className={`account-tab__source is-${tab.source}`}>
                 {sourceLabel(tab.source, tr)}
               </span>

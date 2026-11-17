@@ -1,31 +1,33 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { invoke, isTauri } from '@tauri-apps/api/core'
+import { listen } from '@tauri-apps/api/event'
 import { getCurrentWebview } from '@tauri-apps/api/webview'
+import { getCurrentWebviewWindow } from '@tauri-apps/api/webviewWindow'
 import { LoaderCircle, LockKeyhole, Minus, Square, X } from 'lucide-react'
 import type {
   AccountWithSite,
   AppSettings,
   AppUpdateState,
   LoginBatchState,
+  LoginViewState,
   Site
 } from '@shared/types'
-import { DEFAULT_APP_SETTINGS, resolveThemeColors } from '@shared/theme'
+import {
+  DEFAULT_APP_SETTINGS,
+  interfaceScaleToZoom,
+  resolveThemeColors
+} from '@shared/theme'
 import logoUrl from './assets/app-logo.png'
 import { SetupScreen, UnlockScreen } from './components/AuthScreens'
 import { BrandMark } from './components/Brand'
 import { LibraryScreen } from './components/LibraryScreen'
-import { LoginWorkspace } from './components/LoginWorkspace'
 import { ConfirmDialog } from './components/Modal'
+import { RecordingHud } from './components/RecordingHud'
 import { Toast, type ToastKind, type ToastState } from './components/Toast'
 import { UpdateDialog } from './components/UpdateDialog'
 import { I18nProvider, translate } from './i18n'
 
 type AuthState = 'boot' | 'setup' | 'unlock' | 'ready'
-
-interface LoginTarget {
-  account: AccountWithSite
-  mode: 'record'
-}
 
 const DEFAULT_SETTINGS: AppSettings = {
   ...DEFAULT_APP_SETTINGS,
@@ -37,13 +39,55 @@ function runWindowAction(action: 'minimize' | 'toggle-maximize' | 'close'): void
   void invoke('window_action', { action })
 }
 
+function isVisibleElement(element: HTMLElement): boolean {
+  const style = window.getComputedStyle(element)
+  return (
+    style.display !== 'none' &&
+    style.visibility !== 'hidden' &&
+    element.getClientRects().length > 0
+  )
+}
+
+function activeSearchInput(): HTMLInputElement | null {
+  const modalLayers = Array.from(
+    document.querySelectorAll<HTMLElement>('.modal-layer')
+  ).filter(isVisibleElement)
+  const scope: ParentNode = modalLayers.at(-1) ?? document
+  const candidates = Array.from(
+    scope.querySelectorAll<HTMLInputElement>('input[data-app-search]')
+  )
+    .map((input, index) => ({ input, index }))
+    .filter(
+      ({ input }) =>
+        !input.disabled &&
+        !input.readOnly &&
+        isVisibleElement(input)
+    )
+    .sort((left, right) => {
+      const leftPriority = Number(left.input.dataset.appSearchPriority ?? 0)
+      const rightPriority = Number(right.input.dataset.appSearchPriority ?? 0)
+      return rightPriority - leftPriority || right.index - left.index
+    })
+
+  return candidates[0]?.input ?? null
+}
+
 export default function App(): React.JSX.Element {
+  const recordingHudWindow =
+    isTauri() &&
+    (getCurrentWebviewWindow().label === 'recording-hud' ||
+      new URLSearchParams(window.location.search).has('recordingHud'))
+  if (recordingHudWindow) {
+    return <RecordingHud />
+  }
+
   const [authState, setAuthState] = useState<AuthState>('boot')
   const [accounts, setAccounts] = useState<AccountWithSite[]>([])
   const [sites, setSites] = useState<Site[]>([])
   const [settings, setSettings] = useState<AppSettings>(DEFAULT_SETTINGS)
   const [appVersion, setAppVersion] = useState('0.9.10')
-  const [loginTarget, setLoginTarget] = useState<LoginTarget | null>(null)
+  const [loginState, setLoginState] = useState<LoginViewState | null>(null)
+  const [recordingFinishRequest, setRecordingFinishRequest] = useState(0)
   const [batchState, setBatchState] = useState<LoginBatchState | null>(null)
   const [updateState, setUpdateState] = useState<AppUpdateState | null>(null)
   const [systemPrefersDark, setSystemPrefersDark] = useState(() =>
@@ -54,6 +98,7 @@ export default function App(): React.JSX.Element {
   const [resetOpen, setResetOpen] = useState(false)
   const [resetBusy, setResetBusy] = useState(false)
   const toastTimer = useRef<number | null>(null)
+  const recordingActiveRef = useRef(false)
   const tr = (zhCN: string, en: string, zhTW: string): string =>
     translate(settings.language, zhCN, en, zhTW)
 
@@ -91,6 +136,27 @@ export default function App(): React.JSX.Element {
       document.removeEventListener('contextmenu', suppressNativeContextMenu)
   }, [])
 
+  useEffect(() => {
+    const focusSearch = (event: KeyboardEvent): void => {
+      if (
+        !(event.ctrlKey || event.metaKey) ||
+        event.altKey ||
+        event.key.toLowerCase() !== 'f'
+      ) {
+        return
+      }
+      event.preventDefault()
+      event.stopPropagation()
+      event.stopImmediatePropagation()
+      const input = activeSearchInput()
+      if (!input) return
+      input.focus({ preventScroll: false })
+      input.select()
+    }
+    document.addEventListener('keydown', focusSearch, true)
+    return () => document.removeEventListener('keydown', focusSearch, true)
+  }, [])
+
   const loadData = useCallback(async (): Promise<void> => {
     const [nextAccounts, nextSites, nextSettings] = await Promise.all([
       window.autologin.accounts.list(),
@@ -117,7 +183,7 @@ export default function App(): React.JSX.Element {
 
     const unsubscribeLocked = window.autologin.events.onVaultLocked(() => {
       if (!cancelled) {
-        setLoginTarget(null)
+        setLoginState(null)
         setBatchState(null)
         setAccounts([])
         setSites([])
@@ -135,6 +201,67 @@ export default function App(): React.JSX.Element {
       unsubscribeBatch()
     }
   }, [])
+
+  useEffect(() => {
+    let cancelled = false
+    void window.autologin.login.getState().then((state) => {
+      if (!cancelled) setLoginState(state)
+    }).catch(() => undefined)
+    const unsubscribe = window.autologin.events.onLoginState((state) => {
+      if (!cancelled) setLoginState(state)
+    })
+    return () => {
+      cancelled = true
+      unsubscribe()
+    }
+  }, [])
+
+  useEffect(() => {
+    const recording = loginState?.recording === true
+    if (isTauri() && recording !== recordingActiveRef.current) {
+      recordingActiveRef.current = recording
+      void invoke('set_recording_hud_visible', { visible: recording }).catch(() => {
+        if (recording) {
+          notify(
+            'error',
+            tr(
+              '无法显示录制浮条，请保持当前窗口并切换到浏览器完成录制',
+              'Could not show the recording bar. Keep this window open and switch to the browser to record.',
+              '無法顯示錄製浮條，請保持目前視窗並切換到瀏覽器完成錄製'
+            )
+          )
+        }
+      })
+    }
+  }, [loginState?.recording])
+
+  useEffect(() => {
+    if (!isTauri()) return
+    let disposed = false
+    let unlisten: (() => void) | null = null
+    void listen<{ action?: string }>('autologin://recording-shortcut', (event) => {
+      if (disposed) return
+      if (event.payload.action === 'finish-recording') {
+        void invoke('window_action', { action: 'focus' })
+        setRecordingFinishRequest((value) => value + 1)
+        return
+      }
+      const accountId = loginState?.accountId
+      if (!accountId || !loginState?.recording) return
+      if (event.payload.action === 'copy-username') {
+        void window.autologin.accounts.copyUsername(accountId)
+      } else if (event.payload.action === 'copy-password') {
+        void window.autologin.accounts.copy(accountId)
+      }
+    }).then((dispose) => {
+      if (disposed) dispose()
+      else unlisten = dispose
+    })
+    return () => {
+      disposed = true
+      unlisten?.()
+    }
+  }, [loginState?.accountId, loginState?.recording])
 
   useEffect(() => {
     let cancelled = false
@@ -166,7 +293,7 @@ export default function App(): React.JSX.Element {
   }, [])
 
   useEffect(() => {
-    const interfaceScale = Math.min(1.25, Math.max(0.8, settings.interfaceScale / 100))
+    const interfaceScale = interfaceScaleToZoom(settings.interfaceScale)
     document.documentElement.style.setProperty(
       '--interface-scale',
       String(interfaceScale)
@@ -231,12 +358,12 @@ export default function App(): React.JSX.Element {
     root.setProperty('--canvas-deep', `color-mix(in srgb, ${colors.background} 88%, ${colors.text})`)
     root.setProperty('--surface-raised', cardBackground)
     root.setProperty('--ink-soft', isDark ? '#D7DAE0' : '#30343A')
-    root.setProperty('--muted', isDark ? '#A4A9B3' : '#6B7280')
-    root.setProperty('--muted-light', isDark ? '#8B919B' : '#7A828D')
+    root.setProperty('--muted', isDark ? '#A4A9B3' : '#5F6672')
+    root.setProperty('--muted-light', isDark ? '#8B919B' : '#5A616D')
     root.setProperty('--line', isDark ? 'rgba(255, 255, 255, 0.09)' : '#E5E7EB')
     root.setProperty(
       '--line-strong',
-      isDark ? 'rgba(255, 255, 255, 0.16)' : '#D5D9E0'
+      isDark ? 'rgba(255, 255, 255, 0.2)' : '#8C94A1'
     )
     root.setProperty('--card-border', isDark ? 'rgba(255, 255, 255, 0.09)' : '#E8EAED')
     root.setProperty(
@@ -247,8 +374,14 @@ export default function App(): React.JSX.Element {
     )
     root.setProperty('--content-divider', isDark ? 'rgba(255, 255, 255, 0.08)' : '#E9EBEF')
     root.setProperty('--accent-strong', `color-mix(in srgb, ${colors.accent} 82%, ${effectiveColorMode === 'dark' ? 'white' : 'black'})`)
-    root.setProperty('--accent-soft', `color-mix(in srgb, ${colors.accent} 16%, ${colors.surface})`)
-    root.setProperty('--accent-pale', `color-mix(in srgb, ${colors.accent} 8%, ${colors.surface})`)
+    root.setProperty(
+      '--accent-soft',
+      `color-mix(in srgb, ${isMagpie ? '#5C6BFF' : colors.accent} 12%, ${colors.surface})`
+    )
+    root.setProperty(
+      '--accent-pale',
+      `color-mix(in srgb, ${isMagpie ? '#5C6BFF' : colors.accent} 7%, ${colors.surface})`
+    )
     root.setProperty('--accent-contrast', isDark && isMagpie ? '#15161A' : '#FFFFFF')
     root.setProperty(
       '--ink-panel',
@@ -328,7 +461,7 @@ export default function App(): React.JSX.Element {
 
   async function lockVault(): Promise<void> {
     await window.autologin.vault.lock()
-    setLoginTarget(null)
+    setLoginState(null)
     setBatchState(null)
     setAccounts([])
     setSites([])
@@ -341,7 +474,7 @@ export default function App(): React.JSX.Element {
       await window.autologin.app.clearAllData()
       setAccounts([])
       setSites([])
-      setLoginTarget(null)
+      setLoginState(null)
       setBatchState(null)
       setResetOpen(false)
       setAuthState('setup')
@@ -366,8 +499,32 @@ export default function App(): React.JSX.Element {
     }
   }
 
-  function openRecording(account: AccountWithSite): void {
-    setLoginTarget({ account, mode: 'record' })
+  async function openRecording(account: AccountWithSite): Promise<boolean> {
+    try {
+      const state = await window.autologin.login.start({
+        accountId: account.id,
+        mode: 'record'
+      })
+      setLoginState(state)
+      notify(
+        'info',
+        translate(
+          settings.language,
+          '录制已开始，浏览器已切换到前台',
+          'Recording started. The browser is now in the foreground.',
+          '錄製已開始，瀏覽器已切換到前景'
+        )
+      )
+      return true
+    } catch (error) {
+      notify(
+        'error',
+        error instanceof Error
+          ? error.message
+          : translate(settings.language, '无法开始录制', 'Could not start recording', '無法開始錄製')
+      )
+      return false
+    }
   }
 
   async function startBatch(accountIds: string[]): Promise<boolean> {
@@ -378,9 +535,9 @@ export default function App(): React.JSX.Element {
         'info',
         translate(
           settings.language,
-          `正在默认浏览器中打开 ${next.total} 个账号`,
-          `Opening ${next.total} account${next.total === 1 ? '' : 's'} in your default browser`,
-          `正在預設瀏覽器中開啟 ${next.total} 個帳號`
+          `正在按所选登录方式打开 ${next.total} 个账号`,
+          `Opening ${next.total} account${next.total === 1 ? '' : 's'} with the selected login method`,
+          `正在依所選登入方式開啟 ${next.total} 個帳號`
         )
       )
       return true
@@ -522,7 +679,7 @@ export default function App(): React.JSX.Element {
         </>
       )}
 
-      {authState === 'ready' && !loginTarget && (
+      {authState === 'ready' && (
         <LibraryScreen
           accounts={accounts}
           sites={sites}
@@ -530,6 +687,9 @@ export default function App(): React.JSX.Element {
           appVersion={appVersion}
           updateState={updateState}
           batchState={batchState}
+          loginState={loginState}
+          recordingFinishRequest={recordingFinishRequest}
+          onRecordingFinishHandled={() => setRecordingFinishRequest(0)}
           onRefresh={loadData}
           onLock={lockVault}
           onStartBatch={startBatch}
@@ -542,17 +702,6 @@ export default function App(): React.JSX.Element {
             setSites([])
             setAuthState('setup')
           }}
-          notify={notify}
-        />
-      )}
-
-      {authState === 'ready' && loginTarget && (
-        <LoginWorkspace
-          key={`${loginTarget.account.id}-${loginTarget.mode}`}
-          account={loginTarget.account}
-          mode={loginTarget.mode}
-          onClose={() => setLoginTarget(null)}
-          onDataChanged={loadData}
           notify={notify}
         />
       )}

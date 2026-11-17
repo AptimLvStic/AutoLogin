@@ -4,6 +4,16 @@ import {
   type AccountWithSite
 } from './types'
 
+export function normalizeGroupPath(path: string): string {
+  const trimmed = path.trim()
+  if (!trimmed || trimmed === UNGROUPED_GROUP_KEY) return trimmed
+  return trimmed
+    .split('/')
+    .map((segment) => segment.trim())
+    .filter(Boolean)
+    .join(GROUP_PATH_SEPARATOR)
+}
+
 export interface GroupSummary {
   key: string
   name: string

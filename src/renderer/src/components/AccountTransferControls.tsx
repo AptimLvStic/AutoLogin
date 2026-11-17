@@ -21,7 +21,10 @@ import type {
   KdbxSelection
 } from '@shared/types'
 import { useI18n } from '../i18n'
+import { LoadingSpinner } from './LoadingSpinner'
 import { Modal } from './Modal'
+
+const MIN_DATABASE_IMPORT_FEEDBACK_MS = 450
 
 export function AccountTransferControls({
   tabId,
@@ -186,6 +189,7 @@ export function AccountTransferControls({
       return
     }
     if (kdbxBusy) return
+    const startedAt = Date.now()
     setKdbxBusy(true)
     setKdbxError('')
     try {
@@ -203,6 +207,10 @@ export function AccountTransferControls({
           : tr('导入 KDBX 数据库失败', 'Could not import the KDBX database.', '匯入 KDBX 資料庫失敗')
       )
     } finally {
+      const remaining = MIN_DATABASE_IMPORT_FEEDBACK_MS - (Date.now() - startedAt)
+      if (remaining > 0) {
+        await new Promise((resolve) => window.setTimeout(resolve, remaining))
+      }
       setKdbxBusy(false)
     }
   }
@@ -216,6 +224,7 @@ export function AccountTransferControls({
       return
     }
     if (autologinBusy) return
+    const startedAt = Date.now()
     setAutologinBusy(true)
     setAutologinError('')
     try {
@@ -237,6 +246,10 @@ export function AccountTransferControls({
             )
       )
     } finally {
+      const remaining = MIN_DATABASE_IMPORT_FEEDBACK_MS - (Date.now() - startedAt)
+      if (remaining > 0) {
+        await new Promise((resolve) => window.setTimeout(resolve, remaining))
+      }
       setAutologinBusy(false)
     }
   }
@@ -519,7 +532,11 @@ export function AccountTransferControls({
           }}
           width="520px"
         >
-          <form className="kdbx-password-form" onSubmit={importKdbx}>
+          <form
+            className="kdbx-password-form"
+            onSubmit={importKdbx}
+            aria-busy={kdbxBusy}
+          >
             <div className="kdbx-file-summary">
               <span className="kdbx-file-summary__icon">
                 <Import size={15} />
@@ -548,9 +565,34 @@ export function AccountTransferControls({
                   onChange={(event) => setDatabasePassword(event.target.value)}
                   data-autofocus
                   autoComplete="current-password"
+                  disabled={kdbxBusy}
                 />
               </span>
             </label>
+            {kdbxBusy && (
+              <div className="database-import-progress" role="status" aria-live="polite">
+                <span className="database-import-progress__spinner">
+                  <LoadingSpinner size={18} />
+                </span>
+                <span className="database-import-progress__copy">
+                  <strong>
+                    {tr(
+                      '正在解密并导入数据库…',
+                      'Decrypting and importing the database…',
+                      '正在解密並匯入資料庫…'
+                    )}
+                  </strong>
+                  <small>
+                    {tr(
+                      '正在校验主密码、读取账号与分组，请稍候',
+                      'Verifying the master password and reading accounts and groups. Please wait.',
+                      '正在驗證主密碼、讀取帳號與分組，請稍候'
+                    )}
+                  </small>
+                </span>
+                <span className="database-import-progress__track" aria-hidden="true" />
+              </div>
+            )}
             {kdbxError && <p className="form-error">{kdbxError}</p>}
             <div className="modal-actions">
               <button
@@ -565,9 +607,14 @@ export function AccountTransferControls({
               >
                 {tr('取消', 'Cancel', '取消')}
               </button>
-              <button type="submit" className="button button--primary" disabled={kdbxBusy}>
+              <button
+                type="submit"
+                className={`button button--primary${kdbxBusy ? ' is-loading' : ''}`}
+                disabled={kdbxBusy}
+                aria-busy={kdbxBusy}
+              >
                 {kdbxBusy ? (
-                  <LoaderCircle size={15} className="spin" />
+                  <LoadingSpinner size={15} />
                 ) : (
                   <Import size={15} />
                 )}
@@ -600,7 +647,11 @@ export function AccountTransferControls({
           }}
           width="520px"
         >
-          <form className="kdbx-password-form" onSubmit={importAutologin}>
+          <form
+            className="kdbx-password-form"
+            onSubmit={importAutologin}
+            aria-busy={autologinBusy}
+          >
             <div className="kdbx-file-summary">
               <span className="kdbx-file-summary__icon">
                 <LockKeyhole size={15} />
@@ -631,9 +682,34 @@ export function AccountTransferControls({
                   onChange={(event) => setAutologinPassword(event.target.value)}
                   data-autofocus
                   autoComplete="current-password"
+                  disabled={autologinBusy}
                 />
               </span>
             </label>
+            {autologinBusy && (
+              <div className="database-import-progress" role="status" aria-live="polite">
+                <span className="database-import-progress__spinner">
+                  <LoadingSpinner size={18} />
+                </span>
+                <span className="database-import-progress__copy">
+                  <strong>
+                    {tr(
+                      '正在解密并导入配置…',
+                      'Decrypting and importing the configuration…',
+                      '正在解密並匯入設定…'
+                    )}
+                  </strong>
+                  <small>
+                    {tr(
+                      '正在校验主密码、读取账号与分组，请稍候',
+                      'Verifying the master password and reading accounts and groups. Please wait.',
+                      '正在驗證主密碼、讀取帳號與分組，請稍候'
+                    )}
+                  </small>
+                </span>
+                <span className="database-import-progress__track" aria-hidden="true" />
+              </div>
+            )}
             {autologinError && <p className="form-error">{autologinError}</p>}
             <div className="modal-actions">
               <button
@@ -648,9 +724,14 @@ export function AccountTransferControls({
               >
                 {tr('取消', 'Cancel', '取消')}
               </button>
-              <button type="submit" className="button button--primary" disabled={autologinBusy}>
+              <button
+                type="submit"
+                className={`button button--primary${autologinBusy ? ' is-loading' : ''}`}
+                disabled={autologinBusy}
+                aria-busy={autologinBusy}
+              >
                 {autologinBusy ? (
-                  <LoaderCircle size={15} className="spin" />
+                  <LoadingSpinner size={15} />
                 ) : (
                   <Import size={15} />
                 )}
@@ -728,7 +809,12 @@ export function AccountTransferControls({
               >
                 {tr('取消', 'Cancel', '取消')}
               </button>
-              <button type="submit" className="button button--primary" disabled={exportBusy}>
+              <button
+                type="submit"
+                className={`button button--primary${exportBusy ? ' is-loading' : ''}`}
+                disabled={exportBusy}
+                aria-busy={exportBusy}
+              >
                 {exportBusy ? (
                   <LoaderCircle size={15} className="spin" />
                 ) : (

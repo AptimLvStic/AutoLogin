@@ -9,16 +9,20 @@ import {
   EyeOff,
   Globe2,
   GripVertical,
+  History,
   ImagePlus,
   KeyRound,
   Layers3,
   ListChecks,
   LoaderCircle,
+  Pause,
+  Play,
   Plus,
   RefreshCw,
   Search,
   SlidersHorizontal,
   Trash2,
+  Undo2,
   UserRound,
   X
 } from 'lucide-react'
@@ -26,8 +30,13 @@ import type {
   AccountRecipe,
   AccountWithSite,
   GroupDefinition,
+  LoginBrowser,
   LoginStrategy,
+  LoginViewState,
+  RecipeDraftResult,
   RecipeStep,
+  RecordingSaveStatus,
+  RecordingStepSummary,
   SelectorTestResult,
   Site
 } from '@shared/types'
@@ -50,6 +59,7 @@ import {
   type ManualStepAction
 } from './ManualStepEditor'
 import { ConfirmDialog, Modal } from './Modal'
+import { CredentialHistoryDialog } from './CredentialHistoryDialog'
 import { PasswordGeneratorPopover } from './PasswordGenerator'
 import { SiteMark } from './SiteMark'
 
@@ -63,9 +73,11 @@ interface AccountDrawerProps {
   initialSiteId?: string
   onClose: () => void
   onSaved: (account: AccountWithSite, message: string) => void
-  onDeleted: () => void
-  onRecord?: () => void
+  onRecord?: () => Promise<boolean>
   onChanged: () => Promise<void>
+  loginState: LoginViewState | null
+  recordingFinishRequest: number
+  onRecordingFinishHandled: () => void
   notify: (kind: 'success' | 'error' | 'info', message: string) => void
 }
 
@@ -79,9 +91,11 @@ export function AccountDrawer({
   initialSiteId,
   onClose,
   onSaved,
-  onDeleted,
   onRecord,
   onChanged,
+  loginState,
+  recordingFinishRequest,
+  onRecordingFinishHandled,
   notify
 }: AccountDrawerProps): React.JSX.Element {
   const { tr } = useI18n()
@@ -107,14 +121,15 @@ export function AccountDrawer({
   const [showPassword, setShowPassword] = useState(false)
   const [revealedPassword, setRevealedPassword] = useState('')
   const [busy, setBusy] = useState(false)
-  const [destructiveBusy, setDestructiveBusy] = useState(false)
   const [error, setError] = useState('')
-  const [confirmDelete, setConfirmDelete] = useState(false)
-  const [confirmClear, setConfirmClear] = useState(false)
+  const [credentialHistoryOpen, setCredentialHistoryOpen] = useState(false)
   const [recipes, setRecipes] = useState<AccountRecipe[]>(account?.recipes ?? [])
   const [activeRecipeId, setActiveRecipeId] = useState(account?.activeRecipeId)
   const [loginStrategy, setLoginStrategy] = useState<LoginStrategy>(
     account?.loginStrategy ?? 'auto'
+  )
+  const [loginBrowser, setLoginBrowser] = useState<LoginBrowser>(
+    account?.loginBrowser ?? 'standalone'
   )
   const [manualSteps, setManualSteps] = useState<RecipeStep[]>(() =>
     initialManualSteps(account)
@@ -135,8 +150,20 @@ export function AccountDrawer({
     Record<string, SelectorTestResult>
   >({})
   const [recipeStepTesting, setRecipeStepTesting] = useState<string | null>(null)
+  const [recordingNow, setRecordingNow] = useState(Date.now())
+  const [recordingAction, setRecordingAction] = useState<
+    'pause' | 'resume' | 'undo' | 'username' | 'password' | 'trust' | 'finish' | null
+  >(null)
+  const [recordingFinishOpen, setRecordingFinishOpen] = useState(false)
+  const [recordingName, setRecordingName] = useState('')
+  const [recordingError, setRecordingError] = useState('')
+  const [recordingSaveStage, setRecordingSaveStage] = useState('')
+  const [recordingSaveFailed, setRecordingSaveFailed] = useState(false)
   const [iconBusy, setIconBusy] = useState(false)
   const revealTimer = useRef<number | null>(null)
+  const passwordEditedRef = useRef(false)
+  const closedRef = useRef(false)
+  const recordingSaveStageRef = useRef('')
   const sitePickerRef = useRef<HTMLDivElement>(null)
   const groupPickerRef = useRef<HTMLDivElement>(null)
   const iconFileRef = useRef<HTMLInputElement>(null)
@@ -170,12 +197,42 @@ export function AccountDrawer({
       group.path.toLocaleLowerCase().includes(query)
     )
   }, [groupOptions, groupPickerQuery])
+  const recordingThisAccount = Boolean(
+    account &&
+      loginState?.recording &&
+      loginState.accountId === account.id
+  )
+  const recordingSteps = recordingThisAccount ? (loginState?.recordingSteps ?? []) : []
+  const recordingStepCount = recordingThisAccount
+    ? (loginState?.recordingStepCount ?? recordingSteps.length)
+    : 0
+  const recordingElapsed = formatRecordingDuration(loginState, recordingNow)
+  const recordingLong = recordingDurationSeconds(loginState, recordingNow) >= 300
 
   useEffect(() => {
     return () => {
       if (revealTimer.current) window.clearTimeout(revealTimer.current)
     }
   }, [])
+
+  useEffect(() => {
+    if (isBookmark || mode !== 'edit' || !account) return
+    let cancelled = false
+    passwordEditedRef.current = false
+    setPassword('')
+    setRevealedPassword('')
+    setShowPassword(false)
+    void window.autologin.accounts
+      .reveal(account.id)
+      .then((result) => {
+        if (cancelled || passwordEditedRef.current) return
+        setPassword(result.password)
+      })
+      .catch(() => undefined)
+    return () => {
+      cancelled = true
+    }
+  }, [account?.id, isBookmark, mode])
 
   useEffect(() => {
     if (!sitePickerOpen) return
@@ -221,6 +278,49 @@ export function AccountDrawer({
     }
   }, [groupPickerOpen])
 
+  useEffect(() => {
+    if (!recordingThisAccount) return
+    const timer = window.setInterval(() => setRecordingNow(Date.now()), 1000)
+    return () => window.clearInterval(timer)
+  }, [recordingThisAccount])
+
+  useEffect(() => {
+    if (!recordingThisAccount) {
+      if (recordingAction === 'finish') return
+      setRecordingFinishOpen(false)
+      setRecordingAction(null)
+      setRecordingError('')
+      setRecordingSaveStage('')
+      recordingSaveStageRef.current = ''
+      setRecordingSaveFailed(false)
+    }
+  }, [recordingAction, recordingThisAccount])
+
+  useEffect(() => {
+    if (recordingAction !== 'finish') return
+    const message = loginState?.message?.trim()
+    if (!message || !isRecordingSaveStage(message)) return
+    recordingSaveStageRef.current = message
+    setRecordingSaveStage(message)
+  }, [loginState?.message, recordingAction])
+
+  useEffect(() => {
+    if (!recordingThisAccount || recordingFinishRequest <= 0) return
+    setRecordingError('')
+    setRecordingSaveFailed(false)
+    setRecordingSaveStage('')
+    recordingSaveStageRef.current = ''
+    setRecordingName((current) => current || defaultRecordingName(recipes.length, tr))
+    setRecordingFinishOpen(true)
+    onRecordingFinishHandled()
+  }, [
+    onRecordingFinishHandled,
+    recipes.length,
+    recordingFinishRequest,
+    recordingThisAccount,
+    tr
+  ])
+
   function hideRevealedPassword(): void {
     if (revealTimer.current) {
       window.clearTimeout(revealTimer.current)
@@ -265,7 +365,7 @@ export function AccountDrawer({
   }
 
   async function fetchWebsiteIcon(): Promise<void> {
-    if (!/^https?:\/\//i.test(startUrl.trim())) {
+    if (!isValidHttpUrl(startUrl)) {
       notify(
         'error',
         tr(
@@ -319,7 +419,7 @@ export function AccountDrawer({
   }
 
   function deriveSiteName(): void {
-    if (siteName.trim() || !startUrl.startsWith('http')) return
+    if (siteName.trim() || !isValidHttpUrl(startUrl)) return
     try {
       const hostname = new URL(startUrl).hostname.replace(/^www\./, '')
       const base = hostname.split('.')[0]
@@ -348,7 +448,7 @@ export function AccountDrawer({
       setError(tr('请填写登录密码', 'Enter the login password.', '請填寫登入密碼'))
       return
     }
-    if (!siteName.trim() || !/^https?:\/\//.test(startUrl)) {
+    if (!siteName.trim() || !isValidHttpUrl(startUrl)) {
       setError(tr('请填写有效的站点名称和登录地址', 'Enter a valid site name and sign-in URL.', '請填寫有效的站點名稱和登入網址'))
       return
     }
@@ -371,18 +471,32 @@ export function AccountDrawer({
       return
     }
 
+    const startedAt = Date.now()
+    const saveLabel = isBookmark
+      ? tr('保存书签', 'Save bookmark', '儲存書籤')
+      : tr('保存账号修改', 'Save account changes', '儲存帳號變更')
+    let saveStage = tr('准备保存', 'Preparing to save', '準備儲存')
     setBusy(true)
     try {
       let site: Site
       if (siteMode === 'new') {
-        site = await window.autologin.sites.save({
-          tabId,
-          name: siteName.trim(),
-          startUrl: startUrl.trim(),
-          autoSubmit,
-          group: siteGroup.trim() || undefined,
-          ...(siteIcon ? { icon: siteIcon } : {})
-        })
+        saveStage = tr('写入站点信息', 'Writing site details', '寫入站點資訊')
+        site = await withUiTimeout(
+          window.autologin.sites.save({
+            tabId,
+            name: siteName.trim(),
+            startUrl: startUrl.trim(),
+            autoSubmit,
+            group: siteGroup.trim() || undefined,
+            ...(siteIcon ? { icon: siteIcon } : {})
+          }),
+          20_000,
+          tr(
+            '保存站点信息未完成（已等待 20 秒）',
+            'Saving site details did not finish within 20 seconds.',
+            '儲存站點資訊未完成（已等待 20 秒）'
+          )
+        )
       } else {
         if (!selectedSite) throw new Error(tr('请选择站点', 'Select a site.', '請選擇站點'))
         const groupChanged = (selectedSite.group ?? '') !== siteGroup.trim()
@@ -395,32 +509,57 @@ export function AccountDrawer({
         site =
           !siteChanged
             ? selectedSite
-            : await window.autologin.sites.save({
-                id: selectedSite.id,
-                tabId: selectedSite.tabId,
-                name: siteName.trim(),
-                startUrl: startUrl.trim(),
-                allowedOrigins: selectedSite.allowedOrigins,
-                autoSubmit,
-                group: siteGroup.trim() || undefined,
-                ...(siteIcon ? { icon: siteIcon } : {})
-              })
+            : await (async () => {
+                saveStage = tr('写入站点信息', 'Writing site details', '寫入站點資訊')
+                return await withUiTimeout(
+                  window.autologin.sites.save({
+                    id: selectedSite.id,
+                    tabId: selectedSite.tabId,
+                    name: siteName.trim(),
+                    startUrl: startUrl.trim(),
+                    allowedOrigins: selectedSite.allowedOrigins,
+                    autoSubmit,
+                    group: siteGroup.trim() || undefined,
+                    ...(siteIcon ? { icon: siteIcon } : {})
+                  }),
+                  20_000,
+                  tr(
+                    '保存站点信息未完成（已等待 20 秒）',
+                    'Saving site details did not finish within 20 seconds.',
+                    '儲存站點資訊未完成（已等待 20 秒）'
+                  )
+                )
+              })()
       }
 
+      if (closedRef.current) return
       let saved: AccountWithSite
       if (mode === 'edit' && account) {
-        saved = await window.autologin.accounts.update(account.id, {
-          label: site.name,
-          ...(isBookmark
-            ? {}
-            : {
-                username: username.trim(),
-                loginStrategy,
-                manualSteps:
-                  loginStrategy === 'manual' ? normalizeManualSteps(manualSteps) : [],
-                ...(password ? { password } : {})
-              })
-        })
+        saveStage = isBookmark
+          ? tr('写入书签信息', 'Writing bookmark details', '寫入書籤資訊')
+          : tr('写入账号信息', 'Writing account details', '寫入帳號資訊')
+        saved = await withUiTimeout(
+          window.autologin.accounts.update(account.id, {
+            label: site.name,
+            ...(isBookmark
+              ? {}
+              : {
+                  username: username.trim(),
+                  loginStrategy,
+                  loginBrowser,
+                  manualSteps:
+                    loginStrategy === 'manual' ? normalizeManualSteps(manualSteps) : [],
+                  ...(password ? { password } : {})
+                })
+          }),
+          20_000,
+          tr(
+            '保存账号信息未完成（已等待 20 秒）',
+            'Saving account details did not finish within 20 seconds.',
+            '儲存帳號資訊未完成（已等待 20 秒）'
+          )
+        )
+        if (closedRef.current) return
         onSaved(
           saved,
           isBookmark
@@ -428,17 +567,30 @@ export function AccountDrawer({
             : tr('账号信息已更新', 'Account updated.', '帳號資料已更新')
         )
       } else {
-        saved = await window.autologin.accounts.create({
-          siteId: site.id,
-          label: site.name,
-          username: isBookmark ? '' : username.trim(),
-          password: isBookmark ? '' : password,
-          loginStrategy: isBookmark ? 'auto' : loginStrategy,
-          manualSteps:
-            isBookmark || loginStrategy !== 'manual'
-              ? []
-              : normalizeManualSteps(manualSteps)
-        })
+        saveStage = isBookmark
+          ? tr('创建书签', 'Creating bookmark', '建立書籤')
+          : tr('创建账号', 'Creating account', '建立帳號')
+        saved = await withUiTimeout(
+          window.autologin.accounts.create({
+            siteId: site.id,
+            label: site.name,
+            username: isBookmark ? '' : username.trim(),
+            password: isBookmark ? '' : password,
+            loginStrategy: isBookmark ? 'auto' : loginStrategy,
+            loginBrowser: isBookmark ? 'standalone' : loginBrowser,
+            manualSteps:
+              isBookmark || loginStrategy !== 'manual'
+                ? []
+                : normalizeManualSteps(manualSteps)
+          }),
+          20_000,
+          tr(
+            '保存账号信息未完成（已等待 20 秒）',
+            'Saving account details did not finish within 20 seconds.',
+            '儲存帳號資訊未完成（已等待 20 秒）'
+          )
+        )
+        if (closedRef.current) return
         onSaved(
           saved,
           isBookmark
@@ -447,9 +599,24 @@ export function AccountDrawer({
         )
       }
     } catch (reason) {
-      setError(reason instanceof Error ? reason.message : tr('保存失败', 'Could not save.', '儲存失敗'))
+      if (closedRef.current) return
+      const message = describeOperationFailure(
+        saveLabel,
+        saveStage,
+        startedAt,
+        reason,
+        tr
+      )
+      setError(message)
+      void window.autologin.app
+        .reportUiFailure({
+          context: saveLabel,
+          message,
+          durationMs: Date.now() - startedAt
+        })
+        .catch(() => undefined)
     } finally {
-      setBusy(false)
+      if (!closedRef.current) setBusy(false)
     }
   }
 
@@ -485,38 +652,31 @@ export function AccountDrawer({
     if (!account) return
     try {
       await window.autologin.accounts.copy(account.id)
-      notify('success', tr('密码已复制，30 秒后自动清除', 'Password copied and will clear in 30 seconds.', '密碼已複製，30 秒後自動清除'))
+      notify(
+        'success',
+        recordingThisAccount
+          ? tr(
+              '密码已复制，录制期间 2 分钟后清除',
+              'Password copied and will clear 2 minutes after recording ends.',
+              '密碼已複製，錄製期間 2 分鐘後清除'
+            )
+          : tr(
+              '密码已复制，30 秒后自动清除',
+              'Password copied and will clear in 30 seconds.',
+              '密碼已複製，30 秒後自動清除'
+            )
+      )
     } catch (reason) {
       notify('error', reason instanceof Error ? reason.message : tr('复制失败', 'Copy failed.', '複製失敗'))
     }
   }
 
-  async function clearSession(): Promise<void> {
-    if (!account) return
-    setDestructiveBusy(true)
-    try {
-      await window.autologin.login.clearSession(account.id)
-      setConfirmClear(false)
-      notify('success', tr('网站会话已清除', 'Website session cleared.', '網站工作階段已清除'))
-    } catch (reason) {
-      notify('error', reason instanceof Error ? reason.message : tr('清除会话失败', 'Could not clear session.', '清除工作階段失敗'))
-    } finally {
-      setDestructiveBusy(false)
-    }
-  }
-
-  async function deleteAccount(): Promise<void> {
-    if (!account) return
-    setDestructiveBusy(true)
-    try {
-      await window.autologin.accounts.delete(account.id)
-      setConfirmDelete(false)
-      onDeleted()
-    } catch (reason) {
-      notify('error', reason instanceof Error ? reason.message : tr('删除失败', 'Delete failed.', '刪除失敗'))
-    } finally {
-      setDestructiveBusy(false)
-    }
+  async function applyRestoredCredentials(saved: AccountWithSite): Promise<void> {
+    setUsername(saved.username)
+    setPassword('')
+    setShowPassword(false)
+    hideRevealedPassword()
+    await onChanged()
   }
 
   async function activateRecipe(recipeId: string): Promise<void> {
@@ -763,7 +923,7 @@ export function AccountDrawer({
     void persistRecipeSteps(updated, steps)
   }
 
-  function startRecording(): void {
+  async function startRecording(): Promise<void> {
     if (!onRecord) return
     if (recipes.length >= 3) {
       notify(
@@ -776,7 +936,357 @@ export function AccountDrawer({
       )
       return
     }
-    onRecord()
+    setRecordingError('')
+    setRecordingSaveFailed(false)
+    setRecordingSaveStage('')
+    recordingSaveStageRef.current = ''
+    const started = await onRecord()
+    if (started) {
+      setRecordingNow(Date.now())
+      setRecordingName(defaultRecordingName(recipes.length, tr))
+    }
+  }
+
+  function requestDrawerClose(): void {
+    if (closedRef.current) return
+    if (recordingThisAccount) {
+      notify(
+        'info',
+        tr(
+          '编辑页已关闭，录制继续在后台进行；可通过顶部录制浮条继续操作。',
+          'The editor is closed. Recording continues in the background from the top recording bar.',
+          '編輯頁已關閉，錄製繼續在背景進行；可透過頂部錄製浮條繼續操作。'
+        )
+      )
+    }
+    closedRef.current = true
+    setRecordingFinishOpen(false)
+    onClose()
+  }
+
+  async function toggleRecordingPause(): Promise<void> {
+    if (!recordingThisAccount || recordingAction) return
+    const resume = loginState?.recordingPaused === true
+    setRecordingAction(resume ? 'resume' : 'pause')
+    try {
+      if (resume) {
+        await window.autologin.login.resumeRecording()
+      } else {
+        await window.autologin.login.pauseRecording()
+      }
+    } catch (reason) {
+      notify(
+        'error',
+        reason instanceof Error
+          ? reason.message
+          : tr('更新录制状态失败', 'Could not update recording.', '無法更新錄製狀態')
+      )
+    } finally {
+      setRecordingAction(null)
+    }
+  }
+
+  async function undoRecordingStep(): Promise<void> {
+    if (!recordingThisAccount || recordingAction || recordingStepCount === 0) return
+    setRecordingAction('undo')
+    try {
+      await window.autologin.login.undoRecordingStep()
+    } catch (reason) {
+      notify(
+        'error',
+        reason instanceof Error
+          ? reason.message
+          : tr('撤销失败', 'Could not undo the last step.', '撤銷失敗')
+      )
+    } finally {
+      setRecordingAction(null)
+    }
+  }
+
+  async function trustCurrentOrigin(): Promise<void> {
+    if (!recordingThisAccount || recordingAction) return
+    setRecordingAction('trust')
+    try {
+      await window.autologin.login.trustCurrentOrigin()
+      notify(
+        'success',
+        tr('已信任当前域名并继续录制', 'Origin trusted; recording continues.', '已信任目前網域並繼續錄製')
+      )
+    } catch (reason) {
+      notify(
+        'error',
+        reason instanceof Error
+          ? reason.message
+          : tr('无法信任当前域名', 'Could not trust this origin.', '無法信任目前網域')
+      )
+    } finally {
+      setRecordingAction(null)
+    }
+  }
+
+  async function copyRecordingCredential(kind: 'username' | 'password'): Promise<void> {
+    if (recordingAction) return
+    setRecordingAction(kind)
+    try {
+      if (kind === 'username') {
+        await copyUsername()
+      } else {
+        await copyPassword()
+      }
+    } finally {
+      setRecordingAction(null)
+    }
+  }
+
+  function openRecordingSummary(): void {
+    setRecordingError('')
+    setRecordingSaveFailed(false)
+    setRecordingSaveStage('')
+    recordingSaveStageRef.current = ''
+    setRecordingName(defaultRecordingName(recipes.length, tr))
+    setRecordingFinishOpen(true)
+  }
+
+  function completeRecordingSave(
+    result: RecipeDraftResult,
+    name: string,
+    message: string
+  ): boolean {
+    if (!result.saved || !result.recipeId) return false
+    const recipe = { id: result.recipeId, name, recipe: result.recipe }
+    setRecipes((current) => [
+      ...current.filter((entry) => entry.id !== result.recipeId),
+      recipe
+    ])
+    setActiveRecipeId(result.recipeId)
+    setRecordingFinishOpen(false)
+    setRecordingSaveFailed(false)
+    setRecordingError('')
+    setRecordingSaveStage('')
+    recordingSaveStageRef.current = ''
+    notify('success', message)
+    void onChanged().catch(() => undefined)
+    return true
+  }
+
+  function completeRecordingDraftSave(message: string): void {
+    setRecordingFinishOpen(false)
+    setRecordingSaveFailed(false)
+    setRecordingError('')
+    setRecordingSaveStage('')
+    recordingSaveStageRef.current = ''
+    notify('success', message)
+  }
+
+  async function readRecordingSaveStatus(): Promise<RecordingSaveStatus | null> {
+    try {
+      return await withUiTimeout(
+        window.autologin.login.recordingSaveStatus(),
+        3_000,
+        tr(
+          '核对保存结果超时',
+          'Checking the save result timed out.',
+          '核對儲存結果逾時'
+        )
+      )
+    } catch {
+      return null
+    }
+  }
+
+  async function finishRecording(): Promise<void> {
+    if (!account || !recordingThisAccount || recordingAction) return
+    if (recordingStepCount === 0) {
+      setRecordingError(
+        tr(
+          '当前还没有捕捉到可回放步骤，请继续在浏览器中完成登录',
+          'No replayable steps were captured yet. Continue signing in through the browser.',
+          '目前還沒有捕捉到可回放步驟，請繼續在瀏覽器中完成登入'
+        )
+      )
+      return
+    }
+    const name = recordingName.trim()
+    if (!name) {
+      setRecordingError(tr('请填写流程名称', 'Enter a flow name.', '請填寫流程名稱'))
+      return
+    }
+    if (recipes.some((recipe) => recipe.name === name)) {
+      setRecordingError(
+        tr(
+          '录制流程名称已存在，请换一个名称',
+          'A recorded flow with this name already exists.',
+          '錄製流程名稱已存在，請換一個名稱'
+        )
+      )
+      return
+    }
+    const startedAt = Date.now()
+    const initialStage = tr(
+      '正在提交保存请求',
+      'Submitting the save request',
+      '正在提交儲存請求'
+    )
+    setRecordingAction('finish')
+    setRecordingError('')
+    setRecordingSaveFailed(false)
+    setRecordingSaveStage(initialStage)
+    recordingSaveStageRef.current = initialStage
+    let saveStatus: RecordingSaveStatus | null = null
+    try {
+      const result = await withUiTimeout(
+        window.autologin.login.finishRecording(name),
+        21_000,
+        tr(
+          '保存录制流程未完成（已等待 21 秒）',
+          'Saving the recorded flow did not finish within 21 seconds.',
+          '儲存錄製流程未完成（已等待 21 秒）'
+        )
+      )
+      if (result.draftSaved && !result.saved) {
+        completeRecordingDraftSave(
+          tr(
+            '保险库暂未写入，录制草稿已保存；重启后会自动恢复',
+            'The vault write did not finish, but the recording draft is safely saved and will recover after restart.',
+            '保險庫暫未寫入，錄製草稿已儲存；重新啟動後會自動恢復'
+          )
+        )
+        return
+      }
+      if (!result.saved || !result.recipeId) {
+        setRecordingError(
+          tr(
+            '没有捕捉到可回放步骤，请返回浏览器完成一次登录操作',
+            'No replayable steps were captured. Return to the browser and complete a sign-in.',
+            '沒有捕捉到可回放步驟，請返回瀏覽器完成一次登入操作'
+          )
+        )
+        setRecordingSaveFailed(true)
+        return
+      }
+      completeRecordingSave(
+        result,
+        name,
+        tr(
+          '录制流程已保存并启用',
+          'Recorded flow saved and enabled.',
+          '錄製流程已儲存並啟用'
+        )
+      )
+    } catch (reason) {
+      let rawMessage =
+        reason instanceof Error
+          ? reason.message
+          : tr('保存录制流程失败', 'Could not save the recorded flow.', '儲存錄製流程失敗')
+      const checkingStage = tr(
+        '保存请求尚未返回，正在核对本地写入状态…',
+        'The save request has not returned; checking the local write status...',
+        '儲存請求尚未返回，正在核對本機寫入狀態…'
+      )
+      recordingSaveStageRef.current = checkingStage
+      setRecordingSaveStage(checkingStage)
+      saveStatus = await readRecordingSaveStatus()
+      const statusDeadline = Date.now() + 15_000
+      while (
+        (saveStatus === null || saveStatus.state === 'saving') &&
+        Date.now() < statusDeadline
+      ) {
+        const detail = saveStatus?.stage
+        const writingStage = detail
+          ? tr(
+              `后台进度：${detail}（请勿重复点击）`,
+              `Backend stage: ${detail} (do not submit again)`,
+              `後台進度：${detail}（請勿重複點擊）`
+            )
+          : tr(
+              '等待后台响应，请勿重复点击…',
+              'Waiting for the backend; do not submit again...',
+              '等待後台回應，請勿重複點擊…'
+            )
+        recordingSaveStageRef.current = writingStage
+        setRecordingSaveStage(writingStage)
+        await new Promise<void>((resolve) => window.setTimeout(resolve, 750))
+        saveStatus = await readRecordingSaveStatus()
+      }
+      if (saveStatus?.state === 'idle') {
+        rawMessage = tr(
+          '后台没有收到这次保存请求（可能已与界面断开）。请重启软件后确认流程是否已保存。',
+          'The backend never received this save request. Restart the app and check whether the flow was saved.',
+          '後台沒有收到這次儲存請求。請重新啟動軟體後確認流程是否已儲存。'
+        )
+      }
+      if (
+        saveStatus?.state === 'saved' &&
+        saveStatus.result?.saved &&
+        saveStatus.result.recipeId
+      ) {
+        completeRecordingSave(
+          saveStatus.result,
+          name,
+          tr(
+            '检测到流程已保存并启用',
+            'The recorded flow was saved and enabled.',
+            '偵測到流程已儲存並啟用'
+          )
+        )
+        return
+      }
+      if (saveStatus?.state === 'draft_saved') {
+        completeRecordingDraftSave(
+          tr(
+            '保险库暂未写入，录制草稿已保存；重启后会自动恢复',
+            'The vault write did not finish, but the recording draft is safely saved and will recover after restart.',
+            '保險庫暫未寫入，錄製草稿已儲存；重新啟動後會自動恢復'
+          )
+        )
+        return
+      }
+      if (saveStatus?.state === 'failed' && saveStatus.error) {
+        rawMessage = saveStatus.error
+      } else if (saveStatus?.state === 'saving') {
+        const pendingStage = tr(
+          '保存仍在后台进行',
+          'The save is still running in the background',
+          '儲存仍在背景進行'
+        )
+        recordingSaveStageRef.current = pendingStage
+        setRecordingSaveStage(pendingStage)
+      }
+      const stage =
+        recordingSaveStageRef.current ||
+        tr('提交保存请求', 'Submitting the save request', '提交儲存請求')
+      const seconds = Math.max(0, (Date.now() - startedAt) / 1000).toFixed(1)
+      const stillSaving = saveStatus?.state === 'saving'
+      const message = `${rawMessage} ${tr(
+        '当前阶段',
+        'Current stage',
+        '目前階段'
+      )}：${stage}；${tr('已等待', 'Waited', '已等待')} ${seconds} ${
+        stillSaving
+          ? tr(
+              '秒。保存仍在后台进行，请勿重复点击；可关闭编辑页，稍后从顶部录制浮条或通知确认结果。',
+              'seconds. The save is still running in the background. Do not submit again; close the editor and confirm later from the top recording bar or notification.',
+              '秒。儲存仍在背景進行，請勿重複點擊；可關閉編輯頁，稍後從頂部錄製浮條或通知確認結果。'
+            )
+          : tr(
+              '秒。数据可能已写入，也可能尚未写入；可重试保存，或先关闭编辑页并从顶部录制浮条继续。',
+              'seconds. The data may or may not have been saved. Retry, or close the editor and continue from the top recording bar.',
+              '秒。資料可能已寫入，也可能尚未寫入；可重試儲存，或先關閉編輯頁並從頂部錄製浮條繼續。'
+            )
+      }`
+      setRecordingSaveFailed(true)
+      setRecordingError(message)
+      notify('error', message)
+      void window.autologin.app
+        .reportUiFailure({
+          context: tr('保存录制流程', 'Save recorded flow', '儲存錄製流程'),
+          message,
+          durationMs: Date.now() - startedAt
+        })
+        .catch(() => undefined)
+    } finally {
+      setRecordingAction(null)
+    }
   }
 
   async function testManualStep(step: RecipeStep): Promise<void> {
@@ -894,15 +1404,14 @@ export function AccountDrawer({
                 </h2>
                 <span className="domain-label">
                   <Globe2 size={12} />
-                  {startUrl.startsWith('http')
-                    ? safeHostname(startUrl)
-                    : tr('填写登录地址后开始', 'Enter a sign-in URL to begin', '填寫登入網址後開始')}
+                  {safeHostname(startUrl) ||
+                    tr('地址未设置', 'Address not set', '位址未設定')}
                 </span>
               </div>
             </div>
             <button
               className="icon-button icon-button--small"
-              onClick={onClose}
+              onClick={requestDrawerClose}
               aria-label={tr('关闭', 'Close', '關閉')}
             >
               <X size={17} />
@@ -964,7 +1473,8 @@ export function AccountDrawer({
                         </strong>
                         <small>
                           {selectedSite
-                            ? safeHostname(selectedSite.startUrl)
+                            ? safeHostname(selectedSite.startUrl) ||
+                              tr('地址未设置', 'Address not set', '位址未設定')
                             : tr('从本地站点中选择', 'Choose from saved sites', '從本機站點中選擇')}
                         </small>
                       </span>
@@ -984,6 +1494,9 @@ export function AccountDrawer({
                           <input
                             value={sitePickerQuery}
                             onChange={(event) => setSitePickerQuery(event.target.value)}
+                            data-app-search
+                            data-app-search-priority={40}
+                            aria-keyshortcuts="Control+F"
                             onKeyDown={(event) => {
                               if (event.key === 'Enter') event.preventDefault()
                             }}
@@ -1014,7 +1527,10 @@ export function AccountDrawer({
                             <SiteMark site={site} />
                             <span>
                               <strong>{site.name}</strong>
-                              <small>{safeHostname(site.startUrl)}</small>
+                              <small>
+                                {safeHostname(site.startUrl) ||
+                                  tr('地址未设置', 'Address not set', '位址未設定')}
+                              </small>
                             </span>
                             {site.id === selectedSiteId && <Check size={14} />}
                           </button>
@@ -1121,7 +1637,7 @@ export function AccountDrawer({
                           <Download size={14} />
                         )}
                         {iconBusy
-                          ? tr('正在获取...', 'Downloading...', '正在取得...')
+                          ? tr('正在获取…', 'Downloading…', '正在取得…')
                           : tr('获取网站图标', 'Get site icon', '取得網站圖示')}
                       </button>
                       {siteIcon && (
@@ -1179,6 +1695,9 @@ export function AccountDrawer({
                         <input
                           value={groupPickerQuery}
                           onChange={(event) => setGroupPickerQuery(event.target.value)}
+                          data-app-search
+                          data-app-search-priority={40}
+                          aria-keyshortcuts="Control+F"
                           onKeyDown={(event) => {
                             if (event.key === 'Enter') event.preventDefault()
                           }}
@@ -1280,12 +1799,25 @@ export function AccountDrawer({
                     <span className="input-shell">
                       <KeyRound size={17} />
                       <input
-                        type={showPassword ? 'text' : 'password'}
-                        value={password}
-                        onChange={(event) => setPassword(event.target.value)}
+                        className="account-password-input"
+                        type={
+                          revealedPassword || (password && showPassword)
+                            ? 'text'
+                            : 'password'
+                        }
+                        value={password || revealedPassword}
+                        onChange={(event) => {
+                          hideRevealedPassword()
+                          passwordEditedRef.current = true
+                          setPassword(event.target.value)
+                        }}
                         placeholder={
                           mode === 'edit'
-                            ? tr('输入新密码以替换', 'Enter a new password to replace', '輸入新密碼以取代')
+                            ? tr(
+                                '已保存密码，输入新密码以替换',
+                                'Password saved. Enter a new one to replace it.',
+                                '已儲存密碼，輸入新密碼以取代'
+                              )
                             : tr('输入登录密码', 'Enter login password', '輸入登入密碼')
                         }
                         autoComplete="new-password"
@@ -1293,6 +1825,8 @@ export function AccountDrawer({
                       <PasswordGeneratorPopover
                         notify={notify}
                         onApply={(value) => {
+                          hideRevealedPassword()
+                          passwordEditedRef.current = true
                           setPassword(value)
                           setShowPassword(true)
                           notify(
@@ -1301,14 +1835,67 @@ export function AccountDrawer({
                           )
                         }}
                       />
+                      {account && (
+                        <button
+                          type="button"
+                          className="input-text-action password-input__history"
+                          onClick={() => {
+                            hideRevealedPassword()
+                            setCredentialHistoryOpen(true)
+                          }}
+                          aria-label={tr(
+                            '查看账号密码历史',
+                            'View credential history',
+                            '查看帳號密碼歷史'
+                          )}
+                          title={tr(
+                            '查看账号密码历史',
+                            'View credential history',
+                            '查看帳號密碼歷史'
+                          )}
+                        >
+                          <History size={15} />
+                          <span>{tr('历史记录', 'History', '歷史記錄')}</span>
+                        </button>
+                      )}
                       <button
                         type="button"
                         className="input-action"
-                        onClick={() => setShowPassword((value) => !value)}
-                        aria-label={showPassword ? tr('隐藏密码', 'Hide password', '隱藏密碼') : tr('显示密码', 'Show password', '顯示密碼')}
+                        onClick={() => {
+                          if (password) {
+                            setShowPassword((value) => !value)
+                            return
+                          }
+                          void revealPassword()
+                        }}
+                        aria-label={
+                          revealedPassword || (password && showPassword)
+                            ? tr('隐藏密码', 'Hide password', '隱藏密碼')
+                            : tr('显示密码', 'Show password', '顯示密碼')
+                        }
+                        title={
+                          revealedPassword || (password && showPassword)
+                            ? tr('隐藏密码', 'Hide password', '隱藏密碼')
+                            : tr('显示密码', 'Show password', '顯示密碼')
+                        }
                       >
-                        {showPassword ? <EyeOff size={17} /> : <Eye size={17} />}
+                        {revealedPassword || (password && showPassword) ? (
+                          <EyeOff size={17} />
+                        ) : (
+                          <Eye size={17} />
+                        )}
                       </button>
+                      {account && (
+                        <button
+                          type="button"
+                          className="input-action"
+                          onClick={() => void copyPassword()}
+                          aria-label={tr('复制密码', 'Copy password', '複製密碼')}
+                          title={tr('复制密码', 'Copy password', '複製密碼')}
+                        >
+                          <Copy size={16} />
+                        </button>
+                      )}
                     </span>
                   </label>
 
@@ -1335,44 +1922,16 @@ export function AccountDrawer({
               )}
             </div>
 
-            {!isBookmark && account && (
-              <div className="drawer-saved-password">
-                <span>
-                  <KeyRound size={14} />
-                  {tr('已保存密码', 'Saved password', '已儲存密碼')}
-                </span>
-                <strong className={revealedPassword ? 'revealed-password' : 'masked-password'}>
-                  {revealedPassword || '••••••••••••'}
-                </strong>
-                <button
-                  type="button"
-                  className="icon-button icon-button--small"
-                  onClick={() => void revealPassword()}
-                  aria-label={revealedPassword ? tr('隐藏密码', 'Hide password', '隱藏密碼') : tr('查看密码', 'Reveal password', '查看密碼')}
-                >
-                  {revealedPassword ? <EyeOff size={15} /> : <Eye size={15} />}
-                </button>
-                <button
-                  type="button"
-                  className="icon-button icon-button--small"
-                  onClick={() => void copyPassword()}
-                  aria-label={tr('复制密码', 'Copy password', '複製密碼')}
-                >
-                  <Copy size={15} />
-                </button>
-              </div>
-            )}
-
             {error && <p className="form-error">{error}</p>}
 
             {!isBookmark && (
               <>
                 <section
                   className="account-login-strategy account-editor-choice-section"
-                  aria-label={tr('登录方式', 'Login method', '登入方式')}
+                  aria-label={tr('登录配置', 'Login configuration', '登入設定')}
                 >
                   <span className="account-editor-row-label">
-                    {tr('登录方式', 'Login method', '登入方式')}
+                    {tr('登录配置', 'Login configuration', '登入設定')}
                   </span>
                   <div className="proxy-mode-options account-strategy-options">
                     <label
@@ -1420,21 +1979,246 @@ export function AccountDrawer({
                   </div>
                 </section>
 
+                <section
+                  className="account-login-strategy account-editor-choice-section"
+                  aria-label={tr('登录方式', 'Login method', '登入方式')}
+                >
+                  <span className="account-editor-row-label">
+                    {tr('登录方式', 'Login method', '登入方式')}
+                  </span>
+                  <div className="proxy-mode-options account-strategy-options">
+                    <label
+                      className={`proxy-mode-option${loginBrowser === 'builtin' ? ' is-active' : ''}`}
+                    >
+                      <input
+                        type="radio"
+                        name="login-browser"
+                        value="builtin"
+                        checked={loginBrowser === 'builtin'}
+                        onChange={() => setLoginBrowser('builtin')}
+                      />
+                      <span>
+                        <strong>{tr('内置浏览器', 'Built-in browser', '內建瀏覽器')}</strong>
+                        <small>
+                          {tr(
+                            '在 AutoLogin 内打开，可同时保留多个标签页',
+                            'Open inside AutoLogin and keep multiple tabs open',
+                            '在 AutoLogin 內開啟，可同時保留多個分頁'
+                          )}
+                        </small>
+                      </span>
+                    </label>
+                    <label
+                      className={`proxy-mode-option${loginBrowser === 'standalone' ? ' is-active' : ''}`}
+                    >
+                      <input
+                        type="radio"
+                        name="login-browser"
+                        value="standalone"
+                        checked={loginBrowser === 'standalone'}
+                        onChange={() => setLoginBrowser('standalone')}
+                      />
+                      <span>
+                        <strong>{tr('独立浏览器', 'Independent browser', '獨立瀏覽器')}</strong>
+                        <small>
+                          {tr(
+                            '在系统默认浏览器中打开独立登录会话',
+                            'Open an isolated session in the system default browser',
+                            '在系統預設瀏覽器中開啟獨立登入工作階段'
+                          )}
+                        </small>
+                      </span>
+                    </label>
+                  </div>
+                </section>
+
                 {account && loginStrategy === 'auto' && (
-                <section className="drawer-recipes" aria-label={tr('录制流程', 'Recorded flows', '錄製流程')}>
+                <section
+                  className={`drawer-recipes${recordingThisAccount ? ' is-recording' : ''}`}
+                  aria-label={tr('录制流程', 'Recorded flows', '錄製流程')}
+                >
                   <header className="drawer-recipes__header">
                     <div>
+                      {recordingThisAccount && (
+                        <span
+                          className={`drawer-recording-dot${loginState?.recordingPaused ? ' is-paused' : ''}`}
+                          aria-hidden="true"
+                        />
+                      )}
                       <strong>{tr('录制流程', 'Recorded flows', '錄製流程')}</strong>
-                      <small>{recipes.length}/3 {tr('已保存', 'saved', '已儲存')}</small>
+                      <small>
+                        {recordingThisAccount
+                          ? `${recordingStepCount} ${tr('步', 'steps', '步')} · ${recordingElapsed}`
+                          : `${recipes.length}/3 ${tr('已保存', 'saved', '已儲存')}`}
+                      </small>
                     </div>
-                    {onRecord && (
-                      <button type="button" className="text-button" onClick={startRecording}>
+                    {!recordingThisAccount && onRecord && (
+                      <button
+                        type="button"
+                        className="text-button"
+                        onClick={() => void startRecording()}
+                        disabled={recipes.length >= 3}
+                      >
                         <CirclePlay size={14} />
                         {tr('录制新流程', 'Record new flow', '錄製新流程')}
                       </button>
                     )}
                   </header>
-                  {recipes.length === 0 ? (
+
+                  {recordingThisAccount ? (
+                    <div className="drawer-recording">
+                      <p className="drawer-recording__hint">
+                        {loginState?.recordingPaused
+                          ? tr(
+                              '录制已暂停。点击“继续录制”后，新的页面操作才会被记录。',
+                              'Recording is paused. Resume before performing more page actions.',
+                              '錄製已暫停。點擊「繼續錄製」後，新的頁面操作才會被記錄。'
+                            )
+                          : tr(
+                              '浏览器已在前台。建议依次录入：用户名 → 密码 → 提交按钮。',
+                              'The browser is in the foreground. Capture username, password, then submit.',
+                              '瀏覽器已在前景。建議依次錄入：使用者名稱 → 密碼 → 提交按鈕。'
+                            )}
+                      </p>
+                      {recordingLong && (
+                        <p className="drawer-recording__status is-warning">
+                          {tr(
+                            '录制已超过 5 分钟，是否仍在录制？如已完成，请点击“完成录制”。',
+                            'Recording has run for more than 5 minutes. Select "Finish recording" when ready.',
+                            '錄製已超過 5 分鐘，是否仍在錄製？如已完成，請點擊「完成錄製」。'
+                          )}
+                        </p>
+                      )}
+                      {loginState?.currentUrl.startsWith('http://') && (
+                        <p className="drawer-recording__status">
+                          {tr(
+                            '当前页面使用 HTTP，浏览器可能阻止自动填充；可使用下方复制账号/密码后手动粘贴。',
+                            'This page uses HTTP, so autofill may be blocked. Copy credentials below and paste manually.',
+                            '目前頁面使用 HTTP，瀏覽器可能阻止自動填寫；可使用下方複製帳號/密碼後手動貼上。'
+                          )}
+                        </p>
+                      )}
+                      {!loginState?.originTrusted && loginState?.currentOrigin && (
+                        <div className="drawer-recording__status is-warning">
+                          <span>
+                            {tr(
+                              `当前域名 ${loginState.currentOrigin} 尚未信任`,
+                              `This origin is not trusted yet: ${loginState.currentOrigin}`,
+                              `目前網域 ${loginState.currentOrigin} 尚未信任`
+                            )}
+                          </span>
+                          <button
+                            type="button"
+                            onClick={() => void trustCurrentOrigin()}
+                            disabled={recordingAction !== null}
+                          >
+                            {recordingAction === 'trust' && (
+                              <LoaderCircle size={12} className="spin" />
+                            )}
+                            {tr('信任当前域名', 'Trust origin', '信任目前網域')}
+                          </button>
+                        </div>
+                      )}
+                      {recordingSteps.length === 0 ? (
+                        <div className="drawer-recording__empty">
+                          <span className="drawer-recording-dot" aria-hidden="true" />
+                          <span>
+                            {tr(
+                              '等待第一步操作，捕捉后会自动出现在这里',
+                              'Waiting for the first action; captured steps appear here.',
+                              '等待第一步操作，捕捉後會自動出現在這裡'
+                            )}
+                          </span>
+                        </div>
+                      ) : (
+                        <ol className="drawer-recording__steps">
+                          {recordingSteps.map((step, index) => (
+                            <li key={step.id}>
+                              <span className="drawer-recording__index">
+                                {String(index + 1).padStart(2, '0')}
+                              </span>
+                              <strong>{recordingStepLabel(step, tr)}</strong>
+                              <span className="drawer-recording__target">
+                                {step.selectorLabel ??
+                                  (step.type === 'acceptCertWarning'
+                                    ? tr('浏览器证书提醒页', 'Browser certificate page', '瀏覽器憑證提醒頁')
+                                    : '')}
+                              </span>
+                            </li>
+                          ))}
+                        </ol>
+                      )}
+                      {recordingSteps.some((step) => step.type === 'acceptCertWarning') && (
+                        <p className="drawer-recording__warning">
+                          {tr(
+                            '此流程包含“跳过证书校验”，保存后会在流程列表显式标注。',
+                            'This flow includes a certificate bypass and will be labeled after saving.',
+                            '此流程包含「略過憑證驗證」，儲存後會在流程清單明確標註。'
+                          )}
+                        </p>
+                      )}
+                      <div className="drawer-recording__actions">
+                        <button
+                          type="button"
+                          className="drawer-recording-action"
+                          onClick={() => void toggleRecordingPause()}
+                          disabled={recordingAction !== null}
+                        >
+                          {loginState?.recordingPaused ? <Play size={13} /> : <Pause size={13} />}
+                          {loginState?.recordingPaused
+                            ? tr('继续录制', 'Resume', '繼續錄製')
+                            : tr('暂停', 'Pause', '暫停')}
+                        </button>
+                        <button
+                          type="button"
+                          className="drawer-recording-action"
+                          onClick={() => void copyRecordingCredential('username')}
+                          disabled={recordingAction !== null}
+                        >
+                          {recordingAction === 'username' ? (
+                            <LoaderCircle size={13} className="spin" />
+                          ) : (
+                            <UserRound size={13} />
+                          )}
+                          {tr('复制账号', 'Copy username', '複製帳號')}
+                        </button>
+                        <button
+                          type="button"
+                          className="drawer-recording-action"
+                          onClick={() => void copyRecordingCredential('password')}
+                          disabled={recordingAction !== null}
+                        >
+                          {recordingAction === 'password' ? (
+                            <LoaderCircle size={13} className="spin" />
+                          ) : (
+                            <KeyRound size={13} />
+                          )}
+                          {tr('复制密码', 'Copy password', '複製密碼')}
+                        </button>
+                        <button
+                          type="button"
+                          className="drawer-recording-action"
+                          onClick={() => void undoRecordingStep()}
+                          disabled={recordingAction !== null || recordingStepCount === 0}
+                        >
+                          {recordingAction === 'undo' ? (
+                            <LoaderCircle size={13} className="spin" />
+                          ) : (
+                            <Undo2 size={13} />
+                          )}
+                          {tr('撤销上一步', 'Undo', '撤銷上一步')}
+                        </button>
+                        <button
+                          type="button"
+                          className="drawer-recording-action drawer-recording-action--finish"
+                          onClick={openRecordingSummary}
+                          disabled={recordingAction !== null}
+                        >
+                          {tr('完成录制', 'Finish recording', '完成錄製')}
+                        </button>
+                      </div>
+                    </div>
+                  ) : recipes.length === 0 ? (
                     <p className="drawer-recipes__empty">
                       {account.site.recipe
                         ? tr(
@@ -1461,7 +2245,16 @@ export function AccountDrawer({
                               {active ? <Check size={12} /> : <ListChecks size={13} />}
                             </span>
                             <span className="drawer-recipe-row__identity">
-                              <strong>{recipe.name}</strong>
+                              <strong>
+                                {recipe.name}
+                                {recipe.recipe.steps.some(
+                                  (step) => step.type === 'acceptCertWarning'
+                                ) && (
+                                  <em className="drawer-recipe-row__badge">
+                                    {tr('含跳过证书校验', 'Certificate bypass', '含略過憑證驗證')}
+                                  </em>
+                                )}
+                              </strong>
                               <small>
                                 {recipe.recipe.steps.length} {tr('个步骤', 'steps', '個步驟')}
                                 {active ? ` · ${tr('当前流程', 'Active', '目前流程')}` : ''}
@@ -1542,38 +2335,21 @@ export function AccountDrawer({
             </div>
 
             <div className="account-drawer__footer">
-              <div className="account-drawer__management">
-                {account && (
-                  <>
-                    {!isBookmark && (
-                      <button type="button" className="text-button" onClick={() => setConfirmClear(true)}>
-                        <RefreshCw size={14} />
-                        {tr('清除会话', 'Clear session', '清除工作階段')}
-                      </button>
-                    )}
-                    <button
-                      type="button"
-                      className="text-button text-button--danger"
-                      onClick={() => setConfirmDelete(true)}
-                    >
-                      <Trash2 size={14} />
-                      {isBookmark
-                        ? tr('删除站点', 'Delete site', '刪除站點')
-                        : tr('删除账号', 'Delete account', '刪除帳號')}
-                    </button>
-                  </>
-                )}
-              </div>
               <div className="account-drawer__actions">
                 <button
                   type="button"
                   className="button button--ghost"
-                  onClick={onClose}
-                  disabled={busy}
+                  onClick={requestDrawerClose}
                 >
                   {tr('取消', 'Cancel', '取消')}
                 </button>
-                <button type="submit" className="button button--primary" disabled={busy}>
+                <button
+                  type="submit"
+                  className={`button button--primary${busy ? ' is-loading' : ''}`}
+                  disabled={busy || recordingThisAccount}
+                  aria-busy={busy}
+                >
+                  {busy && <LoaderCircle size={14} className="spin" />}
                   {busy
                     ? tr('正在保存…', 'Saving…', '正在儲存…')
                     : mode === 'edit'
@@ -1587,51 +2363,15 @@ export function AccountDrawer({
           </form>
       </section>
 
-      {confirmDelete && (
-        <ConfirmDialog
-          title={
-            isBookmark
-              ? tr('删除这个站点？', 'Delete this site?', '刪除這個站點？')
-              : tr('删除这个账号？', 'Delete this account?', '刪除這個帳號？')
-          }
-          description={
-            isBookmark
-              ? tr(
-                  '站点会移入回收站，书签记录可稍后从主菜单的回收站恢复。',
-                  'The site will move to Recycle Bin and can be restored later from the main menu.',
-                  '站點會移至回收站，書籤記錄可稍後從主選單的回收站恢復。'
-                )
-              : tr(
-                  '账号会移入回收站，独立网站会话将被清除；之后可从主菜单的回收站恢复。',
-                  'The account will move to Recycle Bin and its website session will be cleared. You can restore it later from the main menu.',
-                  '帳號會移至回收站，獨立網站工作階段將被清除；之後可從主選單的回收站恢復。'
-                )
-          }
-          confirmLabel={
-            isBookmark
-              ? tr('删除站点', 'Delete site', '刪除站點')
-              : tr('删除账号', 'Delete account', '刪除帳號')
-          }
-          danger
-          busy={destructiveBusy}
-          onConfirm={() => void deleteAccount()}
-          onClose={() => setConfirmDelete(false)}
+      {credentialHistoryOpen && account && (
+        <CredentialHistoryDialog
+          accountId={account.id}
+          onClose={() => setCredentialHistoryOpen(false)}
+          onRestored={(saved) => void applyRestoredCredentials(saved)}
+          notify={notify}
         />
       )}
-      {confirmClear && (
-        <ConfirmDialog
-          title={tr('清除网站会话？', 'Clear website session?', '清除網站工作階段？')}
-          description={tr(
-            '下次打开此账号时需要重新登录，账号密码不会受到影响。',
-            'You will need to sign in again next time. Saved credentials are not affected.',
-            '下次開啟此帳號時需要重新登入，帳號密碼不會受到影響。'
-          )}
-          confirmLabel={tr('清除会话', 'Clear session', '清除工作階段')}
-          busy={destructiveBusy}
-          onConfirm={() => void clearSession()}
-          onClose={() => setConfirmClear(false)}
-        />
-      )}
+
       {confirmRecipeDelete && (
         <ConfirmDialog
           title={tr('删除这个录制流程？', 'Delete this recorded flow?', '刪除這個錄製流程？')}
@@ -1659,7 +2399,10 @@ export function AccountDrawer({
             <span>
               {recipeDetails.recipe.steps.length} {tr('个步骤', 'steps', '個步驟')}
             </span>
-            <span>{safeHostname(recipeDetails.recipe.startUrl)}</span>
+            <span>
+              {safeHostname(recipeDetails.recipe.startUrl) ||
+                tr('地址未设置', 'Address not set', '位址未設定')}
+            </span>
             {recipeDetails.id === activeRecipeId && (
               <strong>{tr('当前启用', 'Active', '目前啟用')}</strong>
             )}
@@ -1851,20 +2594,283 @@ export function AccountDrawer({
           </p>
         </Modal>
       )}
+
+      {recordingFinishOpen && recordingThisAccount && (
+        <Modal
+          title={tr('保存录制流程', 'Save recorded flow', '儲存錄製流程')}
+          eyebrow="RECORDING SUMMARY"
+          width="560px"
+          className="recording-summary-dialog"
+          onClose={() => {
+            setRecordingFinishOpen(false)
+            setRecordingError('')
+          }}
+        >
+          <div className="recording-summary">
+            <div className="recording-summary__meta">
+              <span>
+                {recordingStepCount} {tr('个步骤', 'steps', '個步驟')}
+              </span>
+              <span>{recordingElapsed}</span>
+              <span className="recording-summary__safe-status">
+                <Check size={11} />
+                {tr(
+                  '草稿已实时保存到磁盘',
+                  'Draft saved to disk in real time',
+                  '草稿已即時儲存到磁碟'
+                )}
+              </span>
+            </div>
+            {recordingSteps.length === 0 ? (
+              <p className="recording-summary__empty">
+                {tr(
+                  '还没有捕捉到可回放步骤。返回浏览器完成一次登录后再结束录制。',
+                  'No replayable steps were captured. Complete a sign-in in the browser first.',
+                  '還沒有捕捉到可回放步驟。返回瀏覽器完成一次登入後再結束錄製。'
+                )}
+              </p>
+            ) : (
+              <ol className="recording-summary__steps">
+                {recordingSteps.map((step, index) => (
+                  <li key={step.id}>
+                    <span>{String(index + 1).padStart(2, '0')}</span>
+                    <strong>{recordingStepLabel(step, tr)}</strong>
+                    <small>
+                      {step.selectorLabel ??
+                        (step.type === 'acceptCertWarning'
+                          ? tr('浏览器证书提醒页', 'Browser certificate page', '瀏覽器憑證提醒頁')
+                          : tr('页面操作', 'Page action', '頁面操作'))}
+                    </small>
+                  </li>
+                ))}
+              </ol>
+            )}
+            <label className="field recording-summary__name">
+              <span className="field__label">
+                {tr('流程名称', 'Flow name', '流程名稱')}
+              </span>
+              <span className="input-shell">
+                <ListChecks size={15} />
+                <input
+                  value={recordingName}
+                  onChange={(event) => {
+                    setRecordingName(event.target.value)
+                    setRecordingError('')
+                  }}
+                  maxLength={60}
+                  autoFocus
+                  placeholder={tr('例如：生产环境登录', 'For example: Production sign-in', '例如：生產環境登入')}
+                />
+              </span>
+            </label>
+            <p className="recording-summary__privacy">
+              {tr(
+                '摘要只展示步骤类型与定位信息，不包含账号、密码或页面输入的明文。',
+                'The summary only contains step types and selectors, never credentials or entered values.',
+                '摘要只顯示步驟類型與定位資訊，不包含帳號、密碼或頁面輸入的明文。'
+              )}
+            </p>
+            {recordingAction === 'finish' && (
+              <div className="recording-save-progress" role="status" aria-live="polite">
+                <LoaderCircle size={14} className="spin" />
+                <span>
+                  <strong>{recordingSaveStage}</strong>
+                  <small>
+                    {tr(
+                      '保存期间可以关闭摘要或编辑页；录制状态会保留在顶部录制浮条。',
+                      'You can close this summary or the editor while saving. Recording remains available in the top recording bar.',
+                      '儲存期間可以關閉摘要或編輯頁；錄製狀態會保留在頂部錄製浮條。'
+                    )}
+                  </small>
+                </span>
+              </div>
+            )}
+            {recordingError && (
+              <p className="form-error" role="alert">
+                {recordingError}
+              </p>
+            )}
+          </div>
+          <div className="modal-actions">
+            <button
+              type="button"
+              className="button button--ghost"
+              onClick={() => {
+                setRecordingFinishOpen(false)
+                setRecordingError('')
+              }}
+              disabled={recordingAction === 'finish'}
+            >
+              {tr('继续录制', 'Continue recording', '繼續錄製')}
+            </button>
+            {recordingSaveFailed && (
+              <button
+                type="button"
+                className="button button--danger-ghost"
+                onClick={requestDrawerClose}
+              >
+                {tr('关闭编辑页', 'Close editor', '關閉編輯頁')}
+              </button>
+            )}
+            <button
+              type="button"
+              className={`button button--primary${
+                recordingAction === 'finish' ? ' is-loading' : ''
+              }`}
+              onClick={() => void finishRecording()}
+              disabled={
+                recordingAction !== null ||
+                recordingStepCount === 0 ||
+                !recordingName.trim()
+              }
+              aria-busy={recordingAction === 'finish'}
+            >
+              {recordingAction === 'finish' && (
+                <LoaderCircle size={14} className="spin" />
+              )}
+              {recordingAction === 'finish'
+                ? tr('正在保存…', 'Saving…', '正在儲存…')
+                : tr('完成录制', 'Finish recording', '完成錄製')}
+            </button>
+          </div>
+        </Modal>
+      )}
     </>
   )
 }
 
 function safeHostname(value: string): string {
   try {
-    return new URL(value).hostname.replace(/^www\./, '')
+    const url = new URL(value)
+    if (url.protocol !== 'http:' && url.protocol !== 'https:') return ''
+    return url.hostname.replace(/^www\./, '')
   } catch {
-    return value
+    return ''
+  }
+}
+
+function withUiTimeout<T>(
+  promise: Promise<T>,
+  milliseconds: number,
+  message: string
+): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const timer = window.setTimeout(() => reject(new Error(message)), milliseconds)
+    promise.then(
+      (value) => {
+        window.clearTimeout(timer)
+        resolve(value)
+      },
+      (reason: unknown) => {
+        window.clearTimeout(timer)
+        reject(reason)
+      }
+    )
+  })
+}
+
+function isRecordingSaveStage(message: string): boolean {
+  return (
+    message.startsWith('正在整理录制步骤') ||
+    message.startsWith('正在写入录制流程') ||
+    message.startsWith('录制流程已保存') ||
+    message.startsWith('保存录制流程失败')
+  )
+}
+
+function describeOperationFailure(
+  operation: string,
+  stage: string,
+  startedAt: number,
+  reason: unknown,
+  tr: (zhCN: string, en: string, zhTW: string) => string
+): string {
+  const raw =
+    reason instanceof Error
+      ? reason.message
+      : tr('操作未完成', 'The operation did not finish.', '操作未完成')
+  const seconds = Math.max(0, (Date.now() - startedAt) / 1000).toFixed(1)
+  return `${operation}${tr('失败', ' failed', '失敗')}：${raw} ${tr(
+    '当前阶段',
+    'Current stage',
+    '目前階段'
+  )}：${stage}；${tr('已等待', 'Waited', '已等待')} ${seconds} ${tr(
+    '秒。数据可能已写入，也可能尚未写入；关闭页面后重新打开即可确认。',
+    'seconds. The data may or may not have been saved; reopen this page to confirm.',
+    '秒。資料可能已寫入，也可能尚未寫入；關閉頁面後重新開啟即可確認。'
+  )}`
+}
+
+function isValidHttpUrl(value: string): boolean {
+  try {
+    const url = new URL(value.trim())
+    return (
+      (url.protocol === 'http:' || url.protocol === 'https:') &&
+      Boolean(url.hostname)
+    )
+  } catch {
+    return false
+  }
+}
+
+function defaultRecordingName(
+  existingCount: number,
+  tr: (zhCN: string, en: string, zhTW: string) => string
+): string {
+  return tr('录制流程 ', 'Recorded flow ', '錄製流程 ') + String(existingCount + 1)
+}
+
+function formatRecordingDuration(
+  state: LoginViewState | null,
+  now: number
+): string {
+  const totalSeconds = recordingDurationSeconds(state, now)
+  const minutes = Math.floor(totalSeconds / 60)
+  const seconds = totalSeconds % 60
+  return `${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`
+}
+
+function recordingDurationSeconds(state: LoginViewState | null, now: number): number {
+  if (!state?.recordingStartedAt) return 0
+  const startedAt = new Date(state.recordingStartedAt).getTime()
+  const endedAt = state.recordingPausedAt
+    ? new Date(state.recordingPausedAt).getTime()
+    : now
+  if (!Number.isFinite(startedAt) || !Number.isFinite(endedAt)) return 0
+  return Math.max(0, Math.floor((endedAt - startedAt) / 1000))
+}
+
+function recordingStepLabel(
+  step: RecordingStepSummary,
+  tr: (zhCN: string, en: string, zhTW: string) => string
+): string {
+  switch (step.type) {
+    case 'fillUsername':
+      return tr('输入账号', 'Enter username', '輸入帳號')
+    case 'fillPassword':
+      return tr('输入密码', 'Enter password', '輸入密碼')
+    case 'paste':
+      return step.source === 'password'
+        ? tr('粘贴密码', 'Paste password', '貼上密碼')
+        : step.source === 'username'
+          ? tr('粘贴账号', 'Paste username', '貼上帳號')
+          : tr('粘贴文本', 'Paste text', '貼上文字')
+    case 'focusChallenge':
+      return tr('验证码 / 二次验证', 'Challenge / 2FA', '驗證碼 / 二次驗證')
+    case 'acceptCertWarning':
+      return tr('跳过证书提醒', 'Bypass certificate warning', '略過憑證提醒')
+    case 'press':
+      return tr('按键', 'Key press', '按鍵')
+    case 'click':
+      return tr('点击提交或跳转', 'Click submit or navigation', '點擊提交或跳轉')
+    default:
+      return tr('页面操作', 'Page action', '頁面操作')
   }
 }
 
 function normalizeRecipeStepsForSave(steps: RecipeStep[]): RecipeStep[] {
   return steps.map((step) => {
+    if (step.type === 'acceptCertWarning') return step
     const selector = manualStepSelectorSpec(step)
     const candidate = selector.candidates[0]?.trim() ?? ''
     if (step.type === 'focusChallenge' && !candidate) {
@@ -1884,6 +2890,7 @@ function normalizeRecipeStepsForSave(steps: RecipeStep[]): RecipeStep[] {
 
 function recipeStepsCanBeSaved(steps: RecipeStep[]): boolean {
   return steps.every((step) => {
+    if (step.type === 'acceptCertWarning') return true
     if (step.type === 'focusChallenge' && !('selector' in step)) return true
     const selector = manualStepSelector(step).trim()
     if (!selector) return false

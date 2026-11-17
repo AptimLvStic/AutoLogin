@@ -42,7 +42,7 @@ export function trackUpdateDownloadProgress(
     transferred / sample.total <
       tracker.previousTransferred / tracker.previousTotal - 0.005
   ) {
-    // electron-updater reports the delta size for differential downloads and
+    // The updater reports the delta size for differential downloads and
     // then restarts progress from zero with the full installer size.
     tracker.fallbackDetected = true
   }

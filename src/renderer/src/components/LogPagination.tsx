@@ -26,9 +26,9 @@ export function LogPagination({
     <footer className="account-pagination log-pagination">
       <span>
         {tr(
-          '共 {count} 条，第 {page}/{pages} 页',
-          '{count} records, page {page} of {pages}',
-          '共 {count} 筆，第 {page}/{pages} 頁',
+          '共 {count} 条 · 第 {page}/{pages} 页',
+          '{count} records · page {page} of {pages}',
+          '共 {count} 筆 · 第 {page}/{pages} 頁',
           { count, page, pages: pageCount }
         )}
       </span>

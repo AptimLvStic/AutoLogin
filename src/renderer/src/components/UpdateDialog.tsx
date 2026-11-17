@@ -192,9 +192,12 @@ export function UpdateProgress({
         {onCancel && state.phase === 'downloading' && (
           <button
             type="button"
-            className="button button--ghost button--small update-progress__cancel"
+            className={`button button--ghost button--small update-progress__cancel${
+              cancelling ? ' is-loading' : ''
+            }`}
             onClick={onCancel}
             disabled={cancelling}
+            aria-busy={cancelling}
           >
             {cancelling ? (
               <LoaderCircle size={13} className="spin" />

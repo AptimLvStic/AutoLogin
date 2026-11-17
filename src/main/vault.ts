@@ -10,7 +10,9 @@ import {
   rmSync,
   writeSync
 } from 'node:fs'
+import { promises as fsPromises } from 'node:fs'
 import { dirname, join } from 'node:path'
+import { markStage } from './block-watchdog'
 import { randomBytes } from 'node:crypto'
 import { createCipheriv, createDecipheriv } from 'node:crypto'
 import { argon2id } from 'hash-wasm'
@@ -35,6 +37,14 @@ const KDF_PARALLELISM = 1
 const KEY_LENGTH = 32
 const SALT_LENGTH = 16
 const IV_LENGTH = 12
+
+/**
+ * fsync 在慢盘、接近写满的机械盘或被同步软件占用的目录上可能长时间不返回，
+ * 一旦挂住会阻塞主进程事件循环，导致所有 IPC（保存、撤销、暂停）一起无响应。
+ * 这里给 fsync 设上限：超时后继续完成 rename，数据仍是完整的，
+ * 最坏情况是断电时丢掉最后这一次写入，好过整个应用卡死。
+ */
+const ENVELOPE_SYNC_TIMEOUT_MS = 3_000
 
 interface VaultEnvelope {
   format: 'autologin-vault'
@@ -61,6 +71,10 @@ interface DecryptedEnvelope {
   salt: Buffer
 }
 
+export interface VaultSaveOptions {
+  tabIds?: string[]
+}
+
 export class VaultError extends Error {
   constructor(
     message: string,
@@ -80,7 +94,9 @@ export class VaultManager {
   private lockTimer: NodeJS.Timeout | null = null
   private autoLockMinutes: AutoLockMinutes = 10
   private beforeSaveListener: ((data: VaultData) => void) | null = null
-  private saveListener: ((data: VaultData) => void) | null = null
+  private saveListener:
+    | ((data: VaultData, options?: VaultSaveOptions) => void)
+    | null = null
 
   constructor(
     userDataPath: string,
@@ -114,7 +130,7 @@ export class VaultManager {
 
     const data: VaultData = {
       schemaVersion: 1,
-      tabs: [createLocalTab()],
+      tabs: [],
       sites: [],
       accounts: [],
       groupDefinitions: [],
@@ -178,7 +194,9 @@ export class VaultManager {
     }
   }
 
-  setSaveListener(listener: ((data: VaultData) => void) | null): void {
+  setSaveListener(
+    listener: ((data: VaultData, options?: VaultSaveOptions) => void) | null
+  ): void {
     this.saveListener = listener
   }
 
@@ -194,10 +212,20 @@ export class VaultManager {
     return this.data
   }
 
-  save(): void {
+  save(options?: VaultSaveOptions): void {
     const data = this.requireData()
     this.beforeSaveListener?.(data)
-    this.writeEncrypted()
+    this.writeEncrypted(options)
+    this.touch()
+  }
+
+  async saveAsync(options?: VaultSaveOptions): Promise<void> {
+    markStage('vault.saveAsync 进入')
+    const data = this.requireData()
+    this.beforeSaveListener?.(data)
+    markStage('vault.saveAsync 序列化与备份')
+    await this.writeEncryptedAsync(options)
+    markStage('vault.saveAsync 写盘完成')
     this.touch()
   }
 
@@ -314,7 +342,10 @@ export class VaultManager {
     if (this.key) {
       this.key.fill(0)
     }
-    const normalized = normalizeVaultData(decrypted.data)
+    const normalized = normalizeVaultData(
+      decrypted.data,
+      dirname(this.vaultPath)
+    )
     this.data = normalized
     this.key = decrypted.key
     this.salt = decrypted.salt
@@ -363,12 +394,20 @@ export class VaultManager {
     }
   }
 
-  private writeEncrypted(): void {
+  private writeEncrypted(options?: VaultSaveOptions): void {
     if (!this.key || !this.salt || !this.data) {
       throw new VaultError('保险库已锁定', 'LOCKED')
     }
     this.writeEnvelope(this.vaultPath, this.data, true)
-    this.saveListener?.(this.data)
+    this.saveListener?.(this.data, options)
+  }
+
+  private async writeEncryptedAsync(options?: VaultSaveOptions): Promise<void> {
+    if (!this.key || !this.salt || !this.data) {
+      throw new VaultError('保险库已锁定', 'LOCKED')
+    }
+    await this.writeEnvelopeAsync(this.vaultPath, this.data, true)
+    this.saveListener?.(this.data, options)
   }
 
   private writeEnvelope(
@@ -376,6 +415,76 @@ export class VaultManager {
     snapshot: VaultData,
     updateBackup = false
   ): void {
+    const envelope = this.buildEnvelope(snapshot)
+    const tempPath = `${destination}.${process.pid}.tmp`
+    mkdirSync(dirname(destination), { recursive: true })
+    const file = openSync(tempPath, 'w', 0o600)
+    try {
+      writeSync(file, JSON.stringify(envelope))
+      fsyncSync(file)
+    } finally {
+      closeSync(file)
+    }
+
+    if (updateBackup && existsSync(this.vaultPath)) {
+      copyFileSync(this.vaultPath, this.backupPath)
+    }
+
+    try {
+      renameSync(tempPath, destination)
+    } catch (error) {
+      const code = (error as NodeJS.ErrnoException).code
+      if (code === 'EEXIST' || code === 'EPERM') {
+        rmSync(destination, { force: true })
+        renameSync(tempPath, destination)
+      } else {
+        rmSync(tempPath, { force: true })
+        throw error
+      }
+    }
+  }
+
+  private async writeEnvelopeAsync(
+    destination: string,
+    snapshot: VaultData,
+    updateBackup = false
+  ): Promise<void> {
+    const envelope = this.buildEnvelope(snapshot)
+    const tempPath = `${destination}.${process.pid}.tmp`
+    await fsPromises.mkdir(dirname(destination), { recursive: true })
+    const file = await fsPromises.open(tempPath, 'w', 0o600)
+    try {
+      await file.writeFile(JSON.stringify(envelope), 'utf8')
+      await Promise.race([
+        file.sync().catch(() => undefined),
+        new Promise<void>((resolve) => {
+          const timer = setTimeout(resolve, ENVELOPE_SYNC_TIMEOUT_MS)
+          timer.unref()
+        })
+      ])
+    } finally {
+      await file.close()
+    }
+
+    if (updateBackup && existsSync(this.vaultPath)) {
+      await fsPromises.copyFile(this.vaultPath, this.backupPath)
+    }
+
+    try {
+      await fsPromises.rename(tempPath, destination)
+    } catch (error) {
+      const code = (error as NodeJS.ErrnoException).code
+      if (code === 'EEXIST' || code === 'EPERM') {
+        await fsPromises.rm(destination, { force: true })
+        await fsPromises.rename(tempPath, destination)
+      } else {
+        await fsPromises.rm(tempPath, { force: true })
+        throw error
+      }
+    }
+  }
+
+  private buildEnvelope(snapshot: VaultData): VaultEnvelope {
     if (!this.key || !this.salt) {
       throw new VaultError('保险库已锁定', 'LOCKED')
     }
@@ -404,33 +513,7 @@ export class VaultManager {
       },
       ciphertext: ciphertext.toString('base64')
     }
-
-    const tempPath = `${destination}.${process.pid}.tmp`
-    mkdirSync(dirname(destination), { recursive: true })
-    const file = openSync(tempPath, 'w', 0o600)
-    try {
-      writeSync(file, JSON.stringify(envelope))
-      fsyncSync(file)
-    } finally {
-      closeSync(file)
-    }
-
-    if (updateBackup && existsSync(this.vaultPath)) {
-      copyFileSync(this.vaultPath, this.backupPath)
-    }
-
-    try {
-      renameSync(tempPath, destination)
-    } catch (error) {
-      const code = (error as NodeJS.ErrnoException).code
-      if (code === 'EEXIST' || code === 'EPERM') {
-        rmSync(destination, { force: true })
-        renameSync(tempPath, destination)
-      } else {
-        rmSync(tempPath, { force: true })
-        throw error
-      }
-    }
+    return envelope
   }
 
   private scheduleLock(): void {
@@ -515,7 +598,7 @@ function createLocalTab(): AccountTab {
   const now = new Date().toISOString()
   return {
     id: DEFAULT_ACCOUNT_TAB_ID,
-    name: '本地账号',
+    name: '本地数据库',
     color: ACCOUNT_TAB_COLORS[0],
     source: 'local',
     hidden: false,
@@ -524,13 +607,22 @@ function createLocalTab(): AccountTab {
   }
 }
 
-function normalizeVaultData(input: VaultData): VaultData {
+function normalizeVaultData(input: VaultData, dataDirectory: string): VaultData {
   const data = structuredClone(input)
+  data.tabs = data.tabs.filter(
+    (tab) => !isMissingLegacyLocalTab(tab, data, dataDirectory)
+  )
   const tabsById = new Map<string, AccountTab>()
   for (const tab of data.tabs) {
     if (!tabsById.has(tab.id)) tabsById.set(tab.id, tab)
   }
-  if (!tabsById.has(DEFAULT_ACCOUNT_TAB_ID)) {
+
+  const hasOrphanedData =
+    data.sites.length > 0 ||
+    data.accounts.length > 0 ||
+    data.groupDefinitions.length > 0 ||
+    data.deletedAccounts.length > 0
+  if (tabsById.size === 0 && hasOrphanedData) {
     const local = createLocalTab()
     data.tabs.unshift(local)
     tabsById.set(local.id, local)
@@ -538,7 +630,7 @@ function normalizeVaultData(input: VaultData): VaultData {
   data.tabs = [...tabsById.values()]
 
   const normalizeTabId = (tabId: string | undefined): string =>
-    tabId && tabsById.has(tabId) ? tabId : DEFAULT_ACCOUNT_TAB_ID
+    tabId && tabsById.has(tabId) ? tabId : data.tabs[0]!.id
 
   for (const site of data.sites) {
     site.tabId = normalizeTabId(site.tabId)
@@ -573,11 +665,49 @@ function normalizeVaultData(input: VaultData): VaultData {
     }
   }
 
-  if (!data.settings.groupOrders[DEFAULT_ACCOUNT_TAB_ID] && data.settings.groupOrder.length > 0) {
-    data.settings.groupOrders[DEFAULT_ACCOUNT_TAB_ID] = [...data.settings.groupOrder]
+  const legacyGroupOrderTabId = tabsById.has(DEFAULT_ACCOUNT_TAB_ID)
+    ? DEFAULT_ACCOUNT_TAB_ID
+    : data.tabs[0]?.id
+  if (
+    legacyGroupOrderTabId &&
+    !data.settings.groupOrders[legacyGroupOrderTabId] &&
+    data.settings.groupOrder.length > 0
+  ) {
+    data.settings.groupOrders[legacyGroupOrderTabId] = [...data.settings.groupOrder]
   }
   if (data.settings.proxy.mode === 'custom') {
     data.settings.proxy.enabled = true
   }
   return data
+}
+
+function isMissingLegacyLocalTab(
+  tab: AccountTab,
+  data: VaultData,
+  dataDirectory: string
+): boolean {
+  if (
+    tab.id !== DEFAULT_ACCOUNT_TAB_ID ||
+    tab.source !== 'local' ||
+    tab.name !== '本地账号'
+  ) {
+    return false
+  }
+  const hasData =
+    data.sites.some((site) => site.tabId === tab.id) ||
+    data.accounts.some((account) => account.tabId === tab.id) ||
+    data.groupDefinitions.some((group) => group.tabId === tab.id) ||
+    data.deletedAccounts.some((record) => record.tabId === tab.id)
+  if (hasData) return false
+
+  const fileNames = new Set([
+    ...(tab.databaseFileName ? [tab.databaseFileName] : []),
+    '本地账号.autologin',
+    'tab-local.autologin'
+  ])
+  return [...fileNames].every(
+    (fileName) =>
+      !existsSync(join(dataDirectory, 'tabs', 'autologin', fileName)) &&
+      !existsSync(join(dataDirectory, 'tabs', fileName))
+  )
 }

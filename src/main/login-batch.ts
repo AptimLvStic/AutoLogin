@@ -10,6 +10,7 @@ import {
 import { join } from 'node:path'
 import { randomUUID } from 'node:crypto'
 import type {
+  EmbeddedBrowserBounds,
   LoginBatchItem,
   LoginBatchItemStatus,
   LoginBatchState,
@@ -18,8 +19,9 @@ import type {
   LoginLogEntry,
   LoginLogQuery
 } from '@shared/types'
+import type { EmbeddedBrowserProvider } from './embedded-browser'
 import {
-  clearManagedSessionDirectories,
+  clearManagedSessionDirectoriesWithRetry,
   LoginSessionManager
 } from './login-session'
 import {
@@ -35,10 +37,13 @@ const MAX_CONCURRENT_TABS = 3
 const LOGIN_TIMEOUT_MS = 30_000
 const BATCH_TIMEOUT_MS = LOGIN_TIMEOUT_MS + 15_000
 const MAX_FAILURE_LOG_BYTES = 2 * 1024 * 1024
+const SESSION_RUNTIME_CLOSE_TIMEOUT_MS = 5_000
 
 export class LoginBatchManager {
   private state: LoginBatchState | null = null
   private readonly managers = new Map<string, LoginSessionManager>()
+  private readonly embeddedLabels = new Map<string, string>()
+  private activeEmbeddedAccountId: string | null = null
   private readonly timers = new Map<string, NodeJS.Timeout>()
   private readonly loggedResults = new Set<string>()
   private readonly activeBatchAccountIds = new Set<string>()
@@ -55,7 +60,8 @@ export class LoginBatchManager {
     private readonly userDataPath: string,
     private readonly browserExecutableOverride: string | undefined,
     private readonly headlessBrowser: boolean,
-    private readonly onState: (state: LoginBatchState) => void
+    private readonly onState: (state: LoginBatchState) => void,
+    private readonly embeddedProvider: EmbeddedBrowserProvider | null = null
   ) {}
 
   getState(): LoginBatchState | null {
@@ -85,7 +91,9 @@ export class LoginBatchManager {
     this.generation += 1
     const generation = this.generation
     this.disposed = false
-    await this.ensureHost(accounts[0]?.site.startUrl)
+    if (accounts.some(({ account }) => account.loginBrowser !== 'builtin')) {
+      await this.ensureHost(accounts[0]?.site.startUrl)
+    }
     for (const accountId of uniqueIds) {
       await this.detachAccount(accountId)
     }
@@ -96,6 +104,7 @@ export class LoginBatchManager {
     for (const accountId of uniqueIds) this.activeBatchAccountIds.add(accountId)
     this.queue = accounts.map(({ account }) => account.id)
     this.running = 0
+    this.activeEmbeddedAccountId = null
     this.state = {
       batchId: randomUUID(),
       active: true,
@@ -112,6 +121,7 @@ export class LoginBatchManager {
         accountLabel: account.label,
         siteName: site.name,
         groupName: site.group?.trim() || '未分组',
+        loginBrowser: account.loginBrowser ?? 'standalone',
         status: 'queued',
         message: '等待打开'
       }))
@@ -149,16 +159,17 @@ export class LoginBatchManager {
       )
     }
     this.queue = []
-    await this.closeActiveBatchManagers()
+    await this.closeRuntime()
     this.publish()
     return this.getState()!
   }
 
   async clearSession(accountId: string): Promise<void> {
-    await this.closeRuntime()
-    clearManagedSessionDirectories(this.userDataPath, 'personal')
-    clearManagedSessionDirectories(this.userDataPath, 'batch')
-    clearManagedSessionDirectories(this.userDataPath, accountId)
+    await withTimeout(this.closeRuntime(), SESSION_RUNTIME_CLOSE_TIMEOUT_MS)
+    await Promise.all([
+      clearManagedSessionDirectoriesWithRetry(this.userDataPath, 'personal'),
+      clearManagedSessionDirectoriesWithRetry(this.userDataPath, 'batch')
+    ])
   }
 
   async openUrl(url: string): Promise<void> {
@@ -179,6 +190,12 @@ export class LoginBatchManager {
     if (manager) {
       await manager.close()
     }
+    const label = this.embeddedLabels.get(accountId)
+    this.embeddedLabels.delete(accountId)
+    if (!manager && label) this.embeddedProvider?.close(label)
+    if (this.activeEmbeddedAccountId === accountId) {
+      this.activeEmbeddedAccountId = null
+    }
   }
 
   private async detachAccount(accountId: string): Promise<void> {
@@ -189,6 +206,9 @@ export class LoginBatchManager {
     if (manager) {
       await manager.detach()
     }
+    const label = this.embeddedLabels.get(accountId)
+    this.embeddedLabels.delete(accountId)
+    if (!manager && label) this.embeddedProvider?.close(label)
   }
 
   async close(): Promise<void> {
@@ -310,21 +330,29 @@ export class LoginBatchManager {
       return
     }
 
+    const account = this.vault.requireData().accounts.find((entry) => entry.id === accountId)
+    if (!account) {
+      this.markFailed(accountId, '账号不存在')
+      return
+    }
+    const builtin = account.loginBrowser === 'builtin'
     this.updateItem(accountId, {
       status: 'opening',
-      message: '正在启动默认浏览器',
+      message: builtin ? '正在打开内置浏览器' : '正在启动系统默认浏览器',
       startedAt: new Date().toISOString()
     })
     this.armTimeout(accountId)
 
-    let host: ExternalBrowserHost
+    let host: ExternalBrowserHost | null = null
     try {
-      host = await this.ensureHost()
+      if (!builtin) {
+        host = await this.ensureHost()
+      }
     } catch (error) {
       if (generation === this.generation) {
         this.markFailed(
           accountId,
-          error instanceof Error ? error.message : '共享默认浏览器尚未准备好'
+          error instanceof Error ? error.message : '共享浏览器尚未准备好'
         )
       }
       return
@@ -336,19 +364,27 @@ export class LoginBatchManager {
       this.browserExecutableOverride,
       this.headlessBrowser,
       (next) => this.handleLoginState(accountId, next, generation),
-      host
+      host,
+      this.embeddedProvider
     )
     this.managers.set(accountId, manager)
 
     try {
       await manager.start(accountId, 'login')
+      if (builtin) {
+        const label = manager.getEmbeddedLabel()
+        if (label) {
+          this.embeddedLabels.set(accountId, label)
+          this.updateItem(accountId, { embeddedReady: true })
+        }
+      }
     } catch (error) {
       if (generation !== this.generation) {
         return
       }
       this.markFailed(
         accountId,
-        error instanceof Error ? error.message : '无法启动默认浏览器'
+        error instanceof Error ? error.message : '无法启动浏览器'
       )
     }
   }
@@ -405,6 +441,47 @@ export class LoginBatchManager {
     }
   }
 
+  setEmbeddedBounds(bounds: EmbeddedBrowserBounds): void {
+    const accountId =
+      this.activeEmbeddedAccountId ??
+      [...this.embeddedLabels.keys()].find(
+        (id) => this.findItem(id)?.status !== 'queued'
+      ) ??
+      null
+    if (!accountId) return
+    const label = this.embeddedLabels.get(accountId)
+    if (label) this.embeddedProvider?.setBounds(label, bounds)
+  }
+
+  setEmbeddedActive(accountId: string): void {
+    const next = this.embeddedLabels.get(accountId)
+    if (!next) return
+    for (const [id, label] of this.embeddedLabels) {
+      if (id !== accountId) this.embeddedProvider?.hide(label)
+    }
+    this.activeEmbeddedAccountId = accountId
+    this.embeddedProvider?.show(next)
+    this.embeddedProvider?.focus(next)
+  }
+
+  closeEmbeddedTabs(): void {
+    for (const label of this.embeddedLabels.values()) {
+      this.embeddedProvider?.close(label)
+    }
+    this.embeddedLabels.clear()
+    this.activeEmbeddedAccountId = null
+  }
+
+  forgetEmbeddedLabel(label: string): void {
+    for (const [accountId, currentLabel] of this.embeddedLabels) {
+      if (currentLabel !== label) continue
+      this.embeddedLabels.delete(accountId)
+      if (this.activeEmbeddedAccountId === accountId) {
+        this.activeEmbeddedAccountId = null
+      }
+    }
+  }
+
   private armTimeout(accountId: string): void {
     this.clearTimer(accountId)
     const timer = setTimeout(() => {
@@ -417,7 +494,7 @@ export class LoginBatchManager {
       ) {
         return
       }
-      this.markFailed(accountId, '登录状态在 30 秒内未确认，请检查默认浏览器')
+      this.markFailed(accountId, '登录状态在 30 秒内未确认，请检查浏览器页面')
     }, LOGIN_TIMEOUT_MS)
     timer.unref()
     this.timers.set(accountId, timer)
@@ -587,25 +664,13 @@ export class LoginBatchManager {
     }
   }
 
-  private async closeActiveBatchManagers(): Promise<void> {
-    const accountIds = [...this.activeBatchAccountIds]
-    this.activeBatchAccountIds.clear()
-    const managers = accountIds
-      .map((accountId) => this.managers.get(accountId))
-      .filter((manager): manager is LoginSessionManager => Boolean(manager))
-    for (const accountId of accountIds) {
-      this.clearTimer(accountId)
-      this.managers.delete(accountId)
-    }
-    await Promise.allSettled(managers.map((manager) => manager.close()))
-  }
-
   private async closeRuntime(): Promise<void> {
     this.clearBatchWatchdog()
     this.generation += 1
     this.queue = []
     this.running = 0
     this.activeBatchAccountIds.clear()
+    this.activeEmbeddedAccountId = null
     const pendingHostStart = this.hostStart
     if (pendingHostStart) {
       await pendingHostStart.catch(() => undefined)
@@ -617,6 +682,7 @@ export class LoginBatchManager {
     const managers = [...this.managers.values()]
     this.managers.clear()
     await Promise.allSettled(managers.map((manager) => manager.close()))
+    this.embeddedLabels.clear()
     const host = this.host
     this.host = null
     this.hostStart = null
@@ -798,6 +864,21 @@ function mapRunningStatus(status: LoginStatus): LoginBatchItemStatus | null {
 
 function isPendingStatus(status: LoginBatchItemStatus): boolean {
   return ['queued', 'opening', 'filling', 'submitting'].includes(status)
+}
+
+async function withTimeout<T>(promise: Promise<T>, milliseconds: number): Promise<void> {
+  let timer: NodeJS.Timeout | null = null
+  try {
+    await Promise.race([
+      promise,
+      new Promise<void>((resolve) => {
+        timer = setTimeout(resolve, milliseconds)
+        timer.unref()
+      })
+    ])
+  } finally {
+    if (timer) clearTimeout(timer)
+  }
 }
 
 function sanitizeLoginReason(value: string, fallback: string): string {

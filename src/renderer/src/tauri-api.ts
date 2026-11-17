@@ -1,10 +1,13 @@
 import { invoke, isTauri } from '@tauri-apps/api/core'
 import { listen, type UnlistenFn } from '@tauri-apps/api/event'
 import type {
+  AccountBatchIconFetchProgress,
   AccountCreateInput,
   AccountUpdateInput,
   AppSettingsPatch,
   AutologinApi,
+  EmbeddedBrowserNewWindowEvent,
+  EmbeddedBrowserTab,
   LoginBatchState,
   LoginStartInput,
   LoginViewState,
@@ -16,7 +19,109 @@ interface BackendEventEnvelope {
   payload: unknown
 }
 
+const DEFAULT_CALL_TIMEOUT_MS = 35_000
+const SESSION_CLEAR_TIMEOUT_MS = 15_000
+const LONG_CALL_TIMEOUT_MS = 10 * 60_000 + 5_000
+const CALL_LABELS: Record<string, string> = {
+  'vault:create': '创建保险库',
+  'vault:unlock': '解锁保险库',
+  'vault:change-password': '更新主密码',
+  'sites:save': '保存站点信息',
+  'sites:delete': '删除站点',
+  'accounts:create': '创建账号',
+  'accounts:update': '保存账号修改',
+  'accounts:update-recipe': '保存录制步骤',
+  'login:start': '打开登录站点',
+  'login:start-batch': '批量登录',
+  'login:finish-recording': '保存录制流程',
+  'login:recording-save-status': '核对录制保存状态',
+  'login:cancel-recording': '停止录制',
+  'login:clear-session': '清除网站会话',
+  'login:close': '关闭登录页面',
+  'browser:open-url': '打开站点',
+  'settings:update': '保存设置',
+  'network:test-proxy': '测试网络连接',
+  'app:choose-data-location': '选择数据保存位置',
+  'app:choose-recording-draft-directory': '选择录制副本保存位置',
+  'app:resolve-data-location-conflict': '处理数据位置冲突',
+  'app:restore-default-data-location': '恢复默认数据位置',
+  'app:open-data-location': '打开数据目录',
+  'app:open-recording-draft-directory': '打开录制副本目录',
+  'app:clear-all-data': '清除本地数据',
+  'app:restart': '重新启动应用',
+  'data:export-vault': '导出数据',
+  'data:export-csv-template': '下载 CSV 模板',
+  'data:import-csv': '导入 CSV',
+  'data:import-database': '导入数据库',
+  'data:import-kdbx': '导入 KDBX 数据库',
+  'data:import-autologin': '导入配置',
+  'data:import-bookmarks': '导入书签',
+  'data:restore-backup': '恢复备份'
+}
+
+class CallTimeoutError extends Error {}
+
+function callTimeout(channel: string): number {
+  if (channel === 'login:finish-recording') {
+    return 20_000
+  }
+  if (channel === 'login:recording-save-status') {
+    return 5_000
+  }
+  if (channel === 'login:clear-session') {
+    return SESSION_CLEAR_TIMEOUT_MS
+  }
+  if (
+    channel.includes(':choose-') ||
+    channel === 'data:export-vault' ||
+    channel === 'data:export-csv-template' ||
+    channel === 'data:import-csv' ||
+    channel === 'data:import-database' ||
+    channel === 'data:import-kdbx' ||
+    channel === 'data:import-autologin' ||
+    channel === 'data:import-bookmarks' ||
+    channel === 'app:download-update'
+  ) {
+    return LONG_CALL_TIMEOUT_MS
+  }
+  return DEFAULT_CALL_TIMEOUT_MS
+}
+
+function operationLabel(channel: string): string {
+  return CALL_LABELS[channel] ?? '操作'
+}
+
+function formatElapsed(milliseconds: number): string {
+  return `${Math.max(0, milliseconds / 1000).toFixed(1)} 秒`
+}
+
+function withCallDeadline<T>(
+  promise: Promise<T>,
+  milliseconds: number,
+  message: string
+): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const timer = window.setTimeout(
+      () => reject(new CallTimeoutError(message)),
+      milliseconds
+    )
+    promise.then(
+      (value) => {
+        window.clearTimeout(timer)
+        resolve(value)
+      },
+      (reason: unknown) => {
+        window.clearTimeout(timer)
+        reject(reason)
+      }
+    )
+  })
+}
+
 async function call<T>(channel: string, ...args: unknown[]): Promise<T> {
+  const startedAt = Date.now()
+  const label = operationLabel(channel)
+  const timeout = callTimeout(channel)
   try {
     const normalizedArgs = [...args]
     while (
@@ -25,10 +130,30 @@ async function call<T>(channel: string, ...args: unknown[]): Promise<T> {
     ) {
       normalizedArgs.pop()
     }
-    return await invoke<T>('backend_call', { channel, args: normalizedArgs })
+    return await withCallDeadline(
+      invoke<T>('backend_call', { channel, args: normalizedArgs }),
+      timeout,
+      `${label}未完成（已等待 ${formatElapsed(timeout)}）`
+    )
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error)
-    throw new Error(message.replace(/^Error:\s*/i, '') || '操作失败')
+    const normalized = message.replace(/^Error:\s*/i, '') || '操作失败'
+    const elapsed = Date.now() - startedAt
+    if (error instanceof CallTimeoutError) {
+      if (channel === 'login:clear-session') {
+        throw new Error(
+          `${normalized}。已停止等待，请关闭对应浏览器窗口后重试`
+        )
+      }
+      throw new Error(
+        `${normalized}。当前阶段可能仍在处理中，请关闭当前窗口后重新打开确认结果`
+      )
+    }
+    throw new Error(
+      label === '操作'
+        ? normalized
+        : `${label}失败（耗时 ${formatElapsed(elapsed)}）：${normalized}`
+    )
   }
 }
 
@@ -103,6 +228,7 @@ const api: AutologinApi = {
     setStrategyBatch: (input) => call('accounts:set-strategy-batch', input),
     setIconBatch: (input) => call('accounts:set-icon-batch', input),
     fetchIconsBatch: (accountIds) => call('accounts:fetch-icons-batch', accountIds),
+    cancelIconFetchBatch: () => call('accounts:cancel-icon-fetch-batch'),
     duplicate: (accountIds) => call('accounts:duplicate', accountIds),
     delete: (accountId) => call('accounts:delete', accountId),
     deleteMany: (accountIds) => call('accounts:delete-many', accountIds),
@@ -114,6 +240,16 @@ const api: AutologinApi = {
     moveToGroup: (input) => call('accounts:move-to-group', input),
     reorder: (input) => call('accounts:reorder', input),
     reveal: (accountId) => call('accounts:reveal', accountId),
+    listCredentialHistory: (accountId) =>
+      call('accounts:list-credential-history', accountId),
+    revealCredentialHistory: (accountId, historyId) =>
+      call('accounts:reveal-credential-history', accountId, historyId),
+    restoreCredentialHistory: (accountId, historyId) =>
+      call('accounts:restore-credential-history', accountId, historyId),
+    deleteCredentialHistory: (accountId, historyId) =>
+      call('accounts:delete-credential-history', accountId, historyId),
+    clearCredentialHistory: (accountId) =>
+      call('accounts:clear-credential-history', accountId),
     copyUsername: (accountId) => call('accounts:copy-username', accountId),
     copy: (accountId) => call('accounts:copy', accountId),
     copyUrl: (accountId) => call('accounts:copy-url', accountId),
@@ -132,11 +268,29 @@ const api: AutologinApi = {
     retry: () => call('login:retry'),
     trustCurrentOrigin: () => call('login:trust-origin'),
     focusBrowser: () => call('login:focus-browser'),
-    finishRecording: () => call('login:finish-recording'),
+    finishRecording: (name) => call('login:finish-recording', { name }),
+    recordingSaveStatus: () => call('login:recording-save-status'),
     cancelRecording: () => call('login:cancel-recording'),
+    undoRecordingStep: () => call('login:undo-recording-step'),
+    pauseRecording: () => call('login:pause-recording'),
+    resumeRecording: () => call('login:resume-recording'),
     testSelector: (input) => call('login:test-selector', input),
     clearSession: (accountId) => call('login:clear-session', accountId),
-    getState: () => call('login:get-state')
+    getState: () => call('login:get-state'),
+    setEmbeddedBounds: (bounds) => call('login:set-embedded-bounds', bounds),
+    setEmbeddedActive: (accountId) => call('login:set-embedded-active', accountId),
+    closeEmbeddedTabs: () => call('login:close-embedded-tabs')
+  },
+  browser: {
+    listTabs: () => call('browser:list-tabs'),
+    openUrl: (url) => call('browser:open-url', url),
+    activate: (label) => call('browser:activate', label),
+    close: (label) => call('browser:close', label),
+    navigate: (label, url) => call('browser:navigate', { label, url }),
+    back: (label) => call('browser:back', label),
+    reload: (label) => call('browser:reload', label),
+    setBounds: (label, bounds) => call('browser:set-bounds', { label, bounds }),
+    hideAll: () => call('browser:hide-all')
   },
   settings: {
     get: () => call('settings:get'),
@@ -152,10 +306,14 @@ const api: AutologinApi = {
     installUpdate: () => call('app:install-update'),
     getDataLocation: () => call('app:get-data-location'),
     chooseDataLocation: () => call('app:choose-data-location'),
+    chooseRecordingDraftDirectory: () =>
+      call('app:choose-recording-draft-directory'),
     resolveDataLocationConflict: (directory, action) =>
       call('app:resolve-data-location-conflict', { directory, action }),
     restoreDefaultDataLocation: () => call('app:restore-default-data-location'),
     openDataLocation: () => call('app:open-data-location'),
+    openRecordingDraftDirectory: () =>
+      call('app:open-recording-draft-directory'),
     openFailureLog: () => call('app:open-failure-log'),
     listLoginLogs: (query) => call('app:list-login-logs', query),
     listFailureLogs: () => call('app:list-failure-logs'),
@@ -167,6 +325,7 @@ const api: AutologinApi = {
     reportActivity: () => {
       void call('app:activity')
     },
+    reportUiFailure: (input) => call('app:report-ui-failure', input),
     clearAllData: () => call('app:clear-all-data'),
     openPrivacy: () => call('app:open-privacy')
   },
@@ -202,6 +361,14 @@ const api: AutologinApi = {
       subscribe('login:state', callback),
     onLoginBatchState: (callback: (state: LoginBatchState) => void) =>
       subscribe('login:batch-state', callback),
+    onBrowserTabs: (callback: (tabs: EmbeddedBrowserTab[]) => void) =>
+      subscribe('browser:tabs', callback),
+    onBrowserNewWindow: (
+      callback: (event: EmbeddedBrowserNewWindowEvent) => void
+    ) => subscribe('browser:new-window', callback),
+    onAccountBatchIconFetchProgress: (
+      callback: (progress: AccountBatchIconFetchProgress) => void
+    ) => subscribe('accounts:icon-fetch-progress', callback),
     onUpdateState: (callback) => subscribe('app:update-state', callback)
   }
 }

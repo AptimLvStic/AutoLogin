@@ -46,7 +46,6 @@ jobs:
         run: npm run build
         env:
           TAURI_SIGNING_PRIVATE_KEY: ""
-          CSC_IDENTITY_AUTO_DISCOVERY: "false"
 
       - name: Create updater metadata
         shell: pwsh

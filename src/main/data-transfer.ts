@@ -14,6 +14,7 @@ import {
 import { argon2d, argon2id } from 'hash-wasm'
 import { DEFAULT_ACCOUNT_TAB_ID, GROUP_PATH_SEPARATOR } from '@shared/types'
 import { databaseFileNameFor } from '@shared/database-files'
+import { normalizeGroupPath } from '@shared/group-tree'
 import type {
   AccountTab,
   AccountTabSource,
@@ -39,10 +40,10 @@ export const CSV_TEMPLATE_HEADERS = [
 export const CSV_TEMPLATE = [
   '# AutoLogin CSV 导入模板',
   '# 必填列：站点名称、登录地址（http/https）、用户名、密码',
-  '# 可选列：分组（多级用 " / " 分隔）、自动提交（true/false）',
+  '# 分组格式：父分组 / 子分组；斜杠两侧空格可省略，例如：中联航/亦庄',
   '# 每一行代表一个账号；以 # 开头的行会被忽略。',
   CSV_TEMPLATE_HEADERS.join(','),
-  '"示例站点","https://example.com/login","工作","name@example.com","replace-me","true"'
+  '"示例站点","https://example.com/login","中联航 / 亦庄","name@example.com","replace-me","true"'
 ].join('\r\n')
 
 const CSV_HEADER_ALIASES: Record<string, string> = {
@@ -83,13 +84,12 @@ let argon2Configured = false
 
 export async function parseCsvImport(path: string): Promise<ParsedImport> {
   const buffer = await readBoundedFile(path)
-  const text = decodeCsvBuffer(buffer)
+  const text = stripCsvCommentLines(decodeCsvBuffer(buffer))
   let records: Record<string, string>[]
 
   try {
     records = parse(text, {
       bom: true,
-      comment: '#',
       columns: (header: string[]) =>
         header.map((value) => {
           const cleaned = value.trim().replace(/^\uFEFF/, '')
@@ -98,7 +98,7 @@ export async function parseCsvImport(path: string): Promise<ParsedImport> {
       skip_empty_lines: true,
       trim: true,
       relax_column_count: false,
-      relax_quotes: false
+      relax_quotes: true
     }) as Record<string, string>[]
   } catch (error) {
     throw new Error(
@@ -293,28 +293,34 @@ export function mergeImportedLogins(
   let accountsCreated = 0
   const now = new Date().toISOString()
 
-  const sitesByName = new Map(
-    data.sites
-      .filter((site) => site.tabId === tabId)
-      .map((site) => [normalizeSiteName(site.name), site] as const)
+  const tabSites = data.sites.filter((site) => site.tabId === tabId)
+  const sitesByKey = new Map(
+    tabSites.map((site) => [
+      importedSiteKey(site.name, site.startUrl),
+      site
+    ] as const)
+  )
+  const takenSiteNames = new Set(
+    tabSites.map((site) => normalizeSiteName(site.name))
   )
   const tab = data.tabs.find((entry) => entry.id === tabId)
   if (!tab) throw new Error('导入目标标签页不存在')
 
   for (const candidate of parsed.candidates) {
-    const normalizedName = normalizeSiteName(candidate.siteName)
-    let site = sitesByName.get(normalizedName)
-    if (site) {
-      if (normalizeUrlForCompare(site.startUrl) !== normalizeUrlForCompare(candidate.startUrl)) {
-        throw new Error(
-          `第 ${candidate.rowNumber} 条记录与已有站点“${site.name}”的登录地址不一致`
+    const key = importedSiteKey(candidate.siteName, candidate.startUrl)
+    let site = sitesByKey.get(key)
+    if (!site) {
+      let siteName = candidate.siteName
+      if (takenSiteNames.has(normalizeSiteName(siteName))) {
+        siteName = uniqueImportedSiteName(siteName, takenSiteNames)
+        warnings.push(
+          `第 ${candidate.rowNumber} 条记录与已有站点“${candidate.siteName}”同名但登录地址不同，已导入为“${siteName}”`
         )
       }
-    } else {
       site = {
         id: randomUUID(),
         tabId,
-        name: candidate.siteName,
+        name: siteName,
         startUrl: candidate.startUrl,
         allowedOrigins: [new URL(candidate.startUrl).origin],
         autoSubmit: candidate.autoSubmit,
@@ -323,7 +329,9 @@ export function mergeImportedLogins(
         updatedAt: now
       }
       data.sites.push(site)
-      sitesByName.set(normalizedName, site)
+      sitesByKey.set(key, site)
+      sitesByKey.set(importedSiteKey(siteName, candidate.startUrl), site)
+      takenSiteNames.add(normalizeSiteName(siteName))
       sitesCreated += 1
     }
 
@@ -349,8 +357,10 @@ export function mergeImportedLogins(
       label: site.name,
       username: candidate.username,
       password: candidate.password,
+      credentialUpdatedAt: now,
       favorite: candidate.favorite,
       loginStrategy: 'auto',
+      loginBrowser: 'standalone',
       sortOrder: data.accounts.filter((entry) => entry.tabId === tabId).length,
       createdAt: now,
       updatedAt: now
@@ -723,6 +733,26 @@ function normalizeSiteName(value: string): string {
   return value.trim().toLocaleLowerCase()
 }
 
+function importedSiteKey(name: string, url: string): string {
+  return `${normalizeSiteName(name)}\u0000${normalizeUrlForCompare(url)}`
+}
+
+function uniqueImportedSiteName(
+  baseName: string,
+  takenNames: Set<string>
+): string {
+  const base = baseName.trim()
+  let sequence = 2
+  while (true) {
+    const suffix = ` (${sequence})`
+    const candidate = `${base.slice(0, 80 - suffix.length).trimEnd()}${suffix}`
+    if (!takenNames.has(normalizeSiteName(candidate))) {
+      return candidate
+    }
+    sequence += 1
+  }
+}
+
 function normalizeUrlForCompare(value: string): string {
   try {
     return new URL(value).toString()
@@ -732,7 +762,7 @@ function normalizeUrlForCompare(value: string): string {
 }
 
 function optionalGroup(value: string | undefined): string | undefined {
-  const group = clean(value).slice(0, 40)
+  const group = normalizeGroupPath(clean(value)).slice(0, 40)
   return group || undefined
 }
 
@@ -824,6 +854,47 @@ function decodeCsvBuffer(buffer: Buffer): string {
     decodeWithFallback('gb18030', buffer) ??
     buffer.toString('utf8')
   )
+}
+
+function stripCsvCommentLines(text: string): string {
+  const lines = text.match(/[^\r\n]*(?:\r\n|\n|\r|$)/g) ?? []
+  let inQuotes = false
+  let fieldStart = true
+  let result = ''
+
+  for (const lineWithEnding of lines) {
+    if (!lineWithEnding) continue
+    const line = lineWithEnding.replace(/(?:\r\n|\n|\r)$/, '')
+    if (!inQuotes && /^[ \t]*#/.test(line)) continue
+    result += lineWithEnding
+
+    for (let index = 0; index < line.length; index += 1) {
+      const character = line.charAt(index)
+      if (character === '"') {
+        if (inQuotes) {
+          if (line[index + 1] === '"') {
+            index += 1
+            continue
+          }
+          inQuotes = false
+        } else if (fieldStart) {
+          inQuotes = true
+        }
+        fieldStart = false
+        continue
+      }
+      if (inQuotes) continue
+      if (character === ',') {
+        fieldStart = true
+      } else if (!/\s/.test(character)) {
+        fieldStart = false
+      }
+    }
+
+    if (!inQuotes) fieldStart = true
+  }
+
+  return result
 }
 
 function decodeWithFallback(encoding: string, buffer: Buffer): string | null {

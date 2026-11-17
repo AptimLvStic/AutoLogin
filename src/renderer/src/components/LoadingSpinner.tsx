@@ -1,7 +1,7 @@
 import { LoaderCircle } from 'lucide-react'
 
 export function LoadingSpinner({
-  size = 15,
+  size = 14,
   className
 }: {
   size?: number
@@ -12,7 +12,7 @@ export function LoadingSpinner({
       className={`loading-spinner${className ? ` ${className}` : ''}`}
       aria-hidden="true"
     >
-      <LoaderCircle size={size} />
+      <LoaderCircle size={size} className="spin" />
     </span>
   )
 }

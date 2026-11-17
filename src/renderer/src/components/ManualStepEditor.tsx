@@ -1,11 +1,13 @@
 import { useState } from 'react'
 import {
+  ClipboardPaste,
   GripVertical,
   KeyRound,
   ListChecks,
   LoaderCircle,
   Plus,
   RefreshCw,
+  ShieldCheck,
   SlidersHorizontal,
   Trash2
 } from 'lucide-react'
@@ -24,13 +26,17 @@ export type ManualStepAction =
   | 'click'
   | 'press'
   | 'focusChallenge'
+  | 'paste'
+  | 'acceptCertWarning'
 
 export const MANUAL_STEP_ACTIONS: ManualStepAction[] = [
   'fillUsername',
   'fillPassword',
   'click',
   'press',
-  'focusChallenge'
+  'focusChallenge',
+  'paste',
+  'acceptCertWarning'
 ]
 
 export function ManualStepEditor({
@@ -155,26 +161,75 @@ export function ManualStepEditor({
                 ))}
               </select>
               <span className="manual-step-row__selector-cell">
-                <span className="input-shell">
-                  <SlidersHorizontal size={15} />
-                  <input
-                    aria-label={tr(
-                      `步骤 ${index + 1} Selector`,
-                      `Step ${index + 1} selector`,
-                      `步驟 ${index + 1} Selector`
+                {step.type === 'acceptCertWarning' ? (
+                  <span className="manual-step-row__fixed-step">
+                    <ShieldCheck size={15} />
+                    {tr(
+                      '仅在出现证书拦截页时执行，找不到自动跳过',
+                      'Runs only when a certificate warning appears; otherwise it is skipped',
+                      '僅在出現憑證攔截頁時執行，找不到會自動略過'
                     )}
-                    value={manualStepSelector(step)}
-                    disabled={disabled}
-                    onChange={(event) =>
-                      updateStep(step.id, (current) =>
-                        updateManualStepSelector(current, event.target.value)
-                      )
-                    }
-                    placeholder={selectorPlaceholderForAction(step.type)}
-                    spellCheck={false}
-                    autoComplete="off"
-                  />
-                </span>
+                  </span>
+                ) : (
+                  <span className="input-shell">
+                    <SlidersHorizontal size={15} />
+                    <input
+                      aria-label={tr(
+                        `步骤 ${index + 1} Selector`,
+                        `Step ${index + 1} selector`,
+                        `步驟 ${index + 1} Selector`
+                      )}
+                      value={manualStepSelector(step)}
+                      disabled={disabled}
+                      onChange={(event) =>
+                        updateStep(step.id, (current) =>
+                          updateManualStepSelector(current, event.target.value)
+                        )
+                      }
+                      placeholder={selectorPlaceholderForAction(step.type)}
+                      spellCheck={false}
+                      autoComplete="off"
+                    />
+                  </span>
+                )}
+                {step.type === 'paste' && (
+                  <span className="input-shell manual-step-row__key-field">
+                    <ClipboardPaste size={15} />
+                    <select
+                      className="select-control"
+                      aria-label={tr(
+                        `步骤 ${index + 1} 粘贴来源`,
+                        `Step ${index + 1} paste source`,
+                        `步驟 ${index + 1} 貼上來源`
+                      )}
+                      value={step.source}
+                      disabled={disabled}
+                      onChange={(event) =>
+                        updateStep(step.id, (current) =>
+                          current.type === 'paste'
+                            ? {
+                                ...current,
+                                source: event.target.value as
+                                  | 'username'
+                                  | 'password'
+                                  | 'literal'
+                              }
+                            : current
+                        )
+                      }
+                    >
+                      <option value="username">
+                        {tr('保险库用户名', 'Vault username', '保險庫使用者名稱')}
+                      </option>
+                      <option value="password">
+                        {tr('保险库密码', 'Vault password', '保險庫密碼')}
+                      </option>
+                      <option value="literal">
+                        {tr('其他文本（需人工）', 'Other text (manual)', '其他文字（需人工）')}
+                      </option>
+                    </select>
+                  </span>
+                )}
                 {step.type === 'press' && (
                   <span className="input-shell manual-step-row__key-field">
                     <KeyRound size={15} />
@@ -213,7 +268,11 @@ export function ManualStepEditor({
                 type="button"
                 className="button button--ghost button--small"
                 onClick={() => onTest(step)}
-                disabled={disabled || selectorTesting !== null}
+                disabled={
+                  disabled ||
+                  selectorTesting !== null ||
+                  step.type === 'acceptCertWarning'
+                }
               >
                 {selectorTesting === step.id ? (
                   <LoaderCircle size={13} className="spin" />
@@ -294,11 +353,26 @@ export function manualSelectorsToSteps(
 export function createManualStep(
   action: ManualStepAction,
   selector = '',
-  key = 'Enter'
+  key = 'Enter',
+  pasteSource: 'username' | 'password' | 'literal' = 'username'
 ): RecipeStep {
   const base = {
     id: crypto.randomUUID(),
     selector: { candidates: [selector] }
+  }
+  if (action === 'acceptCertWarning') {
+    return {
+      id: crypto.randomUUID(),
+      type: 'acceptCertWarning',
+      optional: true
+    }
+  }
+  if (action === 'paste') {
+    return {
+      ...base,
+      type: 'paste',
+      source: pasteSource
+    }
   }
   if (action === 'click') {
     return { ...base, type: 'click', navigationExpected: true }
@@ -310,9 +384,7 @@ export function createManualStep(
 }
 
 export function manualStepSelectorSpec(step: RecipeStep): SelectorSpec {
-  return 'selector' in step && step.selector
-    ? step.selector
-    : { candidates: [''] }
+  return 'selector' in step && step.selector ? step.selector : { candidates: [''] }
 }
 
 export function manualStepSelector(step: RecipeStep): string {
@@ -323,6 +395,7 @@ export function updateManualStepSelector(
   step: RecipeStep,
   value: string
 ): RecipeStep {
+  if (step.type === 'acceptCertWarning') return step
   return {
     ...step,
     selector: {
@@ -337,6 +410,21 @@ export function changeManualStepType(
   action: ManualStepAction
 ): RecipeStep {
   const selector = manualStepSelectorSpec(step)
+  if (action === 'acceptCertWarning') {
+    return {
+      id: step.id,
+      type: 'acceptCertWarning',
+      optional: true
+    }
+  }
+  if (action === 'paste') {
+    return {
+      id: step.id,
+      type: 'paste',
+      selector,
+      source: step.type === 'paste' ? step.source : 'username'
+    }
+  }
   if (action === 'click') {
     return {
       id: step.id,
@@ -366,7 +454,11 @@ export function nextManualStepType(steps: RecipeStep[]): ManualStepAction {
 export function manualStepsAreComplete(steps: RecipeStep[]): boolean {
   return (
     steps.length > 0 &&
-    steps.every((step) => Boolean(manualStepSelector(step).trim())) &&
+    steps.every(
+      (step) =>
+        step.type === 'acceptCertWarning' ||
+        Boolean(manualStepSelector(step).trim())
+    ) &&
     steps.some((step) => step.type === 'fillUsername') &&
     steps.some((step) => step.type === 'fillPassword')
   )
@@ -374,6 +466,7 @@ export function manualStepsAreComplete(steps: RecipeStep[]): boolean {
 
 export function normalizeManualSteps(steps: RecipeStep[]): RecipeStep[] {
   return steps.map((step) => {
+    if (step.type === 'acceptCertWarning') return { ...step }
     const selector = manualStepSelectorSpec(step)
     return {
       ...step,
@@ -390,6 +483,7 @@ export function selectorTestFieldForAction(
 ): SelectorTestField {
   if (action === 'fillUsername') return 'username'
   if (action === 'fillPassword') return 'password'
+  if (action === 'paste') return 'username'
   return 'submit'
 }
 
@@ -399,6 +493,7 @@ export function selectorPlaceholderForAction(
   if (action === 'fillUsername') return 'input[name="username"], #username'
   if (action === 'fillPassword') return 'input[type="password"], #password'
   if (action === 'focusChallenge') return 'input[name="otp"], #verification-code'
+  if (action === 'paste') return 'input[name="password"], #password'
   return 'button[type="submit"], #login'
 }
 
@@ -417,5 +512,9 @@ export function manualStepActionLabel(
       return tr('按下按键', 'Press key', '按下按鍵')
     case 'focusChallenge':
       return tr('聚焦验证码', 'Focus challenge', '聚焦驗證碼')
+    case 'paste':
+      return tr('粘贴凭据', 'Paste credential', '貼上憑證')
+    case 'acceptCertWarning':
+      return tr('跳过证书拦截', 'Accept certificate warning', '略過憑證攔截')
   }
 }

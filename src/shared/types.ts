@@ -39,6 +39,8 @@ export const ACCOUNT_TAB_SOURCES = [
 ] as const
 export type AccountTabSource = (typeof ACCOUNT_TAB_SOURCES)[number]
 export const DEFAULT_ACCOUNT_TAB_ID = 'local'
+export const CURRENT_CREDENTIAL_VERSION_ID = 'current'
+export const CREDENTIAL_HISTORY_MAX_ENTRIES = 200
 export const ACCOUNT_TAB_COLORS = [
   '#5C6BFF',
   '#0E7567',
@@ -89,6 +91,9 @@ export interface ProxyTestResult {
 
 export const LOGIN_STRATEGIES = ['auto', 'manual'] as const
 export type LoginStrategy = (typeof LOGIN_STRATEGIES)[number]
+
+export const LOGIN_BROWSERS = ['standalone', 'builtin'] as const
+export type LoginBrowser = (typeof LOGIN_BROWSERS)[number]
 
 export interface ManualLoginSelectors {
   username?: string
@@ -143,6 +148,7 @@ export interface AppSettings {
   accountCopyShortcutEnabled: boolean
   accountCopyShortcut: string
   proxy: ProxySettings
+  recordingDraftDirectory: string
   groupOrder: string[]
   groupOrders: Record<string, string[]>
 }
@@ -238,6 +244,24 @@ export type RecipeStep =
       type: 'focusChallenge'
       selector?: SelectorSpec
     }
+  | {
+      id: string
+      type: 'paste'
+      selector: SelectorSpec
+      source: 'username' | 'password' | 'literal'
+    }
+  | {
+      id: string
+      type: 'acceptCertWarning'
+      optional: true
+    }
+
+export interface RecordingStepSummary {
+  id: string
+  type: RecipeStep['type']
+  source?: 'username' | 'password' | 'literal'
+  selectorLabel?: string
+}
 
 export interface RecipeSuccessCheck {
   urlPrefix?: string
@@ -283,6 +307,7 @@ export interface Account {
   username: string
   favorite: boolean
   loginStrategy: LoginStrategy
+  loginBrowser: LoginBrowser
   manualSelectors?: ManualLoginSelectors
   manualSteps?: RecipeStep[]
   recipes?: AccountRecipe[]
@@ -293,8 +318,34 @@ export interface Account {
   updatedAt: string
 }
 
+export interface CredentialVersionSnapshot {
+  id: string
+  username: string
+  password: string
+  validFrom: string
+  validUntil: string
+}
+
+export type CredentialHistoryField = 'username' | 'password'
+
+export interface CredentialHistoryEntry {
+  id: string
+  current: boolean
+  validFrom: string
+  validUntil?: string
+  changedFields: CredentialHistoryField[]
+  sizeBytes: number
+}
+
+export interface CredentialHistoryReveal {
+  username: string
+  password: string
+}
+
 export interface StoredAccount extends Account {
   password: string
+  credentialHistory?: CredentialVersionSnapshot[]
+  credentialUpdatedAt?: string
 }
 
 export interface AccountWithSite extends Account {
@@ -355,6 +406,8 @@ export interface VaultData {
 export interface LoginViewState {
   active: boolean
   accountId?: string
+  accountLabel?: string
+  siteName?: string
   mode?: LoginMode
   status: LoginStatus
   message: string
@@ -366,6 +419,10 @@ export interface LoginViewState {
   recording: boolean
   recipeExists: boolean
   recordingStepCount: number
+  recordingSteps: RecordingStepSummary[]
+  recordingPaused: boolean
+  recordingStartedAt?: string
+  recordingPausedAt?: string
   browserName: string
 }
 
@@ -387,6 +444,7 @@ export interface AccountCreateInput {
   password: string
   favorite?: boolean
   loginStrategy?: LoginStrategy
+  loginBrowser?: LoginBrowser
   manualSelectors?: ManualLoginSelectors
   manualSteps?: RecipeStep[]
 }
@@ -398,6 +456,7 @@ export interface AccountUpdateInput {
   favorite?: boolean
   activeRecipeId?: string
   loginStrategy?: LoginStrategy
+  loginBrowser?: LoginBrowser
   manualSelectors?: ManualLoginSelectors
   manualSteps?: RecipeStep[]
 }
@@ -405,6 +464,7 @@ export interface AccountUpdateInput {
 export interface AccountBatchStrategyInput {
   accountIds: string[]
   loginStrategy: LoginStrategy
+  loginBrowser?: LoginBrowser
   manualSelectors?: ManualLoginSelectors
   manualSteps?: RecipeStep[]
 }
@@ -424,6 +484,14 @@ export interface AccountBatchIconFetchResult {
   updatedAccounts: number
   updatedSites: number
   failedSites: string[]
+  canceled: boolean
+}
+
+export interface AccountBatchIconFetchProgress {
+  totalAccounts: number
+  completedAccounts: number
+  updatedSiteCount: number
+  failedSiteCount: number
 }
 
 export interface AccountMoveInput {
@@ -448,6 +516,63 @@ export interface LoginStartInput {
   mode: LoginMode
 }
 
+export interface EmbeddedBrowserBounds {
+  x: number
+  y: number
+  width: number
+  height: number
+}
+
+export interface EmbeddedBrowserOpenRequest {
+  requestId: string
+  accountId: string
+  initialUrl: string
+  profileDirectory: string
+}
+
+export interface EmbeddedBrowserOpenResult {
+  label: string
+  debugPort: number
+}
+
+export interface EmbeddedBrowserTab {
+  label: string
+  accountId: string
+  siteId: string
+  siteName: string
+  accountLabel: string
+  groupName: string
+  url: string
+  title: string
+  isLoading: boolean
+  createdAt: string
+}
+
+export interface EmbeddedBrowserTabPatch {
+  url?: string
+  title?: string
+  isLoading?: boolean
+}
+
+export interface EmbeddedBrowserControlEvent {
+  action:
+    | 'show'
+    | 'hide'
+    | 'close'
+    | 'focus'
+    | 'set-bounds'
+    | 'navigate'
+    | 'back'
+    | 'reload'
+  label: string
+  bounds?: EmbeddedBrowserBounds
+  url?: string
+}
+
+export interface EmbeddedBrowserNewWindowEvent {
+  url: string
+}
+
 export type LoginBatchItemStatus =
   | 'queued'
   | 'opening'
@@ -464,8 +589,10 @@ export interface LoginBatchItem {
   accountLabel: string
   siteName: string
   groupName: string
+  loginBrowser: LoginBrowser
   status: LoginBatchItemStatus
   message: string
+  embeddedReady?: boolean
   startedAt?: string
   completedAt?: string
 }
@@ -495,6 +622,20 @@ export interface RecipeDraftResult {
   recipeId?: string
   recipe: LoginRecipe
   saved: boolean
+  /** 保险库写入未完成，但完整副本已经安全落盘。 */
+  draftSaved?: boolean
+}
+
+export type RecordingSaveState = 'idle' | 'saving' | 'saved' | 'draft_saved' | 'failed'
+
+export interface RecordingSaveStatus {
+  state: RecordingSaveState
+  startedAt?: number
+  finishedAt?: number
+  error?: string
+  /** 保存流程当前停留在哪一步，用于超时后定位卡点。 */
+  stage?: string
+  result?: RecipeDraftResult
 }
 
 export interface AccountRecipeInput {
@@ -679,6 +820,7 @@ export interface AutologinApi {
     setStrategyBatch: (input: AccountBatchStrategyInput) => Promise<AccountWithSite[]>
     setIconBatch: (input: AccountBatchIconInput) => Promise<AccountWithSite[]>
     fetchIconsBatch: (accountIds: string[]) => Promise<AccountBatchIconFetchResult>
+    cancelIconFetchBatch: () => Promise<boolean>
     duplicate: (accountIds: string[]) => Promise<AccountWithSite[]>
     delete: (accountId: string) => Promise<void>
     deleteMany: (accountIds: string[]) => Promise<AccountDeleteResult>
@@ -690,6 +832,17 @@ export interface AutologinApi {
     moveToGroup: (input: AccountMoveInput) => Promise<AccountWithSite[]>
     reorder: (input: AccountReorderInput) => Promise<AccountWithSite[]>
     reveal: (accountId: string) => Promise<PasswordReveal>
+    listCredentialHistory: (accountId: string) => Promise<CredentialHistoryEntry[]>
+    revealCredentialHistory: (
+      accountId: string,
+      historyId: string
+    ) => Promise<CredentialHistoryReveal>
+    restoreCredentialHistory: (
+      accountId: string,
+      historyId: string
+    ) => Promise<AccountWithSite>
+    deleteCredentialHistory: (accountId: string, historyId: string) => Promise<void>
+    clearCredentialHistory: (accountId: string) => Promise<void>
     copyUsername: (accountId: string) => Promise<void>
     copy: (accountId: string) => Promise<void>
     copyUrl: (accountId: string) => Promise<void>
@@ -706,11 +859,29 @@ export interface AutologinApi {
     retry: () => Promise<void>
     trustCurrentOrigin: () => Promise<void>
     focusBrowser: () => Promise<void>
-    finishRecording: () => Promise<RecipeDraftResult>
+    finishRecording: (name?: string) => Promise<RecipeDraftResult>
+    recordingSaveStatus: () => Promise<RecordingSaveStatus>
     cancelRecording: () => Promise<void>
+    undoRecordingStep: () => Promise<LoginViewState>
+    pauseRecording: () => Promise<LoginViewState>
+    resumeRecording: () => Promise<LoginViewState>
     testSelector: (input: SelectorTestInput) => Promise<SelectorTestResult>
     clearSession: (accountId: string) => Promise<void>
     getState: () => Promise<LoginViewState>
+    setEmbeddedBounds: (bounds: EmbeddedBrowserBounds) => Promise<void>
+    setEmbeddedActive: (accountId: string) => Promise<void>
+    closeEmbeddedTabs: () => Promise<void>
+  }
+  browser: {
+    listTabs: () => Promise<EmbeddedBrowserTab[]>
+    openUrl: (url: string) => Promise<EmbeddedBrowserTab>
+    activate: (label: string) => Promise<void>
+    close: (label: string) => Promise<void>
+    navigate: (label: string, url: string) => Promise<EmbeddedBrowserTab>
+    back: (label: string) => Promise<void>
+    reload: (label: string) => Promise<void>
+    setBounds: (label: string, bounds: EmbeddedBrowserBounds) => Promise<void>
+    hideAll: () => Promise<void>
   }
   settings: {
     get: () => Promise<AppSettings>
@@ -726,12 +897,14 @@ export interface AutologinApi {
     installUpdate: () => Promise<void>
     getDataLocation: () => Promise<DataLocationInfo>
     chooseDataLocation: () => Promise<DataLocationChoiceResult | null>
+    chooseRecordingDraftDirectory: () => Promise<string | null>
     resolveDataLocationConflict: (
       directory: string,
       action: DataLocationConflictAction
     ) => Promise<DataLocationInfo>
     restoreDefaultDataLocation: () => Promise<DataLocationInfo>
     openDataLocation: () => Promise<void>
+    openRecordingDraftDirectory: () => Promise<void>
     openFailureLog: () => Promise<void>
     listLoginLogs: (query?: LoginLogQuery) => Promise<LoginLogEntry[]>
     listFailureLogs: () => Promise<LoginLogEntry[]>
@@ -741,6 +914,11 @@ export interface AutologinApi {
     clearAppLogs: () => Promise<AppLogClearResult>
     restart: () => Promise<void>
     reportActivity: () => void
+    reportUiFailure: (input: {
+      message: string
+      context?: string
+      durationMs?: number
+    }) => Promise<void>
     clearAllData: () => Promise<void>
     openPrivacy: () => Promise<void>
   }
@@ -778,6 +956,13 @@ export interface AutologinApi {
     onVaultLocked: (callback: () => void) => () => void
     onLoginState: (callback: (state: LoginViewState) => void) => () => void
     onLoginBatchState: (callback: (state: LoginBatchState) => void) => () => void
+    onBrowserTabs: (callback: (tabs: EmbeddedBrowserTab[]) => void) => () => void
+    onBrowserNewWindow: (
+      callback: (event: EmbeddedBrowserNewWindowEvent) => void
+    ) => () => void
+    onAccountBatchIconFetchProgress: (
+      callback: (progress: AccountBatchIconFetchProgress) => void
+    ) => () => void
     onUpdateState: (callback: (state: AppUpdateState) => void) => () => void
   }
 }

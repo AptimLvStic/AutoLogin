@@ -1,16 +1,27 @@
-import { forwardRef, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import {
+  Fragment,
+  forwardRef,
+  useEffect,
+  useId,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState
+} from 'react'
 import { createPortal } from 'react-dom'
 import {
+  ArrowUpRight,
   ArchiveRestore,
   Bookmark,
   Check,
   ChevronDown,
   ChevronLeft,
   ChevronRight,
+  ChevronsDown,
+  ChevronsUp,
   Copy,
   Database,
   FileClock,
-  FileSpreadsheet,
   FolderOpen,
   Globe2,
   GripVertical,
@@ -21,12 +32,14 @@ import {
   LogIn,
   LockKeyhole,
   Maximize2,
+  MoreHorizontal,
   MoveHorizontal,
   PanelLeftClose,
   PanelLeftOpen,
   Pencil,
   Plus,
   RefreshCw,
+  RotateCcw,
   Search,
   Settings,
   SlidersHorizontal,
@@ -43,6 +56,7 @@ import {
   GROUP_PATH_SEPARATOR,
   TRASH_RETENTION_OPTIONS,
   UNGROUPED_GROUP_KEY,
+  type AccountBatchIconFetchProgress,
   type AccountTab,
   type AccountWithSite,
   type AppSettings,
@@ -50,7 +64,9 @@ import {
   type DeletedAccountWithSite,
   type GroupDefinition,
   type LoginBatchState,
+  type LoginBrowser,
   type LoginStrategy,
+  type LoginViewState,
   type RecipeStep,
   type SelectorTestResult,
   type Site,
@@ -68,11 +84,23 @@ import { AccountDrawer } from './AccountDrawer'
 import { AccountTabs } from './AccountTabs'
 import { AccountTransferControls } from './AccountTransferControls'
 import { AppLogsPage } from './AppLogsPage'
+import { BrowserWorkspace } from './BrowserWorkspace'
 import {
   BookmarkImportButton,
   BookmarkTransferControls
 } from './BookmarkImportButton'
+import { CollectionPageHeader } from './CollectionPageHeader'
+import {
+  CollectionSearchField,
+  useCollectionSearch
+} from './CollectionSearchField'
+import { CollectionFilterSelect } from './CollectionFilterSelect'
 import { LoadingSpinner } from './LoadingSpinner'
+import {
+  emptyLogDateRange,
+  LogDateFilter,
+  matchesLogDateRange
+} from './LogDateFilter'
 import { LoginLogsPage } from './LoginLogsPage'
 import {
   ManualStepEditor,
@@ -83,6 +111,7 @@ import {
   selectorTestFieldForAction
 } from './ManualStepEditor'
 import { ConfirmDialog, Modal } from './Modal'
+import { PageActionMenu } from './PageActionMenu'
 import { PageSizePicker } from './PageSizePicker'
 import { PasswordGenerator } from './PasswordGenerator'
 import { SettingsPage, type SettingsModule } from './SettingsPage'
@@ -91,6 +120,7 @@ import { SiteMark } from './SiteMark'
 type LibraryView =
   | 'accounts'
   | 'bookmarks'
+  | 'browser'
   | 'passwordGenerator'
   | 'loginLogs'
   | 'appLogs'
@@ -100,19 +130,26 @@ type GroupDropPosition = 'before' | 'after' | 'inside'
 type ColumnDropPosition = 'before' | 'after'
 type DrawerState = { mode: 'create'; siteId?: string } | { mode: 'edit'; accountId: string }
 type AccountMenuState =
-  | {
-      kind: 'account'
-      account: AccountWithSite
-      anchorX: number
-      anchorY: number
-      left: number
-      top: number
-    }
-  | { kind: 'page'; anchorX: number; anchorY: number; left: number; top: number }
+  {
+    kind: 'account'
+    account: AccountWithSite
+    anchorX: number
+    anchorY: number
+    left: number
+    top: number
+  }
 type AccountColumnSizing = 'content' | 'window' | 'manual'
 type AccountPageSize = 10 | 20 | 50 | 100 | 200
 const ACCOUNT_COLUMN_KEYS = ['username', 'group', 'updated', 'url'] as const
 const ACCOUNT_PAGE_SIZES: AccountPageSize[] = [10, 20, 50, 100, 200]
+const GROUP_DOT_COLORS = [
+  '#6f7cf6',
+  '#4f9d82',
+  '#c08b4b',
+  '#6b8fc9',
+  '#b0719b',
+  '#5c9fa8'
+] as const
 type AccountColumnKey = (typeof ACCOUNT_COLUMN_KEYS)[number]
 type AccountColumnResizeKey = 'site' | AccountColumnKey | 'actions'
 const ACCOUNT_COLUMN_STORAGE_KEY = 'autologin.account.visibleColumns'
@@ -121,13 +158,14 @@ const ACCOUNT_COLUMN_SIZING_STORAGE_KEY = 'autologin.account.columnSizing'
 const ACCOUNT_COLUMN_WIDTH_STORAGE_KEY = 'autologin.account.columnWidths'
 const ACCOUNT_ACTIVE_TAB_STORAGE_KEY = 'autologin.account.activeTab'
 const BOOKMARK_ACTIVE_TAB_STORAGE_KEY = 'autologin.bookmark.activeTab'
+const SESSION_CLEAR_TIMEOUT_MS = 15_000
 const ACCOUNT_COLUMN_DEFAULT_WIDTHS: Record<AccountColumnResizeKey, number> = {
-  site: 220,
+  site: 250,
   username: 150,
   group: 90,
-  updated: 86,
+  updated: 96,
   url: 180,
-  actions: 80
+  actions: 128
 }
 const ACCOUNT_COLUMN_MIN_WIDTHS: Record<AccountColumnResizeKey, number> = {
   site: 90,
@@ -135,7 +173,54 @@ const ACCOUNT_COLUMN_MIN_WIDTHS: Record<AccountColumnResizeKey, number> = {
   group: 40,
   updated: 54,
   url: 68,
-  actions: 52
+  actions: 84
+}
+
+function groupDotColor(path: string): string {
+  let hash = 2166136261
+  for (let index = 0; index < path.length; index += 1) {
+    hash ^= path.charCodeAt(index)
+    hash = Math.imul(hash, 16777619)
+  }
+  return (
+    GROUP_DOT_COLORS[(hash >>> 0) % GROUP_DOT_COLORS.length] ??
+    GROUP_DOT_COLORS[0]
+  )
+}
+
+function withSessionClearTimeout<T>(promise: Promise<T>): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const timer = window.setTimeout(
+      () => reject(new Error('清除网站会话超时，请关闭对应浏览器窗口后重试')),
+      SESSION_CLEAR_TIMEOUT_MS
+    )
+    promise.then(
+      (value) => {
+        window.clearTimeout(timer)
+        resolve(value)
+      },
+      (reason: unknown) => {
+        window.clearTimeout(timer)
+        reject(reason)
+      }
+    )
+  })
+}
+
+function workflowStepCount(account: AccountWithSite): number {
+  const activeRecipe = account.activeRecipeId
+    ? account.recipes?.find((recipe) => recipe.id === account.activeRecipeId)?.recipe
+    : account.site.recipe
+  if (activeRecipe?.steps.length) return activeRecipe.steps.length
+  return account.manualSteps?.length ?? 0
+}
+
+function siteDomain(startUrl: string): string {
+  try {
+    return new URL(startUrl).hostname.replace(/^www\./i, '')
+  } catch {
+    return startUrl.replace(/^https?:\/\//i, '').split('/')[0] ?? startUrl
+  }
 }
 
 function batchManualStepsSignature(steps: RecipeStep[]): string {
@@ -151,39 +236,39 @@ function batchManualStepsSignature(steps: RecipeStep[]): string {
 const ACCOUNT_COLUMN_TRACKS = {
   wide: {
     checkbox: '22px',
-    site: 'minmax(100px, 1.15fr)',
-    username: 'minmax(72px, 0.78fr)',
-    group: 'minmax(48px, 0.5fr)',
-    updated: '82px',
-    url: 'minmax(104px, 0.9fr)',
-    actions: '90px'
+    site: 'minmax(190px, 1.45fr)',
+    username: 'minmax(110px, 0.9fr)',
+    group: 'minmax(82px, 0.62fr)',
+    updated: '96px',
+    url: 'minmax(120px, 0.9fr)',
+    actions: 'max-content'
   },
   medium: {
     checkbox: '20px',
-    site: 'minmax(86px, 1.1fr)',
-    username: 'minmax(60px, 0.78fr)',
-    group: 'minmax(40px, 0.48fr)',
-    updated: '62px',
-    url: 'minmax(84px, 0.85fr)',
-    actions: '86px'
+    site: 'minmax(150px, 1.35fr)',
+    username: 'minmax(92px, 0.88fr)',
+    group: 'minmax(72px, 0.62fr)',
+    updated: '86px',
+    url: 'minmax(104px, 0.85fr)',
+    actions: 'max-content'
   },
   compact: {
     checkbox: '20px',
-    site: 'minmax(72px, 1.1fr)',
-    username: 'minmax(50px, 0.78fr)',
-    group: 'minmax(34px, 0.5fr)',
-    updated: '54px',
-    url: 'minmax(70px, 0.8fr)',
-    actions: '82px'
+    site: 'minmax(132px, 1.25fr)',
+    username: 'minmax(72px, 0.78fr)',
+    group: 'minmax(56px, 0.58fr)',
+    updated: '68px',
+    url: 'minmax(90px, 0.78fr)',
+    actions: 'max-content'
   },
   narrow: {
     checkbox: '18px',
-    site: 'minmax(62px, 1.05fr)',
-    username: 'minmax(42px, 0.72fr)',
-    group: 'minmax(30px, 0.45fr)',
-    updated: '44px',
-    url: 'minmax(60px, 0.8fr)',
-    actions: '60px'
+    site: 'minmax(110px, 1.2fr)',
+    username: 'minmax(62px, 0.72fr)',
+    group: 'minmax(48px, 0.52fr)',
+    updated: '58px',
+    url: 'minmax(70px, 0.72fr)',
+    actions: 'max-content'
   }
 } as const
 type Translate = (
@@ -194,8 +279,8 @@ type Translate = (
 ) => string
 
 const UNGROUPED_KEY = UNGROUPED_GROUP_KEY
-const ACCOUNT_SUBNAV_DEFAULT_WIDTH = 184
-const ACCOUNT_SUBNAV_MIN_WIDTH = 128
+const ACCOUNT_SUBNAV_DEFAULT_WIDTH = 224
+const ACCOUNT_SUBNAV_MIN_WIDTH = 148
 const ACCOUNT_SUBNAV_MAX_WIDTH = 320
 const ACCOUNT_SUBNAV_HIDE_THRESHOLD = 132
 
@@ -319,10 +404,13 @@ export function LibraryScreen({
   appVersion,
   updateState,
   batchState,
+  loginState,
+  recordingFinishRequest,
   onRefresh,
   onLock,
   onStartBatch,
   onRecord,
+  onRecordingFinishHandled,
   onDownloadUpdate,
   onCancelUpdate,
   onInstallUpdate,
@@ -335,10 +423,13 @@ export function LibraryScreen({
   appVersion: string
   updateState: AppUpdateState | null
   batchState: LoginBatchState | null
+  loginState: LoginViewState | null
+  recordingFinishRequest: number
   onRefresh: () => Promise<void>
   onLock: () => Promise<void>
   onStartBatch: (accountIds: string[]) => Promise<boolean>
-  onRecord: (account: AccountWithSite) => void
+  onRecord: (account: AccountWithSite) => Promise<boolean>
+  onRecordingFinishHandled: () => void
   onDownloadUpdate: () => Promise<void>
   onCancelUpdate: () => Promise<void>
   onInstallUpdate: () => Promise<void>
@@ -349,7 +440,7 @@ export function LibraryScreen({
   const [tabs, setTabs] = useState<AccountTab[]>([])
   const [accountTabId, setAccountTabId] = useState(() => {
     const stored = window.localStorage.getItem(ACCOUNT_ACTIVE_TAB_STORAGE_KEY)
-    return stored?.trim() || DEFAULT_ACCOUNT_TAB_ID
+    return stored?.trim() || ''
   })
   const [bookmarkTabId, setBookmarkTabId] = useState(
     () => window.localStorage.getItem(BOOKMARK_ACTIVE_TAB_STORAGE_KEY)?.trim() || ''
@@ -372,13 +463,6 @@ export function LibraryScreen({
     () => visibleTabs.find((tab) => tab.id === activeTabId) ?? null,
     [activeTabId, visibleTabs]
   )
-  const tabAccountCounts = useMemo(() => {
-    const counts = new Map<string, number>()
-    for (const account of allAccounts) {
-      counts.set(account.tabId, (counts.get(account.tabId) ?? 0) + 1)
-    }
-    return counts
-  }, [allAccounts])
   const isLogView = view === 'loginLogs' || view === 'appLogs'
   const bookmarkTabIds = useMemo(
     () => new Set(bookmarkTabs.map((tab) => tab.id)),
@@ -402,9 +486,8 @@ export function LibraryScreen({
   )
   const [groupFilter, setGroupFilter] = useState<string | null>(null)
   const [settingsModule, setSettingsModule] = useState<SettingsModule>('general')
-  const [sidebarCollapsed, setSidebarCollapsed] = useState(
-    () => window.localStorage.getItem('autologin.sidebar.collapsed') === '1'
-  )
+  const sidebarCollapsed = true
+  const [rowEntryEnabled, setRowEntryEnabled] = useState(true)
   const [search, setSearch] = useState('')
   const [searchExpanded, setSearchExpanded] = useState(false)
   const [visibleAccountColumns, setVisibleAccountColumns] = useState<
@@ -412,9 +495,13 @@ export function LibraryScreen({
   >(() => {
     try {
       const stored = window.localStorage.getItem(ACCOUNT_COLUMN_STORAGE_KEY)
-      if (!stored) return new Set(ACCOUNT_COLUMN_KEYS)
+      if (!stored) {
+        return new Set<AccountColumnKey>(['username', 'group', 'updated'])
+      }
       const values = JSON.parse(stored) as unknown
-      if (!Array.isArray(values)) return new Set(ACCOUNT_COLUMN_KEYS)
+      if (!Array.isArray(values)) {
+        return new Set<AccountColumnKey>(['username', 'group', 'updated'])
+      }
       return new Set(
         values.filter(
           (value): value is AccountColumnKey =>
@@ -423,7 +510,7 @@ export function LibraryScreen({
         )
       )
     } catch {
-      return new Set(ACCOUNT_COLUMN_KEYS)
+      return new Set<AccountColumnKey>(['username', 'group', 'updated'])
     }
   })
   const availableAccountColumnKeys = ACCOUNT_COLUMN_KEYS
@@ -517,7 +604,7 @@ export function LibraryScreen({
   const [trashSection, setTrashSection] = useState<'accounts' | 'bookmarks'>(
     'accounts'
   )
-  const visibleDeletedAccounts = useMemo(
+  const sectionDeletedAccounts = useMemo(
     () =>
       deletedAccounts.filter((record) =>
         trashSection === 'bookmarks'
@@ -526,10 +613,18 @@ export function LibraryScreen({
       ),
     [deletedAccounts, trashSection]
   )
+  const {
+    searchInput: trashSearchInput,
+    search: trashSearch,
+    searchRef: trashSearchRef,
+    setSearchInput: setTrashSearchInput,
+    clearSearch: clearTrashSearch
+  } = useCollectionSearch(language)
+  const [trashDateRange, setTrashDateRange] = useState(emptyLogDateRange)
+  const [trashGroup, setTrashGroup] = useState('all')
+  const [trashSource, setTrashSource] = useState('all')
   const [groupCreateState, setGroupCreateState] = useState<{
     parent: GroupSummary | null
-    left: number
-    top: number
   } | null>(null)
   const [groupCreateName, setGroupCreateName] = useState('')
   const [groupCreateError, setGroupCreateError] = useState('')
@@ -554,6 +649,8 @@ export function LibraryScreen({
   const [trashSelection, setTrashSelection] = useState<Set<string>>(() => new Set())
   const [purgeTargets, setPurgeTargets] = useState<string[] | null>(null)
   const [trashActionBusy, setTrashActionBusy] = useState(false)
+  const [trashPageSize, setTrashPageSize] = useState<AccountPageSize>(20)
+  const [trashPage, setTrashPage] = useState(1)
   const [trashRetentionSaving, setTrashRetentionSaving] = useState(false)
   const [trashRetentionOpen, setTrashRetentionOpen] = useState(false)
   const [selectedIds, setSelectedIds] = useState<Set<string>>(() => new Set())
@@ -576,6 +673,7 @@ export function LibraryScreen({
   const [groupActionBusy, setGroupActionBusy] = useState(false)
   const [batchStrategyOpen, setBatchStrategyOpen] = useState(false)
   const [batchStrategy, setBatchStrategy] = useState<LoginStrategy>('auto')
+  const [batchBrowser, setBatchBrowser] = useState<LoginBrowser>('standalone')
   const [batchSteps, setBatchSteps] = useState<RecipeStep[]>([])
   const [batchStepTests, setBatchStepTests] = useState<
     Record<string, SelectorTestResult>
@@ -583,9 +681,14 @@ export function LibraryScreen({
   const [batchStepTesting, setBatchStepTesting] = useState<string | null>(null)
   const [batchStrategyError, setBatchStrategyError] = useState('')
   const [batchStrategyBusy, setBatchStrategyBusy] = useState(false)
+  const [batchSessionClearConfirm, setBatchSessionClearConfirm] = useState(false)
+  const [batchSessionClearBusy, setBatchSessionClearBusy] = useState(false)
   const [batchIcon, setBatchIcon] = useState<string | null>(null)
   const [batchIconBusy, setBatchIconBusy] = useState(false)
   const [batchIconFetchBusy, setBatchIconFetchBusy] = useState(false)
+  const [batchIconFetchProgress, setBatchIconFetchProgress] =
+    useState<AccountBatchIconFetchProgress | null>(null)
+  const [batchIconFetchCancelBusy, setBatchIconFetchCancelBusy] = useState(false)
   const [duplicateBusy, setDuplicateBusy] = useState(false)
   const [accountClipboardIds, setAccountClipboardIds] = useState<string[]>([])
   const [keyboardDuplicateBusy, setKeyboardDuplicateBusy] = useState(false)
@@ -594,10 +697,10 @@ export function LibraryScreen({
   const [deleteSelectedOpen, setDeleteSelectedOpen] = useState(false)
   const [deleteSelectedBusy, setDeleteSelectedBusy] = useState(false)
   const searchRef = useRef<HTMLInputElement>(null)
+  const searchContainerRef = useRef<HTMLDivElement>(null)
   const selectAllRef = useRef<HTMLInputElement>(null)
   const selectionAnchorRef = useRef<string | null>(null)
   const trashSelectAllRef = useRef<HTMLInputElement>(null)
-  const trashRetentionRef = useRef<HTMLDivElement>(null)
   const groupCreateInputRef = useRef<HTMLInputElement>(null)
   const batchIconInputRef = useRef<HTMLInputElement>(null)
   const columnMenuRef = useRef<HTMLDivElement>(null)
@@ -802,6 +905,10 @@ export function LibraryScreen({
       })
       .sort(compareAccounts)
   }, [accounts, groupFilter, language, search])
+  const recordedAccountCount = useMemo(
+    () => filteredAccounts.filter((account) => workflowStepCount(account) > 0).length,
+    [filteredAccounts]
+  )
 
   const accountPageCount = Math.max(
     1,
@@ -821,6 +928,80 @@ export function LibraryScreen({
       filteredAccounts.filter((account) => selectedIds.has(account.id)).map((account) => account.id),
     [filteredAccounts, selectedIds]
   )
+  const trashGroupOptions = useMemo(() => {
+    const values = new Set<string>()
+    for (const record of sectionDeletedAccounts) {
+      values.add(trashGroupKey(record))
+    }
+    return [...values].sort((left, right) => {
+      if (left === '__ungrouped__') return 1
+      if (right === '__ungrouped__') return -1
+      return left.localeCompare(right, language)
+    })
+  }, [language, sectionDeletedAccounts])
+  const trashSourceOptions = useMemo(() => {
+    const values = new Set<string>()
+    for (const record of sectionDeletedAccounts) {
+      values.add(record.tabName.trim() || record.tabId)
+    }
+    return [...values].sort((left, right) => left.localeCompare(right, language))
+  }, [language, sectionDeletedAccounts])
+  const normalizedTrashSearch = trashSearch
+  const visibleDeletedAccounts = useMemo(
+    () =>
+      sectionDeletedAccounts.filter((record) => {
+        if (normalizedTrashSearch) {
+          const haystack = [
+            record.site.name,
+            record.username,
+            displayGroup(record, tr),
+            record.tabName
+          ]
+            .join(' ')
+            .toLocaleLowerCase(language)
+          if (!haystack.includes(normalizedTrashSearch)) return false
+        }
+        if (!matchesLogDateRange(record.deletedAt, trashDateRange)) return false
+        if (trashGroup !== 'all' && trashGroupKey(record) !== trashGroup) return false
+        if (
+          trashSource !== 'all' &&
+          (record.tabName.trim() || record.tabId) !== trashSource
+        ) {
+          return false
+        }
+        return true
+      }),
+    [
+      language,
+      normalizedTrashSearch,
+      sectionDeletedAccounts,
+      trashDateRange,
+      trashGroup,
+      trashSource,
+      tr
+    ]
+  )
+  const trashPageCount = Math.max(
+    1,
+    Math.ceil(visibleDeletedAccounts.length / trashPageSize)
+  )
+  const currentTrashPage = Math.min(trashPage, trashPageCount)
+  const pagedDeletedAccounts = useMemo(
+    () =>
+      visibleDeletedAccounts.slice(
+        (currentTrashPage - 1) * trashPageSize,
+        currentTrashPage * trashPageSize
+      ),
+    [currentTrashPage, trashPageSize, visibleDeletedAccounts]
+  )
+  const trashPageSelectedCount = pagedDeletedAccounts.filter((account) =>
+    trashSelection.has(account.id)
+  ).length
+  const allTrashPageSelected =
+    pagedDeletedAccounts.length > 0 &&
+    trashPageSelectedCount === pagedDeletedAccounts.length
+  const someTrashPageSelected =
+    trashPageSelectedCount > 0 && !allTrashPageSelected
   const pageSelectedIds = useMemo(
     () => pagedAccounts.filter((account) => selectedIds.has(account.id)).map((account) => account.id),
     [pagedAccounts, selectedIds]
@@ -901,7 +1082,7 @@ export function LibraryScreen({
           setAccountTabId(
             nextAccountTabs.find((tab) => tab.id === DEFAULT_ACCOUNT_TAB_ID)?.id ??
               nextAccountTabs[0]?.id ??
-              DEFAULT_ACCOUNT_TAB_ID
+              ''
           )
         }
         const nextBookmarkTabs = nextTabs.filter(
@@ -954,7 +1135,11 @@ export function LibraryScreen({
   }, [activeTabId])
 
   useEffect(() => {
-    window.localStorage.setItem(ACCOUNT_ACTIVE_TAB_STORAGE_KEY, accountTabId)
+    if (accountTabId) {
+      window.localStorage.setItem(ACCOUNT_ACTIVE_TAB_STORAGE_KEY, accountTabId)
+    } else {
+      window.localStorage.removeItem(ACCOUNT_ACTIVE_TAB_STORAGE_KEY)
+    }
   }, [accountTabId])
 
   useEffect(() => {
@@ -1006,33 +1191,24 @@ export function LibraryScreen({
 
   useEffect(() => {
     if (trashSelectAllRef.current) {
-      trashSelectAllRef.current.indeterminate =
-        trashSelection.size > 0 &&
-        trashSelection.size < visibleDeletedAccounts.length
+      trashSelectAllRef.current.indeterminate = someTrashPageSelected
     }
-  }, [trashSelection.size, visibleDeletedAccounts.length])
+  }, [someTrashPageSelected])
 
   useEffect(() => {
-    if (!trashRetentionOpen) return
-    const closeOnPointer = (event: PointerEvent): void => {
-      if (
-        event.target instanceof Node &&
-        trashRetentionRef.current?.contains(event.target)
-      ) {
-        return
-      }
-      setTrashRetentionOpen(false)
-    }
-    const closeOnEscape = (event: KeyboardEvent): void => {
-      if (event.key === 'Escape') setTrashRetentionOpen(false)
-    }
-    document.addEventListener('pointerdown', closeOnPointer)
-    document.addEventListener('keydown', closeOnEscape)
-    return () => {
-      document.removeEventListener('pointerdown', closeOnPointer)
-      document.removeEventListener('keydown', closeOnEscape)
-    }
-  }, [trashRetentionOpen])
+    setTrashPage(1)
+  }, [
+    trashDateRange,
+    trashGroup,
+    trashPageSize,
+    trashSearchInput,
+    trashSection,
+    trashSource
+  ])
+
+  useEffect(() => {
+    setTrashPage((current) => Math.min(current, trashPageCount))
+  }, [trashPageCount])
 
   useEffect(() => {
     if (!isAccountCollectionView) {
@@ -1114,34 +1290,19 @@ export function LibraryScreen({
   }, [groupMenu])
 
   useEffect(() => {
-    if (!groupCreateState) return
-    const focusFrame = window.requestAnimationFrame(() =>
-      groupCreateInputRef.current?.focus()
-    )
-    const closeOnPointer = (event: PointerEvent): void => {
+    if (!searchExpanded) return
+    const closeOnOutsidePointer = (event: PointerEvent): void => {
       if (
-        event.target instanceof Element &&
-        event.target.closest('.group-create-popover')
+        !search &&
+        event.target instanceof Node &&
+        !searchContainerRef.current?.contains(event.target)
       ) {
-        return
-      }
-      setGroupCreateState(null)
-      setGroupCreateError('')
-    }
-    const closeOnEscape = (event: KeyboardEvent): void => {
-      if (event.key === 'Escape') {
-        setGroupCreateState(null)
-        setGroupCreateError('')
+        setSearchExpanded(false)
       }
     }
-    document.addEventListener('pointerdown', closeOnPointer)
-    document.addEventListener('keydown', closeOnEscape)
-    return () => {
-      window.cancelAnimationFrame(focusFrame)
-      document.removeEventListener('pointerdown', closeOnPointer)
-      document.removeEventListener('keydown', closeOnEscape)
-    }
-  }, [groupCreateState])
+    document.addEventListener('pointerdown', closeOnOutsidePointer)
+    return () => document.removeEventListener('pointerdown', closeOnOutsidePointer)
+  }, [search, searchExpanded])
 
   useEffect(() => {
     if (!accountMenu) return
@@ -1222,12 +1383,10 @@ export function LibraryScreen({
   }, [columnMenuOpen])
 
   useEffect(() => {
-    if (!searchExpanded) return
-    const focusFrame = window.requestAnimationFrame(() =>
-      searchRef.current?.focus()
-    )
-    return () => window.cancelAnimationFrame(focusFrame)
-  }, [searchExpanded])
+    setRowEntryEnabled(true)
+    const timer = window.setTimeout(() => setRowEntryEnabled(false), 760)
+    return () => window.clearTimeout(timer)
+  }, [activeTabId, view])
 
   useEffect(() => {
     window.localStorage.setItem(
@@ -1284,24 +1443,12 @@ export function LibraryScreen({
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent): void => {
-      if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'k') {
-        if (!isAccountCollectionView) return
-        event.preventDefault()
-        setSearchExpanded(true)
-        window.requestAnimationFrame(() => searchRef.current?.focus())
-      }
-    }
-    window.addEventListener('keydown', onKeyDown)
-    return () => window.removeEventListener('keydown', onKeyDown)
-  }, [isAccountCollectionView])
-
-  useEffect(() => {
-    const onKeyDown = (event: KeyboardEvent): void => {
       if (
         !isAccountCollectionView ||
         accountEditorOpen ||
         batchState?.active ||
         batchStrategyOpen ||
+        batchSessionClearConfirm ||
         deleteSelectedOpen
       ) {
         return
@@ -1350,6 +1497,7 @@ export function LibraryScreen({
     accountEditorOpen,
     batchState?.active,
     batchStrategyOpen,
+    batchSessionClearConfirm,
     deleteSelectedOpen,
     keyboardDuplicateBusy,
     notify,
@@ -1637,6 +1785,12 @@ export function LibraryScreen({
     setSelectedIds(new Set())
   }
 
+  function openAccountsFromBrowser(): void {
+    chooseAllAccounts()
+    setSearchExpanded(true)
+    window.requestAnimationFrame(() => searchRef.current?.focus())
+  }
+
   function chooseGroup(group: GroupSummary): void {
     setView(view === 'bookmarks' ? 'bookmarks' : 'accounts')
     setGroupFilter(group.key)
@@ -1681,14 +1835,6 @@ export function LibraryScreen({
 
   function chooseLogView(next: 'loginLogs' | 'appLogs'): void {
     switchView(next)
-  }
-
-  function toggleSidebar(): void {
-    setSidebarCollapsed((current) => {
-      const next = !current
-      window.localStorage.setItem('autologin.sidebar.collapsed', next ? '1' : '0')
-      return next
-    })
   }
 
   function chooseSettingsModule(next: SettingsModule): void {
@@ -1994,10 +2140,25 @@ export function LibraryScreen({
       const next = new Set(current)
       if (next.has(path)) next.delete(path)
       else next.add(path)
-      window.localStorage.setItem(
-        'autologin.account.groups.collapsedPaths',
-        JSON.stringify([...next])
-      )
+      persistCollapsedGroupPaths(next)
+      return next
+    })
+  }
+
+  function persistCollapsedGroupPaths(paths: Set<string>): void {
+    window.localStorage.setItem(
+      'autologin.account.groups.collapsedPaths',
+      JSON.stringify([...paths])
+    )
+  }
+
+  function setAllGroupsExpanded(expanded: boolean): void {
+    setCollapsedGroupPaths((current) => {
+      const next = new Set(expanded ? [] : current)
+      if (!expanded) {
+        for (const path of groupsWithChildren) next.add(path)
+      }
+      persistCollapsedGroupPaths(next)
       return next
     })
   }
@@ -2010,10 +2171,7 @@ export function LibraryScreen({
       for (let index = 1; index <= segments.length; index += 1) {
         next.delete(segments.slice(0, index).join(GROUP_PATH_SEPARATOR))
       }
-      window.localStorage.setItem(
-        'autologin.account.groups.collapsedPaths',
-        JSON.stringify([...next])
-      )
+      persistCollapsedGroupPaths(next)
       return next
     })
   }
@@ -2139,23 +2297,36 @@ export function LibraryScreen({
     subnavResizeCleanupRef.current = cleanup
   }
 
+  function showGroupCreate(parent: GroupSummary | null): void {
+    if (parent && groupLevel(parent.actualName ?? parent.key) >= GROUP_MAX_DEPTH) return
+    setGroupMenu(null)
+    setGroupCreateState({ parent })
+    setGroupCreateName('')
+    setGroupCreateError('')
+  }
+
   function openGroupCreate(
     event: React.MouseEvent<HTMLButtonElement>,
     parent: GroupSummary | null
   ): void {
     event.preventDefault()
     event.stopPropagation()
-    if (parent && groupLevel(parent.actualName ?? parent.key) >= GROUP_MAX_DEPTH) return
-    const rect = event.currentTarget.getBoundingClientRect()
-    const width = 276
-    const height = 178
-    setGroupCreateState({
-      parent,
-      left: Math.max(8, Math.min(rect.right + 8, window.innerWidth - width - 8)),
-      top: Math.max(8, Math.min(rect.bottom + 6, window.innerHeight - height - 8))
-    })
-    setGroupCreateName('')
+    showGroupCreate(parent)
+  }
+
+  function openGroupCreateFromMenu(group: GroupSummary): void {
+    showGroupCreate(group)
+  }
+
+  function closeGroupCreate(): void {
+    if (groupCreateBusy) return
+    setGroupCreateState(null)
     setGroupCreateError('')
+  }
+
+  function selectGroupParent(parent: GroupSummary | null): void {
+    setGroupCreateState((current) => (current ? { ...current, parent } : current))
+    if (groupCreateError) setGroupCreateError('')
   }
 
   function validateNewGroupName(name: string): string | null {
@@ -2232,32 +2403,6 @@ export function LibraryScreen({
     })
   }
 
-  function openPageAccountMenu(event: React.MouseEvent<HTMLElement>): void {
-    if (view === 'bookmarks') return
-    if (event.defaultPrevented) return
-    const target = event.target instanceof Element ? event.target : null
-    if (
-      target?.closest(
-        '.account-row, .account-list__header, .account-tabs, .account-subnav-shell, button, input, select, textarea, a, label'
-      )
-    ) {
-      return
-    }
-    event.preventDefault()
-    event.stopPropagation()
-    const menuWidth = 190
-    const pointer = event.nativeEvent
-    const anchorX = pointer.clientX
-    const anchorY = pointer.clientY
-    setAccountMenu({
-      kind: 'page',
-      anchorX,
-      anchorY,
-      left: Math.max(8, Math.min(anchorX, window.innerWidth - menuWidth - 8)),
-      top: Math.max(8, Math.min(anchorY, window.innerHeight - 8))
-    })
-  }
-
   async function copyAccountUsername(account: AccountWithSite): Promise<void> {
     setAccountMenu(null)
     try {
@@ -2299,29 +2444,6 @@ export function LibraryScreen({
         error instanceof Error
           ? error.message
           : tr('复制站点 URL 失败', 'Could not copy site URL.', '複製站點 URL 失敗')
-      )
-    }
-  }
-
-  async function duplicateSingleAccount(account: AccountWithSite): Promise<void> {
-    setAccountMenu(null)
-    try {
-      const [created] = await window.autologin.accounts.duplicate([account.id])
-      await refreshAll()
-      notify(
-        'success',
-        tr(
-          `已创建“${created?.site.name ?? account.site.name}”副本`,
-          `Created a copy of “${created?.site.name ?? account.site.name}”.`,
-          `已建立「${created?.site.name ?? account.site.name}」副本`
-        )
-      )
-    } catch (error) {
-      notify(
-        'error',
-        error instanceof Error
-          ? error.message
-          : tr('复制账号失败', 'Could not copy account.', '複製帳號失敗')
       )
     }
   }
@@ -2386,11 +2508,16 @@ export function LibraryScreen({
   }
 
   function toggleAllTrashSelection(): void {
-    if (trashSelection.size === visibleDeletedAccounts.length) {
-      setTrashSelection(new Set())
-      return
-    }
-    setTrashSelection(new Set(visibleDeletedAccounts.map((account) => account.id)))
+    const pageIds = pagedDeletedAccounts.map((account) => account.id)
+    setTrashSelection((current) => {
+      const next = new Set(current)
+      const removePage = pageIds.length > 0 && pageIds.every((id) => next.has(id))
+      for (const id of pageIds) {
+        if (removePage) next.delete(id)
+        else next.add(id)
+      }
+      return next
+    })
   }
 
   async function restoreSelectedAccounts(): Promise<void> {
@@ -2511,13 +2638,73 @@ export function LibraryScreen({
     return group.actualName ?? (group.key === UNGROUPED_KEY ? UNGROUPED_KEY : null)
   }
 
+  function groupSiblingPaths(parentPath: string | null): string[] {
+    return groups
+      .filter((group) => (group.parentPath ?? null) === parentPath)
+      .map(groupDragPath)
+      .filter((path): path is string => Boolean(path))
+  }
+
+  function reorderSiblingPaths(
+    draggedPath: string,
+    targetPath: string,
+    position: 'before' | 'after',
+    parentPath: string | null
+  ): string[] | null {
+    const siblings = groupSiblingPaths(parentPath)
+    const nextSiblings = siblings.filter((path) => path !== draggedPath)
+    const targetIndex = nextSiblings.indexOf(targetPath)
+    if (targetIndex < 0) return null
+    nextSiblings.splice(
+      targetIndex + (position === 'after' ? 1 : 0),
+      0,
+      draggedPath
+    )
+    return nextSiblings
+  }
+
   function groupAtPointer(
     clientX: number,
     clientY: number
   ): { group: GroupSummary; row: HTMLElement } | null {
-    const row = (document.elementFromPoint(clientX, clientY) as Element | null)?.closest<
-      HTMLElement
-    >('.account-subnav__group-row')
+    const groupList = document.querySelector<HTMLElement>(
+      '.account-subnav__group-list'
+    )
+    if (!groupList) return null
+    const listRect = groupList.getBoundingClientRect()
+    if (
+      clientX < listRect.left - 8 ||
+      clientX > listRect.right + 8 ||
+      clientY < listRect.top - 8 ||
+      clientY > listRect.bottom + 8
+    ) {
+      return null
+    }
+
+    const directRow = (
+      document.elementFromPoint(clientX, clientY) as Element | null
+    )?.closest<HTMLElement>('.account-subnav__group-row')
+    let row =
+      directRow && groupList.contains(directRow) ? directRow : null
+    if (!row) {
+      let nearestDistance = Number.POSITIVE_INFINITY
+      for (const candidate of groupList.querySelectorAll<HTMLElement>(
+        ':scope > .account-subnav__group-row'
+      )) {
+        const rect = candidate.getBoundingClientRect()
+        const distance =
+          clientY < rect.top
+            ? rect.top - clientY
+            : clientY > rect.bottom
+              ? clientY - rect.bottom
+              : 0
+        if (distance < nearestDistance) {
+          nearestDistance = distance
+          row = candidate
+        }
+      }
+    }
+
     const path = row?.dataset.groupPath
     if (!row || !path) return null
     const group = groups.find((candidate) => groupDragPath(candidate) === path)
@@ -2548,6 +2735,7 @@ export function LibraryScreen({
       group: GroupSummary
       position: GroupDropPosition
     } | null = null
+    let latestTargetSignature: string | null = null
     const cleanup = (): void => {
       document.removeEventListener('pointermove', onPointerMove)
       document.removeEventListener('pointerup', onPointerUp)
@@ -2591,8 +2779,11 @@ export function LibraryScreen({
       moveEvent.preventDefault()
       const hit = groupAtPointer(moveEvent.clientX, moveEvent.clientY)
       if (!hit) {
-        latestTarget = null
-        setGroupDropTarget(null)
+        if (latestTarget) {
+          latestTarget = null
+          latestTargetSignature = null
+          setGroupDropTarget(null)
+        }
         return
       }
       const rect = hit.row.getBoundingClientRect()
@@ -2602,10 +2793,16 @@ export function LibraryScreen({
       const position = resolveGroupDropPosition(dragPath, hit.group, requested)
       const targetPath = groupDragPath(hit.group)
       if (!position || !targetPath) {
-        latestTarget = null
-        setGroupDropTarget(null)
+        if (latestTarget) {
+          latestTarget = null
+          latestTargetSignature = null
+          setGroupDropTarget(null)
+        }
         return
       }
+      const targetSignature = `${targetPath}\u0000${position}`
+      if (targetSignature === latestTargetSignature) return
+      latestTargetSignature = targetSignature
       latestTarget = { group: hit.group, position }
       setGroupDropTarget({ path: targetPath, position })
     }
@@ -2650,14 +2847,16 @@ export function LibraryScreen({
     if (!targetPath || targetPath === draggedPath) return null
     const draggedIsUngrouped = draggedPath === UNGROUPED_KEY
     const targetIsUngrouped = targetPath === UNGROUPED_KEY
+    let resolvedPosition = position
     if (draggedIsUngrouped || targetIsUngrouped) {
       if (draggedIsUngrouped && target.parentPath !== null) return null
       if (targetIsUngrouped && groupParentPath(draggedPath) !== null) return null
-      return position === 'inside' ? 'after' : position
+      if (resolvedPosition === 'inside') resolvedPosition = 'after'
     }
     if (targetPath.startsWith(`${draggedPath}${GROUP_PATH_SEPARATOR}`)) return null
 
-    if (position === 'inside') {
+    if (resolvedPosition === 'inside') {
+      if (groupParentPath(draggedPath) === targetPath) return null
       const source = groups.find((group) => group.actualName === draggedPath)
       if (!source) return null
       const sourceLevel = groupLevel(draggedPath)
@@ -2677,7 +2876,22 @@ export function LibraryScreen({
 
     const targetParent = groupParentPath(targetPath)
     if (targetParent?.startsWith(`${draggedPath}${GROUP_PATH_SEPARATOR}`)) return null
-    return position
+    if (targetParent === groupParentPath(draggedPath)) {
+      const siblings = groupSiblingPaths(targetParent)
+      const nextSiblings = reorderSiblingPaths(
+        draggedPath,
+        targetPath,
+        resolvedPosition,
+        targetParent
+      )
+      if (
+        nextSiblings &&
+        nextSiblings.join('\u0000') === siblings.join('\u0000')
+      ) {
+        return null
+      }
+    }
+    return resolvedPosition
   }
 
   async function moveGroupToTarget(
@@ -2689,36 +2903,25 @@ export function LibraryScreen({
     if (!targetPath) return
     const destinationParent =
       position === 'inside'
-        ? target.actualName ?? undefined
+        ? target.actualName ?? null
         : target.actualName
-          ? groupParentPath(target.actualName) ?? undefined
-          : undefined
-    const currentParent = groupParentPath(draggedPath) ?? undefined
+          ? groupParentPath(target.actualName)
+          : null
+    const currentParent = groupParentPath(draggedPath)
 
     if (destinationParent === currentParent) {
-      const siblings = groups
-        .filter((group) => (group.parentPath ?? undefined) === destinationParent)
-        .map(
-          (group) =>
-            group.actualName ??
-            (group.key === UNGROUPED_KEY ? UNGROUPED_GROUP_KEY : null)
-        )
-        .filter((path): path is string => Boolean(path))
-      const nextSiblings = siblings.filter((path) => path !== draggedPath)
-      const targetIndex = nextSiblings.indexOf(targetPath ?? '')
-      if (targetIndex < 0) return
-      nextSiblings.splice(
-        targetIndex + (position === 'after' ? 1 : 0),
-        0,
-        draggedPath
+      const siblings = groupSiblingPaths(destinationParent)
+      const nextSiblings = reorderSiblingPaths(
+        draggedPath,
+        targetPath,
+        position === 'after' ? 'after' : 'before',
+        destinationParent
       )
-      if (nextSiblings.join('\0') === siblings.join('\0')) return
+      if (!nextSiblings || nextSiblings.join('\u0000') === siblings.join('\u0000')) {
+        return
+      }
       const nextOrder = groups
-        .map(
-          (group) =>
-            group.actualName ??
-            (group.key === UNGROUPED_KEY ? UNGROUPED_GROUP_KEY : null)
-        )
+        .map(groupDragPath)
         .filter((path): path is string => Boolean(path))
       const siblingSet = new Set(siblings)
       let siblingIndex = 0
@@ -2773,7 +2976,7 @@ export function LibraryScreen({
     setGroupMenu({
       group,
       left: Math.max(8, Math.min(event.clientX, window.innerWidth - 196)),
-      top: Math.max(8, Math.min(event.clientY, window.innerHeight - 158))
+      top: Math.max(8, Math.min(event.clientY, window.innerHeight - 198))
     })
   }
 
@@ -2789,7 +2992,7 @@ export function LibraryScreen({
     setGroupMenu({
       group,
       left: Math.max(8, Math.min(rect.right + 6, window.innerWidth - 196)),
-      top: Math.max(8, Math.min(rect.top, window.innerHeight - 158))
+      top: Math.max(8, Math.min(rect.top, window.innerHeight - 198))
     })
   }
 
@@ -2862,6 +3065,9 @@ export function LibraryScreen({
     const strategies = new Set(selectedAccounts.map((account) => account.loginStrategy))
     const sharedStrategy =
       strategies.size === 1 ? selectedAccounts[0]?.loginStrategy ?? 'auto' : 'auto'
+    const browsers = new Set(selectedAccounts.map((account) => account.loginBrowser))
+    const sharedBrowser =
+      browsers.size === 1 ? selectedAccounts[0]?.loginBrowser ?? 'standalone' : 'standalone'
     const firstAccount = selectedAccounts[0]
     const candidateSteps = firstAccount?.manualSteps?.length
       ? structuredClone(firstAccount.manualSteps)
@@ -2876,21 +3082,32 @@ export function LibraryScreen({
       ? candidateSteps
       : []
     setBatchStrategy(sharedStrategy)
+    setBatchBrowser(sharedBrowser)
     setBatchSteps(sharedSteps)
     setBatchStepTests({})
     setBatchStepTesting(null)
     setBatchIcon(null)
+    setBatchIconFetchProgress(null)
     setBatchStrategyError('')
     setBatchStrategyOpen(true)
   }
 
   function closeBatchStrategy(): void {
-    if (batchStrategyBusy || batchIconBusy || batchIconFetchBusy) return
+    if (
+      batchStrategyBusy ||
+      batchSessionClearBusy ||
+      batchIconBusy ||
+      batchIconFetchBusy
+    ) {
+      return
+    }
     setBatchStrategyOpen(false)
     setBatchSteps([])
     setBatchStepTests({})
     setBatchStepTesting(null)
     setBatchIcon(null)
+    setBatchIconFetchProgress(null)
+    setBatchIconFetchCancelBusy(false)
   }
 
   async function testBatchManualStep(step: RecipeStep): Promise<void> {
@@ -2931,7 +3148,7 @@ export function LibraryScreen({
   }
 
   async function applyBatchStrategy(): Promise<void> {
-    if (batchIconFetchBusy) return
+    if (batchSessionClearBusy || batchIconFetchBusy) return
     const normalizedSteps = normalizeManualSteps(batchSteps)
     const stepsProvided = normalizedSteps.length > 0
     if (
@@ -2955,6 +3172,7 @@ export function LibraryScreen({
       await window.autologin.accounts.setStrategyBatch({
         accountIds: [...selectedIds],
         loginStrategy: batchStrategy,
+        loginBrowser: batchBrowser,
         ...(batchStrategy === 'manual' && stepsProvided
           ? { manualSteps: normalizedSteps }
           : {})
@@ -2968,9 +3186,9 @@ export function LibraryScreen({
       notify(
         'success',
         tr(
-          `已更新 ${selectedAccountCount} 个账号的登录方式`,
-          `Updated the login method for ${selectedAccountCount} accounts.`,
-          `已更新 ${selectedAccountCount} 個帳號的登入方式`
+          `已更新 ${selectedAccountCount} 个账号的登录配置和登录方式`,
+          `Updated login configuration and method for ${selectedAccountCount} accounts.`,
+          `已更新 ${selectedAccountCount} 個帳號的登入設定和登入方式`
         )
       )
     } catch (error) {
@@ -2987,7 +3205,7 @@ export function LibraryScreen({
   async function selectBatchIcon(
     event: React.ChangeEvent<HTMLInputElement>
   ): Promise<void> {
-    if (batchIconFetchBusy) return
+    if (batchSessionClearBusy || batchIconFetchBusy) return
     const file = event.target.files?.[0]
     event.target.value = ''
     if (!file) return
@@ -3017,6 +3235,7 @@ export function LibraryScreen({
     if (
       !batchIcon ||
       selectedIds.size === 0 ||
+      batchSessionClearBusy ||
       batchIconBusy ||
       batchIconFetchBusy
     ) {
@@ -3056,6 +3275,7 @@ export function LibraryScreen({
   async function fetchBatchSiteIcons(): Promise<void> {
     if (
       selectedIds.size === 0 ||
+      batchSessionClearBusy ||
       batchIconBusy ||
       batchIconFetchBusy
     ) {
@@ -3063,11 +3283,38 @@ export function LibraryScreen({
     }
     setBatchIconFetchBusy(true)
     setBatchStrategyError('')
+    setBatchIconFetchProgress({
+      totalAccounts: selectedIds.size,
+      completedAccounts: 0,
+      updatedSiteCount: 0,
+      failedSiteCount: 0
+    })
+    const unsubscribeProgress =
+      window.autologin.events.onAccountBatchIconFetchProgress(
+        setBatchIconFetchProgress
+      )
     try {
       const result = await window.autologin.accounts.fetchIconsBatch([
         ...selectedIds
       ])
       if (result.updatedAccounts > 0) await onRefresh()
+      if (result.canceled) {
+        notify(
+          'info',
+          result.updatedAccounts > 0
+            ? tr(
+                `已中断获取网站图标，已更新 ${result.updatedAccounts} 个账号`,
+                `Icon download stopped after updating ${result.updatedAccounts} accounts.`,
+                `已中斷取得網站圖示，已更新 ${result.updatedAccounts} 個帳號`
+              )
+            : tr(
+                '已中断获取网站图标',
+                'Site icon download stopped.',
+                '已中斷取得網站圖示'
+              )
+        )
+        return
+      }
       if (result.failedSites.length === 0) {
         setBatchStrategyOpen(false)
         setBatchIcon(null)
@@ -3111,12 +3358,36 @@ export function LibraryScreen({
             )
       )
     } finally {
+      unsubscribeProgress()
       setBatchIconFetchBusy(false)
+      setBatchIconFetchProgress(null)
+      setBatchIconFetchCancelBusy(false)
+    }
+  }
+
+  async function cancelBatchIconFetch(): Promise<void> {
+    if (!batchIconFetchBusy || batchIconFetchCancelBusy) return
+    setBatchIconFetchCancelBusy(true)
+    try {
+      const canceled = await window.autologin.accounts.cancelIconFetchBatch()
+      if (!canceled) setBatchIconFetchCancelBusy(false)
+    } catch (error) {
+      setBatchIconFetchCancelBusy(false)
+      notify(
+        'error',
+        error instanceof Error
+          ? error.message
+          : tr(
+              '中断获取网站图标失败',
+              'Could not stop the site icon download.',
+              '中斷取得網站圖示失敗'
+            )
+      )
     }
   }
 
   async function duplicateSelectedAccounts(): Promise<void> {
-    if (selectedIds.size === 0) return
+    if (selectedIds.size === 0 || batchSessionClearBusy) return
     const count = selectedIds.size
     setDuplicateBusy(true)
     try {
@@ -3197,6 +3468,56 @@ export function LibraryScreen({
     }
   }
 
+  async function clearSelectedAccountSessions(): Promise<void> {
+    if (selectedIds.size === 0) return
+    const ids = [...selectedIds]
+    setBatchSessionClearBusy(true)
+    try {
+      const results = await Promise.allSettled(
+        ids.map((accountId) =>
+          withSessionClearTimeout(window.autologin.login.clearSession(accountId))
+        )
+      )
+      const cleared = results.filter((result) => result.status === 'fulfilled').length
+      const failed = results.length - cleared
+      if (failed === 0) {
+        notify(
+          'success',
+          tr(
+            `已清除 ${cleared} 个账号的网站会话`,
+            `Cleared website sessions for ${cleared} account${cleared === 1 ? '' : 's'}.`,
+            `已清除 ${cleared} 個帳號的網站工作階段`
+          )
+        )
+      } else {
+        const firstFailure = results.find(
+          (result): result is PromiseRejectedResult => result.status === 'rejected'
+        )
+        const reason =
+          firstFailure?.reason instanceof Error
+            ? firstFailure.reason.message
+            : String(firstFailure?.reason ?? '')
+        notify(
+          'error',
+          tr(
+            `已清除 ${cleared} 个账号，${failed} 个账号清除失败${
+              reason ? `：${reason}` : ''
+            }`,
+            `Cleared ${cleared}; ${failed} account${failed === 1 ? '' : 's'} failed.${
+              reason ? ` ${reason}` : ''
+            }`,
+            `已清除 ${cleared} 個帳號，${failed} 個帳號清除失敗${
+              reason ? `：${reason}` : ''
+            }`
+          )
+        )
+      }
+    } finally {
+      setBatchSessionClearConfirm(false)
+      setBatchSessionClearBusy(false)
+    }
+  }
+
   function toggleAccountSelection(accountId: string, shiftKey = false): void {
     if (shiftKey && selectionAnchorRef.current) {
       const anchorIndex = pagedAccounts.findIndex(
@@ -3238,10 +3559,14 @@ export function LibraryScreen({
 
   async function openSelected(): Promise<void> {
     if (selectedIds.size === 0) return
+    const usesBuiltinBrowser = selectedAccounts.some(
+      (account) => account.loginBrowser === 'builtin'
+    )
     const opened = await onStartBatch([...selectedIds])
     if (opened) {
       setSelectedIds(new Set())
       selectionAnchorRef.current = null
+      if (usesBuiltinBrowser) setView('browser')
     }
   }
 
@@ -3333,7 +3658,10 @@ export function LibraryScreen({
       return
     }
     const opened = await onStartBatch([account.id])
-    if (opened) setDrawer(null)
+    if (opened) {
+      setDrawer(null)
+      if (account.loginBrowser === 'builtin') setView('browser')
+    }
   }
 
   async function clearAllData(): Promise<void> {
@@ -3347,10 +3675,20 @@ export function LibraryScreen({
     notify('success', message)
   }
 
-  function handleDeleted(): void {
-    setDrawer(null)
-    void refreshAll()
-    notify('success', tr('账号已移入回收站', 'Account moved to Recycle Bin.', '帳號已移至回收站'))
+  function renderGroupDropSlot(
+    targetPath: string,
+    position: 'before' | 'after'
+  ): React.JSX.Element {
+    return (
+      <div
+        className="account-subnav__drop-slot"
+        data-group-drop-path={targetPath}
+        data-group-drop-position={position}
+        aria-hidden="true"
+      >
+        <span>{tr('松开放到此处', 'Drop here', '鬆開放至此處')}</span>
+      </div>
+    )
   }
 
   return (
@@ -3360,32 +3698,6 @@ export function LibraryScreen({
       }`}
     >
       <aside className={`sidebar${sidebarCollapsed ? ' is-collapsed' : ''}`}>
-        <div className="sidebar-topbar">
-          <button
-            type="button"
-            className="sidebar-collapse-toggle"
-            onClick={toggleSidebar}
-            aria-label={
-              sidebarCollapsed
-                ? tr('显示菜单栏', 'Show sidebar', '顯示選單列')
-                : tr('隐藏菜单栏', 'Hide sidebar', '隱藏選單列')
-            }
-            aria-expanded={!sidebarCollapsed}
-            title={
-              sidebarCollapsed
-                ? tr('显示菜单栏', 'Show sidebar', '顯示選單列')
-                : tr('隐藏菜单栏', 'Hide sidebar', '隱藏選單列')
-            }
-          >
-            {sidebarCollapsed ? <PanelLeftOpen size={18} /> : <PanelLeftClose size={18} />}
-            <span>
-              {sidebarCollapsed
-                ? tr('显示菜单栏', 'Show sidebar', '顯示選單列')
-                : tr('隐藏菜单栏', 'Hide sidebar', '隱藏選單列')}
-            </span>
-          </button>
-        </div>
-
         <nav className="sidebar-nav sidebar-nav--grouped" aria-label={tr('主导航', 'Main navigation', '主導覽')}>
           <section className="sidebar-section">
             <button
@@ -3405,6 +3717,15 @@ export function LibraryScreen({
             >
               <Bookmark size={17} />
               <span>{tr('书签', 'Bookmarks', '書籤')}</span>
+            </button>
+            <button
+              className={`sidebar-nav__item${view === 'browser' ? ' is-active' : ''}`}
+              onClick={() => switchView('browser')}
+              aria-label={tr('浏览器', 'Browser', '瀏覽器')}
+              title={tr('浏览器', 'Browser', '瀏覽器')}
+            >
+              <Globe2 size={17} />
+              <span>{tr('浏览器', 'Browser', '瀏覽器')}</span>
             </button>
             <button
               className={`sidebar-nav__item${
@@ -3522,6 +3843,7 @@ export function LibraryScreen({
               data-tooltip={tr('立即锁定', 'Lock now', '立即鎖定')}
             >
               <LockKeyhole size={17} />
+              <span>{tr('锁定', 'Lock', '鎖定')}</span>
             </button>
             <button
               type="button"
@@ -3533,6 +3855,7 @@ export function LibraryScreen({
               data-tooltip={tr('设置', 'Settings', '設定')}
             >
               <Settings size={17} />
+              <span>{tr('设置', 'Settings', '設定')}</span>
             </button>
           </div>
         </div>
@@ -3666,6 +3989,19 @@ export function LibraryScreen({
           aria-label={tr('分组操作', 'Group actions', '分組操作')}
           style={{ left: groupMenu.left, top: groupMenu.top }}
         >
+          {groupLevel(groupMenu.group.actualName ?? groupMenu.group.key) <
+            GROUP_MAX_DEPTH && (
+            <button
+              type="button"
+              role="menuitem"
+              onClick={() =>
+                  openGroupCreateFromMenu(groupMenu.group)
+                }
+            >
+              <Plus size={14} />
+              {tr('新增子分组', 'Add subgroup', '新增子分組')}
+            </button>
+          )}
           <button
             type="button"
             role="menuitem"
@@ -3694,68 +4030,68 @@ export function LibraryScreen({
       )}
 
       {groupCreateState && (
-        <form
-          className="group-create-popover"
-          role="dialog"
-          aria-label={tr('新增分组', 'Add group', '新增分組')}
-          style={{ left: groupCreateState.left, top: groupCreateState.top }}
-          onSubmit={(event) => void submitNewGroup(event)}
+        <Modal
+          title={tr('新建分组', 'New group', '新增分組')}
+          onClose={closeGroupCreate}
+          width="400px"
+          className="group-create-modal"
         >
-          <header>
-            <div>
-              <strong>{tr('新增子分组', 'Add subgroup', '新增子分組')}</strong>
-              <small>
-                {groupCreateState.parent
-                  ? groupCreateState.parent.actualName
-                  : tr('一级分组', 'Top-level group', '第一層分組')}
-              </small>
+          <form
+            className="group-create-form"
+            onSubmit={(event) => void submitNewGroup(event)}
+          >
+            <div className="field">
+              <span className="field__label" id="group-parent-label">
+                {tr('父级分组', 'Parent group', '父群組')}
+              </span>
+              <GroupParentPicker
+                groups={namedGroups}
+                value={groupCreateState.parent}
+                onChange={selectGroupParent}
+                tr={tr}
+                language={language}
+              />
             </div>
-            <span>
-              {(groupCreateState.parent
-                ? groupLevel(groupCreateState.parent.actualName ?? groupCreateState.parent.key)
-                : 0) + 1}
-              /{GROUP_MAX_DEPTH}
-            </span>
-          </header>
-          <label className="field">
-            <span className="field__label">{tr('分组名称', 'Group name', '分組名稱')}</span>
-            <input
-              ref={groupCreateInputRef}
-              className="filter-control"
-              value={groupCreateName}
-              onChange={(event) => {
-                setGroupCreateName(event.target.value)
-                if (groupCreateError) setGroupCreateError('')
-              }}
-              maxLength={20}
-              placeholder={tr('1–20 个字符', '1–20 characters', '1–20 個字元')}
-              autoComplete="off"
-            />
-          </label>
-          {groupCreateError && <p className="form-error">{groupCreateError}</p>}
-          <div className="group-create-popover__actions">
-            <button
-              type="button"
-              className="button button--ghost button--small"
-              onClick={() => setGroupCreateState(null)}
-              disabled={groupCreateBusy}
-            >
-              {tr('取消', 'Cancel', '取消')}
-            </button>
-            <button
-              type="submit"
-              className="button button--primary button--small"
-              disabled={groupCreateBusy}
-            >
-              {groupCreateBusy ? (
-                <LoaderCircle size={13} className="spin" />
-              ) : (
-                <Plus size={13} />
-              )}
-              {tr('创建', 'Create', '建立')}
-            </button>
-          </div>
-        </form>
+            <label className="field">
+              <span className="field__label">{tr('分组名称', 'Group name', '分組名稱')}</span>
+              <input
+                ref={groupCreateInputRef}
+                className="filter-control"
+                value={groupCreateName}
+                onChange={(event) => {
+                  setGroupCreateName(event.target.value)
+                  if (groupCreateError) setGroupCreateError('')
+                }}
+                maxLength={20}
+                placeholder={tr('1–20 个字符', '1–20 characters', '1–20 個字元')}
+                autoComplete="off"
+              />
+            </label>
+            {groupCreateError && <p className="form-error">{groupCreateError}</p>}
+            <div className="group-create-form__actions">
+              <button
+                type="button"
+                className="button button--ghost button--small"
+                onClick={closeGroupCreate}
+                disabled={groupCreateBusy}
+              >
+                {tr('取消', 'Cancel', '取消')}
+              </button>
+              <button
+                type="submit"
+                className="button button--primary button--small"
+                disabled={groupCreateBusy}
+              >
+                {groupCreateBusy ? (
+                  <LoaderCircle size={13} className="spin" />
+                ) : (
+                  <Plus size={13} />
+                )}
+                {tr('创建', 'Create', '建立')}
+              </button>
+            </div>
+          </form>
+        </Modal>
       )}
 
       {accountMenu?.kind === 'account' &&
@@ -3814,16 +4150,6 @@ export function LibraryScreen({
             <Globe2 size={14} />
             {tr('复制 URL', 'Copy URL', '複製 URL')}
           </button>
-          <button
-            type="button"
-            role="menuitem"
-            onClick={() => void duplicateSingleAccount(accountMenu.account)}
-          >
-            <Copy size={14} />
-            {view === 'bookmarks'
-              ? tr('复制书签', 'Duplicate bookmark', '複製書籤')
-              : tr('复制账号', 'Duplicate account', '複製帳號')}
-          </button>
           <div className="account-context-menu__divider" aria-hidden="true" />
           <button
             type="button"
@@ -3845,32 +4171,6 @@ export function LibraryScreen({
         document.body
       )}
 
-      {accountMenu?.kind === 'page' &&
-        createPortal(
-        <div
-          ref={accountMenuRef}
-          className="account-context-menu"
-          role="menu"
-          aria-label={tr('账号页面操作', 'Account page actions', '帳號頁面操作')}
-          style={{ left: accountMenu.left, top: accountMenu.top }}
-        >
-          <button
-            type="button"
-            role="menuitem"
-            onClick={() => {
-              setAccountMenu(null)
-              setDrawer({ mode: 'create' })
-            }}
-          >
-            <Plus size={14} />
-            {view === 'bookmarks'
-              ? tr('新增书签', 'Add bookmark', '新增書籤')
-              : tr('新增账号', 'Add account', '新增帳號')}
-          </button>
-        </div>,
-        document.body
-      )}
-
       {batchStrategyOpen && (
         <Modal
           title={tr('批量操作', 'Batch actions', '批次操作')}
@@ -3887,13 +4187,7 @@ export function LibraryScreen({
               void applyBatchStrategy()
             }}
           >
-            <p className="modal-description">
-              {tr(
-                `可统一更新所选 ${selectedAccountCount} 个账号的登录方式或账号 Logo。`,
-                `Update the login method or logo for ${selectedAccountCount} selected accounts.`,
-                `可統一更新所選 ${selectedAccountCount} 個帳號的登入方式或帳號 Logo。`
-              )}
-            </p>
+            <div className="batch-strategy-form__body">
             <section className="batch-icon-editor">
               <div className="batch-icon-editor__copy">
                 <span className="field__label">
@@ -3920,7 +4214,7 @@ export function LibraryScreen({
                     type="button"
                     className="button button--ghost button--small"
                     onClick={() => batchIconInputRef.current?.click()}
-                    disabled={batchIconBusy || batchIconFetchBusy}
+                    disabled={batchSessionClearBusy || batchIconBusy || batchIconFetchBusy}
                   >
                     <ImagePlus size={14} />
                     {tr('选择图片', 'Choose image', '選擇圖片')}
@@ -3929,7 +4223,7 @@ export function LibraryScreen({
                     type="button"
                     className="button button--ghost button--small"
                     onClick={() => void fetchBatchSiteIcons()}
-                    disabled={batchIconBusy || batchIconFetchBusy}
+                    disabled={batchSessionClearBusy || batchIconBusy || batchIconFetchBusy}
                     aria-busy={batchIconFetchBusy}
                   >
                     {batchIconFetchBusy ? (
@@ -3945,7 +4239,12 @@ export function LibraryScreen({
                     type="button"
                     className="button button--primary button--small"
                     onClick={() => void applyBatchIcon()}
-                    disabled={!batchIcon || batchIconBusy || batchIconFetchBusy}
+                    disabled={
+                      !batchIcon ||
+                      batchSessionClearBusy ||
+                      batchIconBusy ||
+                      batchIconFetchBusy
+                    }
                   >
                     {batchIconBusy ? (
                       <LoaderCircle size={14} className="spin" />
@@ -3957,6 +4256,75 @@ export function LibraryScreen({
                       : tr('应用 Logo', 'Apply logo', '套用 Logo')}
                   </button>
                 </div>
+                {batchIconFetchBusy && batchIconFetchProgress && (
+                  <div className="batch-icon-fetch-progress">
+                    <div className="batch-icon-fetch-progress__content">
+                      <div className="batch-icon-fetch-progress__meta">
+                        <span>
+                          {tr(
+                            '正在获取网站图标',
+                            'Downloading site icons',
+                            '正在取得網站圖示'
+                          )}
+                        </span>
+                        <strong>
+                          {batchIconFetchProgress.completedAccounts} /{' '}
+                          {batchIconFetchProgress.totalAccounts}
+                        </strong>
+                      </div>
+                      <div
+                        className="batch-icon-fetch-progress__track"
+                        role="progressbar"
+                        aria-label={tr(
+                          '网站图标获取进度',
+                          'Site icon download progress',
+                          '網站圖示取得進度'
+                        )}
+                        aria-valuemin={0}
+                        aria-valuemax={Math.max(
+                          1,
+                          batchIconFetchProgress.totalAccounts
+                        )}
+                        aria-valuenow={batchIconFetchProgress.completedAccounts}
+                        aria-valuetext={tr(
+                          `已处理 ${batchIconFetchProgress.completedAccounts} / ${batchIconFetchProgress.totalAccounts} 个账号`,
+                          `${batchIconFetchProgress.completedAccounts} of ${batchIconFetchProgress.totalAccounts} accounts processed`,
+                          `已處理 ${batchIconFetchProgress.completedAccounts} / ${batchIconFetchProgress.totalAccounts} 個帳號`
+                        )}
+                      >
+                        <span
+                          style={{
+                            width: `${
+                              batchIconFetchProgress.totalAccounts > 0
+                                ? Math.min(
+                                    100,
+                                    (batchIconFetchProgress.completedAccounts /
+                                      batchIconFetchProgress.totalAccounts) *
+                                      100
+                                  )
+                                : 0
+                            }%`
+                          }}
+                        />
+                      </div>
+                    </div>
+                    <button
+                      type="button"
+                      className="batch-icon-fetch-progress__cancel"
+                      onClick={() => void cancelBatchIconFetch()}
+                      disabled={batchIconFetchCancelBusy}
+                    >
+                      {batchIconFetchCancelBusy ? (
+                        <LoaderCircle size={13} className="spin" />
+                      ) : (
+                        <X size={13} />
+                      )}
+                      {batchIconFetchCancelBusy
+                        ? tr('正在中断…', 'Stopping…', '正在中斷…')
+                        : tr('中断获取', 'Stop', '中斷取得')}
+                    </button>
+                  </div>
+                )}
               </div>
               <div className={`batch-icon-editor__preview${batchIcon ? ' has-image' : ''}`}>
                 {batchIcon ? (
@@ -3966,6 +4334,39 @@ export function LibraryScreen({
                 )}
               </div>
             </section>
+            <section className="batch-session-action">
+              <div>
+                <span className="field__label">
+                  {tr('网站会话', 'Website sessions', '網站工作階段')}
+                </span>
+                <strong>{tr('清除所选账号的网站会话', 'Clear selected sessions', '清除所選帳號的網站工作階段')}</strong>
+                <small>
+                  {tr(
+                    '下次登录这些账号时需要重新验证；账号密码和历史记录不会受到影响。',
+                    'These accounts must sign in again next time. Credentials and history are not affected.',
+                    '下次登入這些帳號時需要重新驗證；帳號密碼和歷史記錄不會受到影響。'
+                  )}
+                </small>
+              </div>
+              <button
+                type="button"
+                className="button button--ghost"
+                onClick={() => setBatchSessionClearConfirm(true)}
+                disabled={batchSessionClearBusy || batchStrategyBusy}
+              >
+                {batchSessionClearBusy ? (
+                  <LoaderCircle size={15} className="spin" />
+                ) : (
+                  <RefreshCw size={15} />
+                )}
+                {batchSessionClearBusy
+                  ? tr('正在清除…', 'Clearing…', '正在清除…')
+                  : tr('清除会话', 'Clear sessions', '清除工作階段')}
+              </button>
+            </section>
+            <span className="field__label">
+              {tr('登录配置', 'Login configuration', '登入設定')}
+            </span>
             <div className="proxy-mode-options account-strategy-options">
               <label
                 className={`proxy-mode-option${batchStrategy === 'auto' ? ' is-active' : ''}`}
@@ -4017,6 +4418,60 @@ export function LibraryScreen({
               </label>
             </div>
 
+            <span className="field__label">
+              {tr('登录方式', 'Login method', '登入方式')}
+            </span>
+            <div className="proxy-mode-options account-strategy-options">
+              <label
+                className={`proxy-mode-option${batchBrowser === 'builtin' ? ' is-active' : ''}`}
+              >
+                <input
+                  type="radio"
+                  name="batch-login-browser"
+                  value="builtin"
+                  checked={batchBrowser === 'builtin'}
+                  onChange={() => {
+                    setBatchBrowser('builtin')
+                    setBatchStrategyError('')
+                  }}
+                />
+                <span>
+                  <strong>{tr('内置浏览器', 'Built-in browser', '內建瀏覽器')}</strong>
+                  <small>
+                    {tr(
+                      '在 AutoLogin 内按账号打开多个标签页',
+                      'Open multiple account tabs inside AutoLogin',
+                      '在 AutoLogin 內依帳號開啟多個分頁'
+                    )}
+                  </small>
+                </span>
+              </label>
+              <label
+                className={`proxy-mode-option${batchBrowser === 'standalone' ? ' is-active' : ''}`}
+              >
+                <input
+                  type="radio"
+                  name="batch-login-browser"
+                  value="standalone"
+                  checked={batchBrowser === 'standalone'}
+                  onChange={() => {
+                    setBatchBrowser('standalone')
+                    setBatchStrategyError('')
+                  }}
+                />
+                <span>
+                  <strong>{tr('独立浏览器', 'Independent browser', '獨立瀏覽器')}</strong>
+                  <small>
+                    {tr(
+                      '在系统默认浏览器中打开独立会话',
+                      'Open isolated sessions in the system default browser',
+                      '在系統預設瀏覽器中開啟獨立工作階段'
+                    )}
+                  </small>
+                </span>
+              </label>
+            </div>
+
             {batchStrategy === 'manual' && (
               <section
                 className="drawer-recipes manual-selector-panel batch-manual-selector"
@@ -4050,6 +4505,7 @@ export function LibraryScreen({
                   selectorTesting={batchStepTesting}
                   onTest={(step) => void testBatchManualStep(step)}
                   disabled={
+                    batchSessionClearBusy ||
                     batchStrategyBusy || batchIconBusy || batchIconFetchBusy
                   }
                   emptyText={tr(
@@ -4067,6 +4523,7 @@ export function LibraryScreen({
             )}
 
             {batchStrategyError && <p className="form-error">{batchStrategyError}</p>}
+            </div>
             <div className="modal-actions">
               <button
                 type="button"
@@ -4092,14 +4549,24 @@ export function LibraryScreen({
                 type="button"
                 className="button button--ghost"
                 onClick={closeBatchStrategy}
-                disabled={batchStrategyBusy || batchIconBusy || batchIconFetchBusy}
+                disabled={
+                  batchSessionClearBusy ||
+                  batchStrategyBusy ||
+                  batchIconBusy ||
+                  batchIconFetchBusy
+                }
               >
                 {tr('取消', 'Cancel', '取消')}
               </button>
               <button
                 type="submit"
                 className="button button--primary"
-                disabled={batchStrategyBusy || batchIconBusy || batchIconFetchBusy}
+                disabled={
+                  batchSessionClearBusy ||
+                  batchStrategyBusy ||
+                  batchIconBusy ||
+                  batchIconFetchBusy
+                }
               >
                 {batchStrategyBusy ? (
                   <LoaderCircle size={15} className="spin" />
@@ -4261,6 +4728,26 @@ export function LibraryScreen({
         />
       )}
 
+      {batchSessionClearConfirm && (
+        <ConfirmDialog
+          title={tr(
+            '清除所选账号的网站会话？',
+            'Clear selected website sessions?',
+            '清除所選帳號的網站工作階段？'
+          )}
+          description={tr(
+            `将清除 ${selectedAccountCount} 个账号的独立网站会话，下次登录需要重新验证。账号密码和历史记录不会受到影响。`,
+            `Website sessions for ${selectedAccountCount} account${selectedAccountCount === 1 ? '' : 's'} will be cleared and require sign-in again. Credentials and history are not affected.`,
+            `將清除 ${selectedAccountCount} 個帳號的獨立網站工作階段，下次登入需要重新驗證。帳號密碼和歷史記錄不會受到影響。`
+          )}
+          confirmLabel={tr('清除会话', 'Clear sessions', '清除工作階段')}
+          busy={batchSessionClearBusy}
+          closeWhileBusy
+          onConfirm={() => void clearSelectedAccountSessions()}
+          onClose={() => setBatchSessionClearConfirm(false)}
+        />
+      )}
+
       {purgeTargets && (
         <ConfirmDialog
           title={tr('永久删除所选账号？', 'Permanently delete selected accounts?', '永久刪除所選帳號？')}
@@ -4321,9 +4808,11 @@ export function LibraryScreen({
             initialSiteId={drawer.mode === 'create' ? drawer.siteId : undefined}
             onClose={() => setDrawer(null)}
             onSaved={handleSaved}
-            onDeleted={handleDeleted}
             onRecord={drawerAccount ? () => onRecord(drawerAccount) : undefined}
             onChanged={refreshAll}
+            loginState={loginState}
+            recordingFinishRequest={recordingFinishRequest}
+            onRecordingFinishHandled={onRecordingFinishHandled}
             notify={notify}
           />
         ) : (
@@ -4332,12 +4821,13 @@ export function LibraryScreen({
             isAccountCollectionView ? ' library-content-scroll--accounts' : ''
           }${isLogView ? ' library-content-scroll--logs' : ''}${
             view === 'settings' ? ' library-content-scroll--settings' : ''
+          }${
+            view === 'passwordGenerator'
+              ? ' library-content-scroll--password-generator'
+              : ''
+          }${view === 'trash' ? ' library-content-scroll--trash' : ''
+          }${view === 'browser' ? ' library-content-scroll--browser' : ''
           }`}
-          onContextMenu={
-            isAccountCollectionView && !showDatabaseEmptyState
-              ? openPageAccountMenu
-              : undefined
-          }
         >
           {isAccountCollectionView && (
             <div className="account-workspace">
@@ -4346,13 +4836,89 @@ export function LibraryScreen({
               activeTabId={activeTabId}
               bookmarkMode={view === 'bookmarks'}
               busy={tabBusy}
-              accountCounts={tabAccountCounts}
               onSelect={(tab) => void selectTab(tab)}
               onOpenMenu={openTabMenu}
               onClose={(tab, anchor) => openTabClosePrompt(tab, anchor)}
               controls={
                 showDatabaseEmptyState ? null : (
                   <>
+                    <div
+                      ref={searchContainerRef}
+                      className={`account-tabs__search search-field search-field--expandable${
+                        searchExpanded ? ' is-expanded' : ''
+                      }`}
+                    >
+                      <button
+                        type="button"
+                        className="search-field__toggle"
+                        onClick={() => {
+                          if (searchExpanded && !search) {
+                            setSearchExpanded(false)
+                            searchRef.current?.blur()
+                            return
+                          }
+                          setSearchExpanded(true)
+                          window.requestAnimationFrame(() => searchRef.current?.focus())
+                        }}
+                        aria-label={
+                          searchExpanded
+                            ? tr('收起搜索', 'Collapse search', '收合搜尋')
+                            : tr('展开搜索', 'Expand search', '展開搜尋')
+                        }
+                        aria-expanded={searchExpanded}
+                      >
+                        <Search size={16} />
+                      </button>
+                      <input
+                        ref={searchRef}
+                        value={search}
+                        onChange={(event) => setSearch(event.target.value)}
+                        onFocus={() => setSearchExpanded(true)}
+                        data-app-search
+                        data-app-search-priority={20}
+                        aria-keyshortcuts="Control+F"
+                        placeholder={tr(
+                          view === 'bookmarks'
+                            ? '搜索书签、用户名或分组'
+                            : '搜索站点、账号、用户名或分组',
+                          view === 'bookmarks'
+                            ? 'Search bookmarks, usernames or groups'
+                            : 'Search sites, accounts, usernames or groups',
+                          view === 'bookmarks'
+                            ? '搜尋書籤、使用者名稱或分組'
+                            : '搜尋站點、帳號、使用者名稱或分組'
+                        )}
+                        aria-label={tr('搜索账号', 'Search accounts', '搜尋帳號')}
+                        tabIndex={searchExpanded ? 0 : -1}
+                        onKeyDown={(event) => {
+                          if (event.key !== 'Escape') return
+                          if (search) {
+                            setSearch('')
+                          } else {
+                            setSearchExpanded(false)
+                            event.currentTarget.blur()
+                          }
+                        }}
+                      />
+                      <kbd aria-hidden="true">Ctrl F</kbd>
+                    </div>
+                    <button
+                      type="button"
+                      className="account-tabs__add account-tabs__add--labelled"
+                      onClick={() => setDrawer({ mode: 'create' })}
+                      aria-label={
+                        view === 'bookmarks'
+                          ? tr('添加书签', 'Add bookmark', '新增書籤')
+                          : tr('添加账号', 'Add account', '新增帳號')
+                      }
+                    >
+                      <Plus size={15} />
+                      <span>
+                        {view === 'bookmarks'
+                          ? tr('添加书签', 'Add bookmark', '新增書籤')
+                          : tr('添加账号', 'Add account', '新增帳號')}
+                      </span>
+                    </button>
                     {view === 'accounts' && (
                       <AccountTransferControls
                         tabId={activeTabId}
@@ -4414,6 +4980,9 @@ export function LibraryScreen({
                       id="account-group-search"
                       value={groupSearch}
                       onChange={(event) => setGroupSearch(event.target.value)}
+                      data-app-search
+                      data-app-search-priority={10}
+                      aria-keyshortcuts="Control+F"
                       onKeyDown={(event) => {
                         if (event.key !== 'Escape') return
                         setGroupSearch('')
@@ -4451,9 +5020,7 @@ export function LibraryScreen({
                           ? tr('全部书签', 'All bookmarks', '全部書籤')
                           : tr('全部账号', 'All accounts', '全部帳號')}
                       </span>
-                      <small className={accounts.length === 0 ? 'is-empty' : undefined}>
-                        {accounts.length > 0 ? accounts.length : ''}
-                      </small>
+                      <small>{accounts.length}</small>
                       <span className="account-subnav__tree-chevron" aria-hidden="true">
                         {accountGroupTreeExpanded ? (
                           <ChevronDown size={14} />
@@ -4462,16 +5029,8 @@ export function LibraryScreen({
                         )}
                       </span>
                     </button>
-                    <button
-                      type="button"
-                      className="account-subnav__add-group"
-                      onClick={(event) => openGroupCreate(event, null)}
-                      aria-label={tr('新增一级分组', 'Add top-level group', '新增第一層分組')}
-                      title={tr('新增一级分组', 'Add top-level group', '新增第一層分組')}
-                    >
-                      <Plus size={14} />
-                    </button>
                   </div>
+                  <div className="account-subnav__view-divider" aria-hidden="true" />
                   <div
                     className={`account-subnav__groups-accordion${
                       accountGroupTreeExpanded ? ' is-expanded' : ''
@@ -4479,146 +5038,216 @@ export function LibraryScreen({
                     aria-hidden={!accountGroupTreeExpanded}
                   >
                     <div className="account-subnav__groups-inner">
+                      <div className="account-subnav__groups-heading">
+                        <span className="account-subnav__groups-heading-label">
+                          <span>{tr('分组', 'Groups', '分組')}</span>
+                          <small>{visibleTreeGroups.length}</small>
+                        </span>
+                        <div
+                          className="account-subnav__groups-heading-actions"
+                          role="toolbar"
+                          aria-label={tr('分组展开控制', 'Group expansion controls', '分組展開控制')}
+                        >
+                          <button
+                            type="button"
+                            onClick={() => setAllGroupsExpanded(true)}
+                            disabled={groupsWithChildren.size === 0}
+                            aria-label={tr(
+                              '全部展开分组',
+                              'Expand all groups',
+                              '全部展開分組'
+                            )}
+                            title={tr(
+                              '全部展开分组',
+                              'Expand all groups',
+                              '全部展開分組'
+                            )}
+                          >
+                            <ChevronsDown size={14} />
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setAllGroupsExpanded(false)}
+                            disabled={groupsWithChildren.size === 0}
+                            aria-label={tr(
+                              '全部收缩分组',
+                              'Collapse all groups',
+                              '全部收合分組'
+                            )}
+                            title={tr(
+                              '全部收缩分组',
+                              'Collapse all groups',
+                              '全部收合分組'
+                            )}
+                          >
+                            <ChevronsUp size={14} />
+                          </button>
+                        </div>
+                      </div>
                       <section className="account-subnav__groups">
                         <div className="account-subnav__group-list">
-                      {visibleTreeGroups.map((group) => {
-                        if (!group.actualName) {
-                          return (
-                            <div
-                              className={`account-subnav__group-row account-subnav__group-row--ungrouped${
-                                groupDropTarget?.path === group.key
-                                  ? ` is-drop-${groupDropTarget.position}`
-                                  : ''
-                              }${draggedGroupPath === group.key ? ' is-dragging' : ''}`}
-                              key={group.key}
-                              data-group-path={group.key}
-                              onPointerDown={(event) =>
-                                beginGroupPointerDrag(event, group)
-                              }
-                            >
-                              <button
-                                type="button"
-                                className={`account-subnav__item account-subnav__item--group account-subnav__item--text-only${
-                                  groupFilter === UNGROUPED_KEY ? ' is-active' : ''
-                                }`}
-                                onClick={() => {
-                                  if (suppressGroupClickRef.current) return
-                                  chooseGroup(group)
-                                }}
-                                aria-label={tr(
-                                  '未分组，无子分组',
-                                  'Ungrouped, no subgroups',
-                                  '未分組，無子分組'
-                                )}
-                                title={group.name}
-                              >
-                                <span>{group.name}</span>
-                                <small className={group.count === 0 ? 'is-empty' : undefined}>
-                                  {group.count > 0 ? group.count : ''}
-                                </small>
-                                <span className="account-subnav__tree-spacer" aria-hidden="true" />
-                              </button>
-                            </div>
-                          )
-                        }
-                        const hasChildren = groupsWithChildren.has(group.actualName ?? '')
-                        const isCollapsed = collapsedGroupPaths.has(group.actualName ?? '')
-                        return (
-                            <div
-                              className={`account-subnav__group-row${
-                                groupDropTarget?.path === group.actualName
-                                  ? ` is-drop-${groupDropTarget.position}`
-                                  : ''
-                              }${draggedGroupPath === group.actualName ? ' is-dragging' : ''}`}
-                              key={group.key}
-                              data-group-path={group.actualName ?? group.key}
-                              onPointerDown={(event) =>
-                                beginGroupPointerDrag(event, group)
-                              }
-                              style={
-                                {
-                                  '--group-depth': Math.max(0, group.level - 1)
-                                } as React.CSSProperties
-                              }
-                            >
-                              <button
-                                type="button"
-                                className={`account-subnav__item account-subnav__item--group account-subnav__item--text-only${
-                                  groupFilter === group.key ? ' is-active' : ''
-                                }`}
-                                onClick={() => {
-                                  if (suppressGroupClickRef.current) return
-                                  chooseGroupFromTree(group, hasChildren)
-                                }}
-                                onContextMenu={(event) => openGroupMenu(event, group)}
-                                onKeyDown={(event) => openGroupMenuFromKeyboard(event, group)}
-                                aria-haspopup="menu"
-                                aria-expanded={hasChildren ? !isCollapsed : undefined}
-                                aria-label={
-                                  hasChildren
-                                    ? isCollapsed
-                                      ? tr(
-                                          `展开“${group.name}”`,
-                                          `Expand “${group.name}”`,
-                                          `展開「${group.name}」`
-                                        )
-                                      : tr(
-                                          `收起“${group.name}”`,
-                                          `Collapse “${group.name}”`,
-                                          `收起「${group.name}」`
-                                        )
-                                    : tr(
-                                        `${group.name}，无子分组`,
-                                        `${group.name}, no subgroups`,
-                                        `${group.name}，無子分組`
-                                      )
-                                }
-                                title={group.actualName ?? group.name}
-                              >
-                                <span>{group.name}</span>
-                                <small className={group.count === 0 ? 'is-empty' : undefined}>
-                                  {group.count > 0 ? group.count : ''}
-                                </small>
-                                {hasChildren ? (
-                                  <span
-                                    className="account-subnav__tree-chevron"
-                                    aria-hidden="true"
-                                  >
-                                    {isCollapsed ? (
-                                      <ChevronRight size={14} />
-                                    ) : (
-                                      <ChevronDown size={14} />
-                                    )}
-                                  </span>
-                                ) : (
-                                  <span
-                                    className="account-subnav__tree-spacer"
-                                    aria-hidden="true"
-                                  />
-                                )}
-                              </button>
-                              {groupLevel(group.actualName ?? group.key) < GROUP_MAX_DEPTH && (
-                                <button
-                                  type="button"
-                                  className="account-subnav__add-group"
-                                  onClick={(event) => openGroupCreate(event, group)}
-                                  aria-label={tr(
-                                    `在“${group.name}”下新增子分组`,
-                                    `Add a subgroup under “${group.name}”`,
-                                    `在「${group.name}」下新增子分組`
-                                  )}
-                                  title={tr('新增子分组', 'Add subgroup', '新增子分組')}
+                          {visibleTreeGroups.map((group) => {
+                            const isUngrouped = !group.actualName
+                            const groupPath = group.actualName ?? group.key
+                            const dropPosition =
+                              groupDropTarget?.path === groupPath
+                                ? groupDropTarget.position
+                                : null
+                            const hasChildren = groupsWithChildren.has(
+                              group.actualName ?? ''
+                            )
+                            const isCollapsed = collapsedGroupPaths.has(
+                              group.actualName ?? ''
+                            )
+                            return (
+                              <Fragment key={group.key}>
+                                {dropPosition === 'before' &&
+                                  renderGroupDropSlot(groupPath, 'before')}
+                                <div
+                                  className={`account-subnav__group-row${
+                                    isUngrouped
+                                      ? ' account-subnav__group-row--ungrouped'
+                                      : ''
+                                  }${
+                                    hasChildren
+                                      ? ' account-subnav__group-row--parent'
+                                      : ''
+                                  }${
+                                    group.level > 1
+                                      ? ' account-subnav__group-row--child'
+                                      : ''
+                                  }${
+                                    dropPosition === 'inside'
+                                      ? ' is-drop-inside'
+                                      : ''
+                                  }${
+                                    draggedGroupPath === groupPath
+                                      ? ' is-dragging'
+                                      : ''
+                                  }`}
+                                  data-group-path={groupPath}
+                                  data-group-level={group.level}
+                                  onPointerDown={(event) =>
+                                    beginGroupPointerDrag(event, group)
+                                  }
+                                  style={
+                                    isUngrouped
+                                      ? undefined
+                                      : ({
+                                          '--group-depth': Math.max(
+                                            0,
+                                            group.level - 1
+                                          )
+                                        } as React.CSSProperties)
+                                  }
                                 >
-                                  <Plus size={13} />
-                                </button>
-                              )}
-                            </div>
-                        )
-                      })}
+                                  <button
+                                    type="button"
+                                    className={`account-subnav__item account-subnav__item--group account-subnav__item--text-only${
+                                      groupFilter === group.key ? ' is-active' : ''
+                                    }`}
+                                    onClick={() => {
+                                      if (suppressGroupClickRef.current) return
+                                      if (isUngrouped) {
+                                        chooseGroup(group)
+                                      } else {
+                                        chooseGroupFromTree(group, hasChildren)
+                                      }
+                                    }}
+                                    onContextMenu={
+                                      isUngrouped
+                                        ? undefined
+                                        : (event) => openGroupMenu(event, group)
+                                    }
+                                    onKeyDown={
+                                      isUngrouped
+                                        ? undefined
+                                        : (event) =>
+                                            openGroupMenuFromKeyboard(event, group)
+                                    }
+                                    aria-haspopup={isUngrouped ? undefined : 'menu'}
+                                    aria-expanded={
+                                      hasChildren ? !isCollapsed : undefined
+                                    }
+                                    aria-level={group.level}
+                                    aria-label={
+                                      isUngrouped
+                                        ? tr(
+                                            '未分组，无子分组',
+                                            'Ungrouped, no subgroups',
+                                            '未分組，無子分組'
+                                          )
+                                        : hasChildren
+                                          ? isCollapsed
+                                            ? tr(
+                                                `展开“${group.name}”`,
+                                                `Expand “${group.name}”`,
+                                                `展開「${group.name}」`
+                                              )
+                                            : tr(
+                                                `收起“${group.name}”`,
+                                                `Collapse “${group.name}”`,
+                                                `收起「${group.name}」`
+                                              )
+                                          : tr(
+                                              `${group.name}，无子分组`,
+                                              `${group.name}, no subgroups`,
+                                              `${group.name}，無子分組`
+                                            )
+                                    }
+                                    title={group.actualName ?? group.name}
+                                  >
+                                    <span className="account-subnav__group-label">
+                                      <span
+                                        className="account-subnav__group-dot"
+                                        style={{
+                                          backgroundColor: isUngrouped
+                                            ? '#b7b7b1'
+                                            : groupDotColor(groupPath)
+                                        }}
+                                        aria-hidden="true"
+                                      />
+                                      <span className="account-subnav__group-name">
+                                        {group.name}
+                                      </span>
+                                    </span>
+                                    <small>{group.count}</small>
+                                    {hasChildren ? (
+                                      <span
+                                        className="account-subnav__tree-chevron"
+                                        aria-hidden="true"
+                                      >
+                                        {isCollapsed ? (
+                                          <ChevronRight size={14} />
+                                        ) : (
+                                          <ChevronDown size={14} />
+                                        )}
+                                      </span>
+                                    ) : (
+                                      <span
+                                        className="account-subnav__tree-spacer"
+                                        aria-hidden="true"
+                                      />
+                                    )}
+                                  </button>
+                                </div>
+                                {dropPosition === 'after' &&
+                                  renderGroupDropSlot(groupPath, 'after')}
+                              </Fragment>
+                            )
+                          })}
                         </div>
                       </section>
                     </div>
                   </div>
+                  <button
+                    type="button"
+                    className="account-subnav__new-group"
+                    onClick={(event) => openGroupCreate(event, null)}
+                  >
+                    <Plus size={14} />
+                    <span>{tr('新建分组', 'New group', '新增分組')}</span>
+                  </button>
                 </aside>
                 )}
                 {!accountSubnavHidden && (
@@ -4690,150 +5319,38 @@ export function LibraryScreen({
                       )
                     })}
                   </nav>
+                  <span className="library-header__summary">
+                    {view === 'bookmarks'
+                      ? tr(
+                          `${filteredAccounts.length} 个书签 · ${recordedAccountCount} 个已配置流程`,
+                          `${filteredAccounts.length} bookmarks · ${recordedAccountCount} with saved flows`,
+                          `${filteredAccounts.length} 個書籤 · ${recordedAccountCount} 個已設定流程`
+                        )
+                      : tr(
+                          `${filteredAccounts.length} 个账号 · ${recordedAccountCount} 个已录制流程`,
+                          `${filteredAccounts.length} accounts · ${recordedAccountCount} with recorded flows`,
+                          `${filteredAccounts.length} 個帳號 · ${recordedAccountCount} 個已錄製流程`
+                        )}
+                  </span>
                 </div>
-                <div className="library-header__actions" />
-              </header>
-
-              <div className="library-toolbar">
-                <div
-                  className={`search-field search-field--expandable${
-                    searchExpanded ? ' is-expanded' : ''
-                  }`}
-                >
+                <div className="library-header__actions">
                   <button
                     type="button"
-                    className="search-field__toggle"
-                    onClick={() => {
-                      if (searchExpanded) {
-                        setSearch('')
-                        setSearchExpanded(false)
-                      } else {
-                        setSearchExpanded(true)
-                      }
-                    }}
-                    aria-label={tr('搜索账号', 'Search accounts', '搜尋帳號')}
-                    aria-expanded={searchExpanded}
+                    className="library-header__refresh"
+                    onClick={() => void refreshAccounts()}
+                    disabled={manualRefreshing}
+                    aria-label={tr('刷新', 'Refresh', '重新整理')}
+                    title={tr('刷新', 'Refresh', '重新整理')}
+                    aria-busy={manualRefreshing}
                   >
-                    <Search size={17} />
+                    {manualRefreshing ? (
+                      <LoadingSpinner size={15} />
+                    ) : (
+                      <RefreshCw size={15} />
+                    )}
                   </button>
-                  <input
-                    ref={searchRef}
-                    value={search}
-                    onChange={(event) => setSearch(event.target.value)}
-                    placeholder={tr(
-                      view === 'bookmarks'
-                        ? '搜索书签、用户名或分组'
-                        : '搜索站点、账号、用户名或分组',
-                      view === 'bookmarks'
-                        ? 'Search bookmarks, usernames or groups'
-                        : 'Search sites, accounts, usernames or groups',
-                      view === 'bookmarks'
-                        ? '搜尋書籤、使用者名稱或分組'
-                        : '搜尋站點、帳號、使用者名稱或分組'
-                    )}
-                    aria-label={tr('搜索账号', 'Search accounts', '搜尋帳號')}
-                    disabled={!searchExpanded}
-                    tabIndex={searchExpanded ? 0 : -1}
-                    onKeyDown={(event) => {
-                      if (event.key !== 'Escape') return
-                      setSearch('')
-                      setSearchExpanded(false)
-                    }}
-                  />
-                  <kbd aria-hidden={!searchExpanded}>Ctrl K</kbd>
                 </div>
-                  {isAccountCollectionView && (
-                  <div className="library-toolbar__actions">
-                    <button
-                      type="button"
-                      className="account-add-button button button--primary button--small button--icon-only"
-                      onClick={() => setDrawer({ mode: 'create' })}
-                      aria-label={
-                        view === 'bookmarks'
-                          ? tr('添加书签', 'Add bookmark', '新增書籤')
-                          : tr('添加账号', 'Add account', '新增帳號')
-                      }
-                      title={
-                        view === 'bookmarks'
-                          ? tr('添加书签', 'Add bookmark', '新增書籤')
-                          : tr('添加账号', 'Add account', '新增帳號')
-                      }
-                    >
-                      <Plus size={14} />
-                    </button>
-                    <button
-                      type="button"
-                      className="button button--ghost button--small button--icon-only"
-                      onClick={() => void refreshAccounts()}
-                      disabled={manualRefreshing}
-                      aria-label={tr('刷新', 'Refresh', '重新整理')}
-                      title={tr('刷新', 'Refresh', '重新整理')}
-                      aria-busy={manualRefreshing}
-                    >
-                      {manualRefreshing ? <LoadingSpinner size={14} /> : <RefreshCw size={14} />}
-                    </button>
-                    {view === 'accounts' && (
-                      <>
-                        <button
-                          type="button"
-                          className="button button--ghost button--small button--icon-only"
-                          onClick={openBatchStrategy}
-                          disabled={
-                            selectedAccountCount === 0 || Boolean(batchState?.active)
-                          }
-                          aria-label={tr('批量操作', 'Batch actions', '批次操作')}
-                          title={tr('批量操作', 'Batch actions', '批次操作')}
-                        >
-                          <SlidersHorizontal size={14} />
-                        </button>
-                        <button
-                          type="button"
-                          className="button button--ghost button--small button--icon-only"
-                          onClick={() => void openSelected()}
-                          disabled={
-                            selectedAccountCount === 0 || Boolean(batchState?.active)
-                          }
-                          aria-label={tr('批量登录', 'Batch sign in', '批次登入')}
-                          title={tr('批量登录', 'Batch sign in', '批次登入')}
-                        >
-                          <Layers3 size={14} />
-                        </button>
-                      </>
-                    )}
-                    {view === 'bookmarks' && (
-                      <button
-                        type="button"
-                        className="button button--ghost button--small button--icon-only"
-                        onClick={() => void openSelectedBookmarks()}
-                        disabled={selectedAccountCount === 0 || bookmarkBatchOpenBusy}
-                        aria-label={tr('批量打开', 'Open selected bookmarks', '批次開啟')}
-                        title={tr('批量打开', 'Open selected bookmarks', '批次開啟')}
-                        aria-busy={bookmarkBatchOpenBusy}
-                      >
-                        {bookmarkBatchOpenBusy ? (
-                          <LoaderCircle size={14} className="spin" />
-                        ) : (
-                          <Globe2 size={14} />
-                        )}
-                      </button>
-                    )}
-                    <button
-                      type="button"
-                      className="button button--danger-ghost button--small button--icon-only"
-                      onClick={() => setDeleteSelectedOpen(true)}
-                      disabled={
-                        selectedAccountCount === 0 ||
-                        Boolean(batchState?.active) ||
-                        bookmarkBatchOpenBusy
-                      }
-                      aria-label={tr('删除账号', 'Delete accounts', '刪除帳號')}
-                      title={tr('删除账号', 'Delete accounts', '刪除帳號')}
-                    >
-                      <Trash2 size={14} />
-                    </button>
-                  </div>
-                )}
-              </div>
+              </header>
 
               <div
                 ref={accountTableScrollRef}
@@ -4845,6 +5362,8 @@ export function LibraryScreen({
                 ref={accountListRef}
                 className={`account-list${
                   accountColumnSizing === 'content' ? ' is-fit-content' : ''
+                }${rowEntryEnabled ? ' is-row-entry-enabled' : ''}${
+                  filteredAccounts.length === 0 ? ' is-empty' : ''
                 }`}
                 aria-live="polite"
                 style={accountGridStyle}
@@ -5077,6 +5596,7 @@ export function LibraryScreen({
                       onShiftSelect={() => toggleAccountSelection(account.id, true)}
                       onEdit={() => setDrawer({ mode: 'edit', accountId: account.id })}
                       onContextMenu={(event) => openAccountMenu(event, account)}
+                      onMore={(event) => openAccountMenu(event, account)}
                       onLogin={() => void openAccount(account)}
                     />
                   ))}
@@ -5127,19 +5647,53 @@ export function LibraryScreen({
                   )}
 
                   {accounts.length > 0 && filteredAccounts.length === 0 && (
-                    <CompactEmptyState
-                      title={tr('没有匹配的账号', 'No matching accounts', '沒有符合的帳號')}
+                    <EmptyState
+                      bookmark={view === 'bookmarks'}
+                      eyebrow={
+                        view === 'bookmarks'
+                          ? tr(
+                              'NO MATCHING BOOKMARKS',
+                              'NO MATCHING BOOKMARKS',
+                              'NO MATCHING BOOKMARKS'
+                            )
+                          : tr(
+                              'NO MATCHING ACCOUNTS',
+                              'NO MATCHING ACCOUNTS',
+                              'NO MATCHING ACCOUNTS'
+                            )
+                      }
+                      title={
+                        view === 'bookmarks'
+                          ? tr('没有匹配的书签', 'No matching bookmarks', '沒有符合的書籤')
+                          : tr('没有匹配的账号', 'No matching accounts', '沒有符合的帳號')
+                      }
                       description={tr(
                         '尝试更换关键词或切换左侧分组。',
                         'Try another search or group.',
                         '嘗試更換關鍵字或切換左側分組。'
                       )}
+                      action={
+                        <button
+                          type="button"
+                          className="button button--primary"
+                          onClick={() => {
+                            setSearch('')
+                            setSearchExpanded(false)
+                            setGroupFilter(null)
+                            setAccountPage(1)
+                          }}
+                        >
+                          <RotateCcw size={16} />
+                          {view === 'bookmarks'
+                            ? tr('查看全部书签', 'View all bookmarks', '查看全部書籤')
+                            : tr('查看全部账号', 'View all accounts', '查看全部帳號')}
+                        </button>
+                      }
                     />
                   )}
               </section>
               </div>
-              {filteredAccounts.length > 0 && (
-                <footer className="account-pagination">
+              <footer className="account-pagination">
                   <span aria-live="polite">
                     {tr(
                       view === 'bookmarks'
@@ -5211,8 +5765,7 @@ export function LibraryScreen({
                       </button>
                     </div>
                   </div>
-                </footer>
-              )}
+              </footer>
               </div>
             </div>
             )}
@@ -5221,20 +5774,20 @@ export function LibraryScreen({
 
           {view === 'passwordGenerator' && (
             <section className="page-section password-generator-page">
-              <header className="page-breadcrumb-bar">
-                <nav className="page-breadcrumb" aria-label={tr('面包屑', 'Breadcrumb', '麵包屑')}>
-                  <h1>{tr('密码生成器', 'Password generator', '密碼產生器')}</h1>
-                </nav>
-              </header>
               <PasswordGenerator notify={notify} />
             </section>
+          )}
+
+          {view === 'browser' && (
+            <BrowserWorkspace
+              notify={notify}
+              onOpenAccounts={openAccountsFromBrowser}
+            />
           )}
 
           {view === 'loginLogs' && (
             <LoginLogsPage
               sites={allSites}
-              accounts={allAccounts}
-              groups={groupDefinitions}
               notify={notify}
               onNavigate={chooseLogView}
             />
@@ -5246,300 +5799,449 @@ export function LibraryScreen({
 
           {view === 'trash' && (
             <section className="page-section trash-page">
-              <header className="page-breadcrumb-bar">
-                <nav className="page-breadcrumb" aria-label={tr('面包屑', 'Breadcrumb', '麵包屑')}>
-                  <h1>{tr('回收站', 'Recycle Bin', '回收站')}</h1>
-                </nav>
-                <div className="trash-page__actions">
-                  <div className="trash-retention-control" ref={trashRetentionRef}>
-                    <span>{tr('保留天数', 'Keep for', '保留天數')}</span>
-                    <button
-                      type="button"
-                      className="trash-retention-trigger"
-                      aria-label={tr('回收站保留天数', 'Recycle Bin retention', '回收站保留天數')}
-                      aria-haspopup="menu"
-                      aria-expanded={trashRetentionOpen}
-                      disabled={trashRetentionSaving}
-                      onClick={() => setTrashRetentionOpen((open) => !open)}
-                    >
-                      <strong>
-                        {tr(
-                          `${settings.trashRetentionDays} 天`,
-                          `${settings.trashRetentionDays} days`,
-                          `${settings.trashRetentionDays} 天`
-                        )}
-                      </strong>
-                      <ChevronDown
-                        size={14}
-                        className={trashRetentionOpen ? 'is-open' : undefined}
-                      />
-                    </button>
-                    {trashRetentionOpen && (
-                      <div
-                        className="trash-retention-menu"
-                        role="menu"
-                        aria-label={tr('回收站保留天数选项', 'Retention options', '回收站保留天數選項')}
-                      >
-                        {TRASH_RETENTION_OPTIONS.map((days) => {
-                          const selected = settings.trashRetentionDays === days
-                          return (
-                            <button
-                              key={days}
-                              type="button"
-                              role="menuitemradio"
-                              aria-checked={selected}
-                              className={selected ? 'is-selected' : ''}
-                              onClick={() => {
-                                setTrashRetentionOpen(false)
-                                void updateTrashRetention(days)
-                              }}
-                            >
-                              <span>
-                                {tr(`${days} 天`, `${days} days`, `${days} 天`)}
-                              </span>
-                              {selected && <Check size={13} />}
-                            </button>
-                          )
-                        })}
-                      </div>
-                    )}
-                    {trashRetentionSaving && <LoaderCircle size={14} className="spin" />}
-                  </div>
-                  <button
-                    type="button"
-                    className="button button--ghost button--small"
-                    onClick={() => void refreshAccounts()}
-                    disabled={manualRefreshing}
-                  >
-                    <RefreshCw size={14} className={manualRefreshing ? 'spin' : undefined} />
-                    {tr('刷新', 'Refresh', '重新整理')}
-                  </button>
-                </div>
-              </header>
-
-              <nav
-                className="settings-tabs trash-tabs"
-                role="tablist"
-                aria-label={tr('回收站分类', 'Recycle Bin sections', '回收站分類')}
-              >
-                <button
-                  type="button"
-                  role="tab"
-                  aria-selected={trashSection === 'accounts'}
-                  className={trashSection === 'accounts' ? 'is-active' : ''}
-                  onClick={() => {
-                    setTrashSection('accounts')
-                    setTrashSelection(new Set())
-                    setTrashRetentionOpen(false)
-                  }}
-                >
-                  {tr('账号', 'Accounts', '帳號')}
-                </button>
-                <button
-                  type="button"
-                  role="tab"
-                  aria-selected={trashSection === 'bookmarks'}
-                  className={trashSection === 'bookmarks' ? 'is-active' : ''}
-                  onClick={() => {
-                    setTrashSection('bookmarks')
-                    setTrashSelection(new Set())
-                    setTrashRetentionOpen(false)
-                  }}
-                >
-                  {tr('书签', 'Bookmarks', '書籤')}
-                </button>
-              </nav>
-
-              {visibleDeletedAccounts.length > 0 && (
-                <div className="trash-bulk-bar">
-                  <span>
-                    {trashSelection.size > 0
-                      ? tr(
-                          `已选择 ${trashSelection.size} 个${
-                            trashSection === 'bookmarks' ? '书签' : '账号'
-                          }`,
-                          `${trashSelection.size} ${
-                            trashSection === 'bookmarks' ? 'bookmark' : 'account'
-                          }${trashSelection.size === 1 ? '' : 's'} selected`,
-                          `已選取 ${trashSelection.size} 個${
-                            trashSection === 'bookmarks' ? '書籤' : '帳號'
-                          }`
-                        )
-                      : tr(
-                          `勾选${
-                            trashSection === 'bookmarks' ? '书签' : '账号'
-                          }后可批量恢复或永久删除`,
-                          `Select ${
-                            trashSection === 'bookmarks' ? 'bookmarks' : 'accounts'
-                          } to restore or delete permanently`,
-                          `勾選${
-                            trashSection === 'bookmarks' ? '書籤' : '帳號'
-                          }後可批次恢復或永久刪除`
-                        )}
-                  </span>
-                  <div>
+              <CollectionPageHeader
+                title={tr('回收站', 'Recycle Bin', '回收站')}
+                actions={
+                  <>
                     <button
                       type="button"
                       className="button button--ghost button--small"
-                      onClick={() => void restoreSelectedAccounts()}
-                      disabled={trashSelection.size === 0 || trashActionBusy}
+                      onClick={() => void refreshAccounts()}
+                      disabled={manualRefreshing}
                     >
-                      {trashActionBusy ? (
-                        <LoaderCircle size={14} className="spin" />
-                      ) : (
-                        <Undo2 size={14} />
-                      )}
-                      {tr('批量恢复', 'Restore selected', '批次恢復')}
+                      <RefreshCw
+                        size={14}
+                        className={manualRefreshing ? 'spin' : undefined}
+                      />
+                      {tr('刷新', 'Refresh', '重新整理')}
+                    </button>
+                    <PageActionMenu
+                      open={trashRetentionOpen}
+                      onOpenChange={setTrashRetentionOpen}
+                      label={tr('更多回收站操作', 'More Recycle Bin actions', '更多回收站操作')}
+                      busy={trashRetentionSaving}
+                    >
+                      <span className="page-action-menu__label">
+                        {tr('保留天数', 'Keep for', '保留天數')}
+                      </span>
+                      {TRASH_RETENTION_OPTIONS.map((days) => {
+                        const selected = settings.trashRetentionDays === days
+                        return (
+                          <button
+                            key={days}
+                            type="button"
+                            role="menuitemradio"
+                            aria-checked={selected}
+                            className={selected ? 'is-selected' : ''}
+                            disabled={trashRetentionSaving}
+                            onClick={() => {
+                              setTrashRetentionOpen(false)
+                              void updateTrashRetention(days)
+                            }}
+                          >
+                            <span>{tr(`${days} 天`, `${days} days`, `${days} 天`)}</span>
+                            {selected ? <Check size={13} /> : null}
+                          </button>
+                        )
+                      })}
+                    </PageActionMenu>
+                  </>
+                }
+                tabs={
+                  <nav
+                    className="settings-tabs trash-tabs"
+                    role="tablist"
+                    aria-label={tr('回收站分类', 'Recycle Bin sections', '回收站分類')}
+                  >
+                    <button
+                      type="button"
+                      role="tab"
+                      aria-selected={trashSection === 'accounts'}
+                      className={trashSection === 'accounts' ? 'is-active' : ''}
+                      onClick={() => {
+                        setTrashSection('accounts')
+                        setTrashSelection(new Set())
+                        setTrashRetentionOpen(false)
+                        clearTrashSearch()
+                        setTrashDateRange(emptyLogDateRange())
+                        setTrashGroup('all')
+                        setTrashSource('all')
+                      }}
+                    >
+                      <UserRound size={14} />
+                      {tr('账号', 'Accounts', '帳號')}
                     </button>
                     <button
                       type="button"
-                      className="button button--danger-ghost button--small"
-                      onClick={() => setPurgeTargets([...trashSelection])}
-                      disabled={trashSelection.size === 0 || trashActionBusy}
+                      role="tab"
+                      aria-selected={trashSection === 'bookmarks'}
+                      className={trashSection === 'bookmarks' ? 'is-active' : ''}
+                      onClick={() => {
+                        setTrashSection('bookmarks')
+                        setTrashSelection(new Set())
+                        setTrashRetentionOpen(false)
+                        clearTrashSearch()
+                        setTrashDateRange(emptyLogDateRange())
+                        setTrashGroup('all')
+                        setTrashSource('all')
+                      }}
                     >
-                      <Trash2 size={14} />
-                      {tr('批量删除', 'Delete selected', '批次刪除')}
+                      <Bookmark size={14} />
+                      {tr('书签', 'Bookmarks', '書籤')}
+                    </button>
+                  </nav>
+                }
+                filters={
+                  <div className="collection-filter-bar">
+                    <CollectionSearchField
+                      searchRef={trashSearchRef}
+                      value={trashSearchInput}
+                      onChange={setTrashSearchInput}
+                      onClear={clearTrashSearch}
+                      placeholder={
+                        trashSection === 'bookmarks'
+                          ? tr('搜索已删除的书签', 'Search deleted bookmarks', '搜尋已刪除的書籤')
+                          : tr('搜索已删除的账号', 'Search deleted accounts', '搜尋已刪除的帳號')
+                      }
+                      ariaLabel={tr('搜索回收站', 'Search Recycle Bin', '搜尋回收站')}
+                    />
+                    <LogDateFilter
+                      value={trashDateRange}
+                      onChange={setTrashDateRange}
+                    />
+                    <CollectionFilterSelect
+                      value={trashGroup}
+                      onChange={setTrashGroup}
+                      ariaLabel={tr('分组', 'Group', '分組')}
+                      searchable
+                      searchPlaceholder={tr('搜索分组', 'Search groups', '搜尋分組')}
+                      options={[
+                        {
+                          value: 'all',
+                          label: tr('全部分组', 'All groups', '全部分組')
+                        },
+                        ...trashGroupOptions.map((value) => ({
+                          value,
+                          label:
+                            value === '__ungrouped__'
+                              ? tr('未分组', 'Ungrouped', '未分組')
+                              : value
+                        }))
+                      ]}
+                    />
+                    <CollectionFilterSelect
+                      value={trashSource}
+                      onChange={setTrashSource}
+                      ariaLabel={tr('来源', 'Source', '來源')}
+                      options={[
+                        {
+                          value: 'all',
+                          label: tr('全部来源', 'All sources', '全部來源')
+                        },
+                        ...trashSourceOptions.map((value) => ({
+                          value,
+                          label: value
+                        }))
+                      ]}
+                    />
+                    <button
+                      type="button"
+                      className="collection-filter-reset"
+                      onClick={() => {
+                        clearTrashSearch()
+                        setTrashDateRange(emptyLogDateRange())
+                        setTrashGroup('all')
+                        setTrashSource('all')
+                      }}
+                    >
+                      <RotateCcw size={14} />
+                      {tr('重置', 'Reset', '重設')}
                     </button>
                   </div>
+                }
+              />
+
+              {trashSelection.size > 0 && (
+                <div
+                  className="selection-dock selection-dock--page"
+                  role="toolbar"
+                  aria-label={tr('回收站批量操作', 'Recycle Bin batch actions', '回收站批次操作')}
+                >
+                  <span className="selection-dock__count">
+                    {tr(
+                      `已选 ${trashSelection.size} 项`,
+                      `${trashSelection.size} selected`,
+                      `已選 ${trashSelection.size} 項`
+                    )}
+                  </span>
+                  <button
+                    type="button"
+                    className="selection-dock__primary"
+                    onClick={() => void restoreSelectedAccounts()}
+                    disabled={trashActionBusy}
+                  >
+                    {trashActionBusy ? (
+                      <LoaderCircle size={15} className="spin" />
+                    ) : (
+                      <Undo2 size={15} />
+                    )}
+                    {tr('批量恢复', 'Restore selected', '批次恢復')}
+                  </button>
+                  <button
+                    type="button"
+                    className="selection-dock__danger"
+                    onClick={() => setPurgeTargets([...trashSelection])}
+                    disabled={trashActionBusy}
+                  >
+                    <Trash2 size={15} />
+                    {tr('批量删除', 'Delete selected', '批次刪除')}
+                  </button>
+                  <button
+                    type="button"
+                    className="selection-dock__cancel"
+                    onClick={() => setTrashSelection(new Set())}
+                    disabled={trashActionBusy}
+                  >
+                    {tr('取消', 'Cancel', '取消')}
+                  </button>
                 </div>
               )}
 
-              {visibleDeletedAccounts.length === 0 ? (
-                <CompactEmptyState
-                  title={tr('回收站是空的', 'Recycle Bin is empty', '回收站是空的')}
-                  description={tr(
-                    `删除的${
-                      trashSection === 'bookmarks' ? '书签' : '账号'
-                    }会在这里保留 ${settings.trashRetentionDays} 天，可随时恢复。`,
-                    `Deleted ${
-                      trashSection === 'bookmarks' ? 'bookmarks' : 'accounts'
-                    } are kept here for ${settings.trashRetentionDays} days and can be restored at any time.`,
-                    `刪除的${
-                      trashSection === 'bookmarks' ? '書籤' : '帳號'
-                    }會在這裡保留 ${settings.trashRetentionDays} 天，可隨時恢復。`
-                  )}
-                />
-              ) : (
-                <div
-                  className={`trash-list${
-                    trashSection === 'bookmarks' ? ' trash-list--bookmarks' : ''
-                  }`}
-                  role="table"
-                  aria-label={
-                    trashSection === 'bookmarks'
-                      ? tr('已删除书签', 'Deleted bookmarks', '已刪除書籤')
-                      : tr('已删除账号', 'Deleted accounts', '已刪除帳號')
-                  }
-                >
-                  <div className="trash-list__header" role="row">
-                    <SelectionCheckbox
-                      ref={trashSelectAllRef}
-                      checked={
-                        visibleDeletedAccounts.length > 0 &&
-                        trashSelection.size === visibleDeletedAccounts.length
-                      }
-                      label={
-                        trashSection === 'bookmarks'
-                          ? tr('选择回收站全部书签', 'Select all deleted bookmarks', '選取回收站全部書籤')
-                          : tr('选择回收站全部账号', 'Select all deleted accounts', '選取回收站全部帳號')
-                      }
-                      onChange={toggleAllTrashSelection}
-                    />
-                    <span>{tr('站点', 'Site', '站點')}</span>
-                    {trashSection === 'accounts' && (
-                      <span>{tr('用户名', 'Username', '使用者名稱')}</span>
+              <div className="trash-content">
+                {visibleDeletedAccounts.length === 0 ? (
+                  <CompactEmptyState
+                    className="trash-empty-state"
+                    icon={<Trash2 size={30} strokeWidth={1.7} />}
+                    title={
+                      trashSection === 'bookmarks'
+                        ? tr('没有已删除的书签', 'No deleted bookmarks', '沒有已刪除的書籤')
+                        : tr('没有已删除的账号', 'No deleted accounts', '沒有已刪除的帳號')
+                    }
+                    description={tr(
+                      `在${trashSection === 'bookmarks' ? '书签库' : '账号库'}中选中${
+                        trashSection === 'bookmarks' ? '书签' : '账号'
+                      }后按 Delete，会先移到这里并保留 ${settings.trashRetentionDays} 天，期间可随时恢复。`,
+                      `Select ${trashSection === 'bookmarks' ? 'bookmarks' : 'accounts'} in the ${
+                        trashSection === 'bookmarks' ? 'bookmark library' : 'account library'
+                      } and press Delete. They stay here for ${settings.trashRetentionDays} days and can be restored.`,
+                      `在${trashSection === 'bookmarks' ? '書籤庫' : '帳號庫'}中選取${
+                        trashSection === 'bookmarks' ? '書籤' : '帳號'
+                      }後按 Delete，會先移到這裡並保留 ${settings.trashRetentionDays} 天，期間可隨時恢復。`
                     )}
-                    <span>{tr('分组', 'Group', '分組')}</span>
-                    <span>{tr('标签', 'Tab', '標籤')}</span>
-                    <span>{tr('删除时间', 'Deleted', '刪除時間')}</span>
-                    <span>{tr('操作', 'Actions', '操作')}</span>
-                  </div>
-                  {visibleDeletedAccounts.map((account) => (
-                    <div className="trash-row" role="row" key={account.id}>
+                    actions={
+                      <>
+                        <button
+                          type="button"
+                          className="button button--soft button--small"
+                          onClick={() =>
+                            switchView(trashSection === 'bookmarks' ? 'bookmarks' : 'accounts')
+                          }
+                        >
+                          <ArchiveRestore size={15} />
+                          {trashSection === 'bookmarks'
+                            ? tr('返回书签库', 'Back to bookmarks', '返回書籤庫')
+                            : tr('返回账号库', 'Back to accounts', '返回帳號庫')}
+                        </button>
+                        <button
+                          type="button"
+                          className="button button--ghost button--small"
+                          onClick={() => setTrashRetentionOpen(true)}
+                        >
+                          <Settings size={15} />
+                          {tr('调整保留天数', 'Change retention', '調整保留天數')}
+                        </button>
+                      </>
+                    }
+                  />
+                ) : (
+                  <div
+                    className={`trash-list${
+                      trashSection === 'bookmarks' ? ' trash-list--bookmarks' : ''
+                    }`}
+                    role="table"
+                    aria-label={
+                      trashSection === 'bookmarks'
+                        ? tr('已删除书签', 'Deleted bookmarks', '已刪除書籤')
+                        : tr('已删除账号', 'Deleted accounts', '已刪除帳號')
+                    }
+                  >
+                    <div className="trash-list__header" role="row">
                       <SelectionCheckbox
-                        checked={trashSelection.has(account.id)}
-                        label={tr(
-                          `选择 ${account.site.name}`,
-                          `Select ${account.site.name}`,
-                          `選取 ${account.site.name}`
-                        )}
-                        onChange={() => toggleTrashSelection(account.id)}
+                        ref={trashSelectAllRef}
+                        checked={allTrashPageSelected}
+                        disabled={pagedDeletedAccounts.length === 0}
+                        label={
+                          trashSection === 'bookmarks'
+                            ? tr('选择回收站全部书签', 'Select all deleted bookmarks', '選取回收站全部書籤')
+                            : tr('选择回收站全部账号', 'Select all deleted accounts', '選取回收站全部帳號')
+                        }
+                        onChange={toggleAllTrashSelection}
                       />
-                      <div className="account-identity">
-                        <SiteMark site={account.site} />
-                        <div>
-                          <strong>{account.site.name}</strong>
-                        </div>
-                      </div>
+                      <span>{tr('站点', 'Site', '站點')}</span>
                       {trashSection === 'accounts' && (
-                        <div className="account-username">
-                          <UserRound size={14} />
-                          <strong>{account.username}</strong>
-                        </div>
+                        <span>{tr('用户名', 'Username', '使用者名稱')}</span>
                       )}
-                      <div className="account-group-cell">
-                        <Layers3 size={13} />
-                        <span>{displayGroup(account, tr)}</span>
-                      </div>
-                      <div className="trash-tab-cell">
-                        <Database size={13} />
-                        <span title={account.tabName}>{account.tabName}</span>
-                      </div>
-                      <time className="account-updated" dateTime={account.deletedAt}>
-                        {formatDate(account.deletedAt, {
-                          year: 'numeric',
-                          month: 'short',
-                          day: 'numeric',
-                          hour: '2-digit',
-                          minute: '2-digit'
-                        })}
-                      </time>
-                      <div className="trash-row__actions">
-                        <button
-                          type="button"
-                          className="button button--ghost button--small button--icon-only"
-                          onClick={() => void restoreAccount(account.id)}
-                          disabled={restoringAccountId === account.id || trashActionBusy}
-                          aria-label={
-                            trashSection === 'bookmarks'
-                              ? tr('恢复书签', 'Restore bookmark', '恢復書籤')
-                              : tr('恢复账号', 'Restore account', '恢復帳號')
-                          }
-                          title={
-                            trashSection === 'bookmarks'
-                              ? tr('恢复书签', 'Restore bookmark', '恢復書籤')
-                              : tr('恢复账号', 'Restore account', '恢復帳號')
-                          }
-                        >
-                          {restoringAccountId === account.id ? (
-                            <LoaderCircle size={14} className="spin" />
-                          ) : (
-                            <Undo2 size={14} />
-                          )}
-                        </button>
-                        <button
-                          type="button"
-                          className="button button--danger-ghost button--small button--icon-only"
-                          onClick={() => setPurgeTargets([account.id])}
-                          disabled={trashActionBusy}
-                          aria-label={
-                            trashSection === 'bookmarks'
-                              ? tr('永久删除书签', 'Delete bookmark permanently', '永久刪除書籤')
-                              : tr('永久删除账号', 'Delete account permanently', '永久刪除帳號')
-                          }
-                          title={
-                            trashSection === 'bookmarks'
-                              ? tr('永久删除书签', 'Delete bookmark permanently', '永久刪除書籤')
-                              : tr('永久删除账号', 'Delete account permanently', '永久刪除帳號')
-                          }
-                        >
-                          <Trash2 size={14} />
-                        </button>
-                      </div>
+                      <span>{tr('分组', 'Group', '分組')}</span>
+                      <span>{tr('标签', 'Tab', '標籤')}</span>
+                      <span>{tr('删除时间', 'Deleted', '刪除時間')}</span>
+                      <span>{tr('操作', 'Actions', '操作')}</span>
                     </div>
-                  ))}
+                    {pagedDeletedAccounts.map((account) => (
+                      <div className="trash-row" role="row" key={account.id}>
+                        <SelectionCheckbox
+                          checked={trashSelection.has(account.id)}
+                          label={tr(
+                            `选择 ${account.site.name}`,
+                            `Select ${account.site.name}`,
+                            `選取 ${account.site.name}`
+                          )}
+                          onChange={() => toggleTrashSelection(account.id)}
+                        />
+                        <div className="account-identity">
+                          <SiteMark site={account.site} />
+                          <div>
+                            <strong>{account.site.name}</strong>
+                          </div>
+                        </div>
+                        {trashSection === 'accounts' && (
+                          <div className="account-username">
+                            <UserRound size={14} />
+                            <strong>{account.username}</strong>
+                          </div>
+                        )}
+                        <div className="account-group-cell">
+                          <Layers3 size={13} />
+                          <span>{displayGroup(account, tr)}</span>
+                        </div>
+                        <div className="trash-tab-cell">
+                          <Database size={13} />
+                          <span title={account.tabName}>{account.tabName}</span>
+                        </div>
+                        <time className="account-updated" dateTime={account.deletedAt}>
+                          {formatDate(account.deletedAt, {
+                            year: 'numeric',
+                            month: 'short',
+                            day: 'numeric',
+                            hour: '2-digit',
+                            minute: '2-digit'
+                          })}
+                        </time>
+                        <div className="trash-row__actions">
+                          <button
+                            type="button"
+                            className="button button--ghost button--small button--icon-only"
+                            onClick={() => void restoreAccount(account.id)}
+                            disabled={restoringAccountId === account.id || trashActionBusy}
+                            aria-label={
+                              trashSection === 'bookmarks'
+                                ? tr('恢复书签', 'Restore bookmark', '恢復書籤')
+                                : tr('恢复账号', 'Restore account', '恢復帳號')
+                            }
+                            title={
+                              trashSection === 'bookmarks'
+                                ? tr('恢复书签', 'Restore bookmark', '恢復書籤')
+                                : tr('恢复账号', 'Restore account', '恢復帳號')
+                            }
+                          >
+                            {restoringAccountId === account.id ? (
+                              <LoaderCircle size={14} className="spin" />
+                            ) : (
+                              <Undo2 size={14} />
+                            )}
+                          </button>
+                          <button
+                            type="button"
+                            className="button button--danger-ghost button--small button--icon-only"
+                            onClick={() => setPurgeTargets([account.id])}
+                            disabled={trashActionBusy}
+                            aria-label={
+                              trashSection === 'bookmarks'
+                                ? tr('永久删除书签', 'Delete bookmark permanently', '永久刪除書籤')
+                                : tr('永久删除账号', 'Delete account permanently', '永久刪除帳號')
+                            }
+                            title={
+                              trashSection === 'bookmarks'
+                                ? tr('永久删除书签', 'Delete bookmark permanently', '永久刪除書籤')
+                                : tr('永久删除账号', 'Delete account permanently', '永久刪除帳號')
+                            }
+                          >
+                            <Trash2 size={14} />
+                          </button>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+              <footer className="account-pagination trash-pagination">
+                <span aria-live="polite">
+                  {tr(
+                    trashSection === 'bookmarks'
+                      ? trashSelection.size > 0
+                        ? '已选择 {selected} 个书签 · 共 {count} 个书签 · 第 {page}/{pages} 页'
+                        : '共 {count} 个书签 · 第 {page}/{pages} 页'
+                      : trashSelection.size > 0
+                        ? '已选择 {selected} 个账号 · 共 {count} 个账号 · 第 {page}/{pages} 页'
+                        : '共 {count} 个账号 · 第 {page}/{pages} 页',
+                    trashSection === 'bookmarks'
+                      ? trashSelection.size > 0
+                        ? '{selected} bookmarks selected · {count} total · page {page} of {pages}'
+                        : '{count} bookmarks · page {page} of {pages}'
+                      : trashSelection.size > 0
+                        ? '{selected} accounts selected · {count} total · page {page} of {pages}'
+                        : '{count} accounts · page {page} of {pages}',
+                    trashSection === 'bookmarks'
+                      ? trashSelection.size > 0
+                        ? '已選取 {selected} 個書籤 · 共 {count} 個書籤 · 第 {page}/{pages} 頁'
+                        : '共 {count} 個書籤 · 第 {page}/{pages} 頁'
+                      : trashSelection.size > 0
+                        ? '已選取 {selected} 個帳號 · 共 {count} 個帳號 · 第 {page}/{pages} 頁'
+                        : '共 {count} 個帳號 · 第 {page}/{pages} 頁',
+                    {
+                      selected: trashSelection.size,
+                      count: visibleDeletedAccounts.length,
+                      page: currentTrashPage,
+                      pages: trashPageCount
+                    }
+                  )}
+                </span>
+                <div className="account-pagination__controls">
+                  <PageSizePicker
+                    ariaLabel={tr(
+                      '回收站每页条数',
+                      'Recycle Bin items per page',
+                      '回收站每頁筆數'
+                    )}
+                    value={trashPageSize}
+                    options={ACCOUNT_PAGE_SIZES}
+                    onChange={(nextPageSize) =>
+                      setTrashPageSize(nextPageSize as AccountPageSize)
+                    }
+                  />
+                  <div className="account-pagination__nav">
+                    <button
+                      type="button"
+                      className="icon-button icon-button--small"
+                      onClick={() => setTrashPage((page) => Math.max(1, page - 1))}
+                      disabled={currentTrashPage <= 1}
+                      aria-label={tr('上一页', 'Previous page', '上一頁')}
+                    >
+                      <ChevronLeft size={16} />
+                    </button>
+                    <button
+                      type="button"
+                      className="icon-button icon-button--small"
+                      onClick={() =>
+                        setTrashPage((page) => Math.min(trashPageCount, page + 1))
+                      }
+                      disabled={currentTrashPage >= trashPageCount}
+                      aria-label={tr('下一页', 'Next page', '下一頁')}
+                    >
+                      <ChevronRight size={16} />
+                    </button>
+                  </div>
                 </div>
-              )}
+              </footer>
             </section>
           )}
 
@@ -5565,9 +6267,326 @@ export function LibraryScreen({
         </div>
         )}
       </main>
+      {isAccountCollectionView &&
+        !showDatabaseEmptyState &&
+        !accountEditorOpen &&
+        !batchState?.active &&
+        selectedAccountCount > 0 && (
+          <div className="selection-dock" role="toolbar" aria-label={tr('批量操作', 'Batch actions', '批次操作')}>
+            <span className="selection-dock__count">
+              {tr(
+                `已选 ${selectedAccountCount} 项`,
+                `${selectedAccountCount} selected`,
+                `已選 ${selectedAccountCount} 項`
+              )}
+            </span>
+            {view === 'accounts' ? (
+              <>
+                <button
+                  type="button"
+                  className="selection-dock__primary"
+                  onClick={() => void openSelected()}
+                  disabled={Boolean(batchState?.active)}
+                >
+                  <Layers3 size={15} />
+                  {tr('批量登录', 'Batch sign in', '批次登入')}
+                </button>
+                <button
+                  type="button"
+                  onClick={openBatchStrategy}
+                  disabled={Boolean(batchState?.active)}
+                >
+                  <SlidersHorizontal size={15} />
+                  {tr('批量操作', 'Batch actions', '批次操作')}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setBatchSessionClearConfirm(true)}
+                  disabled={Boolean(batchState?.active) || batchSessionClearBusy}
+                >
+                  {batchSessionClearBusy ? (
+                    <LoaderCircle size={15} className="spin" />
+                  ) : (
+                    <RefreshCw size={15} />
+                  )}
+                  {tr('清除会话', 'Clear sessions', '清除工作階段')}
+                </button>
+              </>
+            ) : (
+              <button
+                type="button"
+                className="selection-dock__primary"
+                onClick={() => void openSelectedBookmarks()}
+                disabled={bookmarkBatchOpenBusy}
+              >
+                {bookmarkBatchOpenBusy ? (
+                  <LoaderCircle size={15} className="spin" />
+                ) : (
+                  <Globe2 size={15} />
+                )}
+                {tr('批量打开', 'Open selected', '批次開啟')}
+              </button>
+            )}
+            <button
+              type="button"
+              onClick={() => setDeleteSelectedOpen(true)}
+              disabled={Boolean(batchState?.active) || bookmarkBatchOpenBusy}
+            >
+              <Trash2 size={15} />
+              {tr('移入回收站', 'Move to Recycle Bin', '移至回收站')}
+            </button>
+            <button
+              type="button"
+              className="selection-dock__cancel"
+              onClick={() => {
+                setSelectedIds(new Set())
+                selectionAnchorRef.current = null
+              }}
+            >
+              {tr('取消', 'Cancel', '取消')}
+            </button>
+          </div>
+        )}
     </div>
   )
 }
+
+function GroupParentPicker({
+  groups,
+  value,
+  onChange,
+  tr,
+  language
+}: {
+  groups: GroupSummary[]
+  value: GroupSummary | null
+  onChange: (group: GroupSummary | null) => void
+  tr: Translate
+  language: AppSettings['language']
+}): React.JSX.Element {
+  const listboxId = useId()
+  const triggerRef = useRef<HTMLButtonElement>(null)
+  const searchRef = useRef<HTMLInputElement>(null)
+  const listRef = useRef<HTMLDivElement>(null)
+  const [open, setOpen] = useState(false)
+  const [query, setQuery] = useState('')
+  const [activeIndex, setActiveIndex] = useState(0)
+  const availableParents = useMemo(
+    () =>
+      groups
+        .filter(
+          (group) =>
+            group.actualName &&
+            groupLevel(group.actualName ?? group.key) < GROUP_MAX_DEPTH
+        )
+        .sort((left, right) =>
+          (left.actualName ?? '').localeCompare(right.actualName ?? '', language, {
+            sensitivity: 'accent'
+          })
+        ),
+    [groups, language]
+  )
+  const options = useMemo<(GroupSummary | null)[]>(
+    () => [null, ...availableParents],
+    [availableParents]
+  )
+  const filteredOptions = useMemo(() => {
+    const normalizedQuery = query.trim().toLocaleLowerCase(language)
+    if (!normalizedQuery) return options
+    return options.filter((option) =>
+      (option?.actualName ?? tr('无（一级分组）', 'None (top-level group)', '無（第一層分組）'))
+        .toLocaleLowerCase(language)
+        .includes(normalizedQuery)
+    )
+  }, [language, options, query, tr])
+  const selectedPath = value?.actualName ?? ''
+  const selectedLabel =
+    value?.actualName ??
+    tr('无（一级分组）', 'None (top-level group)', '無（第一層分組）')
+
+  useEffect(() => {
+    if (!open) return
+    const focusFrame = window.requestAnimationFrame(() => searchRef.current?.focus())
+    const closeOnOutsidePointer = (event: PointerEvent): void => {
+      if (
+        event.target instanceof Node &&
+        !triggerRef.current?.parentElement?.contains(event.target)
+      ) {
+        setOpen(false)
+        setQuery('')
+      }
+    }
+    document.addEventListener('pointerdown', closeOnOutsidePointer)
+    return () => {
+      window.cancelAnimationFrame(focusFrame)
+      document.removeEventListener('pointerdown', closeOnOutsidePointer)
+    }
+  }, [open])
+
+  useEffect(() => {
+    if (!open) return
+    setActiveIndex((current) =>
+      filteredOptions.length === 0 ? 0 : Math.min(current, filteredOptions.length - 1)
+    )
+  }, [filteredOptions.length, open])
+
+  useEffect(() => {
+    if (!open || filteredOptions.length === 0) return
+    listRef.current
+      ?.querySelector<HTMLElement>(`[data-parent-option-index="${activeIndex}"]`)
+      ?.scrollIntoView({ block: 'nearest' })
+  }, [activeIndex, filteredOptions.length, open])
+
+  function openMenu(): void {
+    const selectedIndex = options.findIndex(
+      (option) => (option?.actualName ?? '') === selectedPath
+    )
+    setQuery('')
+    setActiveIndex(selectedIndex >= 0 ? selectedIndex : 0)
+    setOpen(true)
+  }
+
+  function closeMenu(restoreFocus = true): void {
+    setOpen(false)
+    setQuery('')
+    if (restoreFocus) {
+      window.requestAnimationFrame(() => triggerRef.current?.focus())
+    }
+  }
+
+  function chooseParent(option: GroupSummary | null): void {
+    onChange(option)
+    closeMenu()
+  }
+
+  function handleKeyDown(event: React.KeyboardEvent<HTMLDivElement>): void {
+    if (!open) return
+    if (event.key === 'Escape') {
+      event.preventDefault()
+      event.stopPropagation()
+      closeMenu()
+      return
+    }
+    if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+      event.preventDefault()
+      if (filteredOptions.length === 0) return
+      const direction = event.key === 'ArrowDown' ? 1 : -1
+      setActiveIndex(
+        (current) =>
+          (current + direction + filteredOptions.length) % filteredOptions.length
+      )
+      return
+    }
+    if (event.key === 'Home' || event.key === 'End') {
+      event.preventDefault()
+      if (filteredOptions.length === 0) return
+      setActiveIndex(event.key === 'Home' ? 0 : filteredOptions.length - 1)
+      return
+    }
+    if (event.key === 'Enter' && filteredOptions.length > 0) {
+      event.preventDefault()
+      chooseParent(filteredOptions[activeIndex] ?? null)
+    }
+  }
+
+  return (
+    <div
+      className={`group-parent-picker${open ? ' is-open' : ''}`}
+      onKeyDown={handleKeyDown}
+    >
+      <button
+        ref={triggerRef}
+        type="button"
+        className="group-parent-picker__trigger"
+        onClick={() => (open ? closeMenu(false) : openMenu())}
+        onKeyDown={(event) => {
+          if (!open && (event.key === 'ArrowDown' || event.key === 'ArrowUp')) {
+            event.preventDefault()
+            openMenu()
+          }
+        }}
+        aria-haspopup="listbox"
+        aria-expanded={open}
+        aria-controls={open ? listboxId : undefined}
+        aria-labelledby="group-parent-label"
+      >
+        <span>{selectedLabel}</span>
+        <ChevronDown size={14} aria-hidden="true" />
+      </button>
+      {open && (
+        <div className="group-parent-picker__menu">
+          <label className="group-parent-picker__search">
+            <Search size={13} aria-hidden="true" />
+            <input
+              ref={searchRef}
+              value={query}
+              data-app-search
+              data-app-search-priority={40}
+              aria-keyshortcuts="Control+F"
+              onChange={(event) => {
+                setQuery(event.target.value)
+                setActiveIndex(0)
+              }}
+              placeholder={tr('搜索父级分组', 'Search parent groups', '搜尋父群組')}
+              aria-label={tr('搜索父级分组', 'Search parent groups', '搜尋父群組')}
+              autoComplete="off"
+            />
+          </label>
+          <div
+            ref={listRef}
+            id={listboxId}
+            className="group-parent-picker__options"
+            role="listbox"
+            aria-labelledby="group-parent-label"
+            aria-activedescendant={
+              filteredOptions.length > 0
+                ? `${listboxId}-option-${activeIndex}`
+                : undefined
+            }
+            tabIndex={-1}
+          >
+            {filteredOptions.map((option, index) => {
+              const optionPath = option?.actualName ?? ''
+              const isSelected = optionPath === selectedPath
+              return (
+                <button
+                  type="button"
+                  role="option"
+                  id={`${listboxId}-option-${index}`}
+                  data-parent-option-index={index}
+                  className={`group-parent-picker__option${
+                    index === activeIndex ? ' is-active' : ''
+                  }${isSelected ? ' is-selected' : ''}`}
+                  key={option?.key ?? '__top-level__'}
+                  aria-selected={isSelected}
+                  tabIndex={-1}
+                  onPointerEnter={() => setActiveIndex(index)}
+                  onClick={() => chooseParent(option)}
+                >
+                  <span>
+                    {option?.actualName ??
+                      tr(
+                        '无（一级分组）',
+                        'None (top-level group)',
+                        '無（第一層分組）'
+                      )}
+                  </span>
+                  {isSelected && <Check size={13} aria-hidden="true" />}
+                </button>
+              )
+            })}
+            {filteredOptions.length === 0 && (
+              <p className="group-parent-picker__empty">
+                {tr('没有匹配的分组', 'No matching groups', '沒有相符的群組')}
+              </p>
+            )}
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
 function AccountListRow({
   account,
   bookmark,
@@ -5581,6 +6600,7 @@ function AccountListRow({
   onShiftSelect,
   onEdit,
   onContextMenu,
+  onMore,
   onLogin
 }: {
   account: AccountWithSite
@@ -5595,16 +6615,18 @@ function AccountListRow({
   onShiftSelect?: () => void
   onEdit: () => void
   onContextMenu: (event: React.MouseEvent<HTMLElement>) => void
+  onMore: (event: React.MouseEvent<HTMLButtonElement>) => void
   onLogin: () => void
 }): React.JSX.Element {
   const actionLabel = bookmark
     ? tr('访问', 'Visit', '造訪')
     : tr('登录', 'Sign in', '登入')
+  const rowClickHandledRef = useRef(false)
 
   return (
     <article
       className={`account-row${checked ? ' is-selected' : ''}`}
-      style={{ '--row-index': index } as React.CSSProperties}
+      style={{ '--row-index': Math.min(index, 8) } as React.CSSProperties}
       title={tr(
         '双击编辑，右键查看更多操作',
         'Double-click to edit, right-click for more actions',
@@ -5614,17 +6636,26 @@ function AccountListRow({
         if (event.target instanceof Element && event.target.closest('button, input, label')) {
           return
         }
+        if (rowClickHandledRef.current) {
+          rowClickHandledRef.current = false
+          onToggleSelection?.(false)
+        }
         onEdit()
       }}
       onClick={(event) => {
         if (
-          !event.shiftKey ||
-          (event.target instanceof Element && event.target.closest('button, input, label'))
+          event.target instanceof Element &&
+          event.target.closest('button, input, label')
         ) {
+          rowClickHandledRef.current = false
+          return
+        }
+        if (event.detail > 1) {
           return
         }
         event.preventDefault()
-        onShiftSelect?.()
+        rowClickHandledRef.current = true
+        onToggleSelection?.(event.shiftKey)
       }}
       onContextMenu={onContextMenu}
     >
@@ -5647,6 +6678,9 @@ function AccountListRow({
           <div className="account-name-line">
             <strong>{account.site.name}</strong>
           </div>
+          <small className="account-site-domain" title={account.site.startUrl}>
+            {siteDomain(account.site.startUrl)}
+          </small>
         </div>
       </div>
       <div
@@ -5656,7 +6690,6 @@ function AccountListRow({
         data-column-key="username"
         style={{ order: accountColumnOrderStyle(columnOrder, 'username') }}
       >
-        <UserRound size={14} />
         <strong>{account.username}</strong>
       </div>
       <div
@@ -5666,7 +6699,6 @@ function AccountListRow({
         data-column-key="group"
         style={{ order: accountColumnOrderStyle(columnOrder, 'group') }}
       >
-        <Layers3 size={13} />
         <span>{displayGroup(account, tr)}</span>
       </div>
       <time
@@ -5695,7 +6727,7 @@ function AccountListRow({
         style={{ order: accountColumnOrderStyle(columnOrder, 'actions') }}
       >
         <button
-          className="row-login-button row-action-button--icon"
+          className="row-login-button"
           onClick={(event) => {
             event.stopPropagation()
             onLogin()
@@ -5703,7 +6735,21 @@ function AccountListRow({
           aria-label={actionLabel}
           title={actionLabel}
         >
-          {bookmark ? <Globe2 size={15} /> : <LogIn size={15} />}
+          {bookmark ? <Globe2 size={14} /> : <LogIn size={14} />}
+          <span>{actionLabel}</span>
+          <ArrowUpRight size={13} />
+        </button>
+        <button
+          type="button"
+          className="row-more-button"
+          onClick={(event) => {
+            event.stopPropagation()
+            onMore(event)
+          }}
+          aria-label={tr('更多操作', 'More actions', '更多操作')}
+          title={tr('更多操作', 'More actions', '更多操作')}
+        >
+          <MoreHorizontal size={16} />
         </button>
       </div>
     </article>
@@ -5745,12 +6791,16 @@ function EmptyState({
   title,
   description,
   action,
-  bookmark = false
+  bookmark = false,
+  eyebrow,
+  icon
 }: {
   title: string
   description: string
-  action: React.ReactNode
+  action?: React.ReactNode
   bookmark?: boolean
+  eyebrow?: string
+  icon?: React.ReactNode
 }): React.JSX.Element {
   return (
     <div className="empty-state">
@@ -5758,7 +6808,9 @@ function EmptyState({
         <span />
         <span />
         <span>
-          {bookmark ? (
+          {icon ? (
+            icon
+          ) : bookmark ? (
             <Bookmark size={27} strokeWidth={1.6} />
           ) : (
             <KeyRound size={27} strokeWidth={1.6} />
@@ -5766,7 +6818,7 @@ function EmptyState({
         </span>
       </div>
       <span className="eyebrow">
-        {bookmark ? 'IMPORT YOUR BOOKMARKS' : 'YOUR FIRST LOGIN'}
+        {eyebrow ?? (bookmark ? 'IMPORT YOUR BOOKMARKS' : 'YOUR FIRST LOGIN')}
       </span>
       <h2>{title}</h2>
       <p>{description}</p>
@@ -5890,16 +6942,23 @@ function DatabaseWorkspaceEmptyState({
 
 function CompactEmptyState({
   title,
-  description
+  description,
+  icon,
+  actions,
+  className = ''
 }: {
   title: string
   description: string
+  icon?: React.ReactNode
+  actions?: React.ReactNode
+  className?: string
 }): React.JSX.Element {
   return (
-    <div className="empty-state empty-state--compact">
-      <Globe2 size={26} />
+    <div className={`empty-state empty-state--compact ${className}`.trim()}>
+      {icon ?? <Globe2 size={26} />}
       <h2>{title}</h2>
       <p>{description}</p>
+      {actions ? <div className="empty-state__actions">{actions}</div> : null}
     </div>
   )
 }
@@ -5924,6 +6983,10 @@ function groupKeyFor(account: AccountWithSite): string {
 
 function displayGroup(account: AccountWithSite, tr: Translate): string {
   return account.site.group?.trim() || tr('未分组', 'Ungrouped', '未分組')
+}
+
+function trashGroupKey(account: DeletedAccountWithSite): string {
+  return account.site.group?.trim() || '__ungrouped__'
 }
 
 

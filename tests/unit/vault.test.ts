@@ -1,4 +1,10 @@
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import {
+  existsSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync
+} from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
@@ -16,6 +22,17 @@ function createManager(): { manager: VaultManager; directory: string; onLocked: 
 function addDemoAccount(manager: VaultManager): void {
   const data = manager.requireData()
   const now = new Date().toISOString()
+  if (!data.tabs.some((tab) => tab.id === 'local')) {
+    data.tabs.push({
+      id: 'local',
+      name: '本地数据库',
+      color: '#5C6BFF',
+      source: 'local',
+      hidden: false,
+      createdAt: now,
+      updatedAt: now
+    })
+  }
   data.sites.push({
     id: 'site-1',
     tabId: 'local',
@@ -35,6 +52,7 @@ function addDemoAccount(manager: VaultManager): void {
     password: 'never-write-this-in-plaintext',
     favorite: true,
     loginStrategy: 'auto',
+    loginBrowser: 'standalone',
     createdAt: now,
     updatedAt: now
   })
@@ -51,6 +69,7 @@ describe('VaultManager', () => {
   it('creates, encrypts, locks and unlocks a vault', async () => {
     const { manager, onLocked } = createManager()
     await manager.create('correct horse battery staple')
+    expect(manager.requireData().tabs).toEqual([])
     addDemoAccount(manager)
     manager.save()
 
@@ -74,6 +93,19 @@ describe('VaultManager', () => {
     await expect(manager.unlock('not the right password')).rejects.toMatchObject({
       code: 'WRONG_PASSWORD'
     })
+  })
+
+  it('saves interactively through asynchronous file I/O', async () => {
+    const { manager } = createManager()
+    await manager.create('correct horse battery staple')
+    addDemoAccount(manager)
+    manager.requireData().accounts[0]!.label = '异步保存'
+
+    await manager.saveAsync()
+    manager.lock()
+    await manager.unlock('correct horse battery staple')
+
+    expect(manager.requireData().accounts[0]?.label).toBe('异步保存')
   })
 
   it('recovers from the encrypted backup when the primary file is damaged', async () => {
@@ -144,12 +176,48 @@ describe('VaultManager', () => {
 
     await manager.unlock('correct horse battery staple')
     expect(manager.requireData().tabs).toEqual([
-      expect.objectContaining({ id: 'local', name: '本地账号', source: 'local' })
+      expect.objectContaining({ id: 'local', name: '本地数据库', source: 'local' })
     ])
     expect(manager.requireData().accounts[0]).toMatchObject({
       tabId: 'local',
       sortOrder: 0
     })
+  })
+
+  it('keeps the tab list empty after lock and unlock', async () => {
+    const { manager } = createManager()
+    await manager.create('correct horse battery staple')
+    expect(manager.requireData().tabs).toEqual([])
+
+    manager.lock()
+    await manager.unlock('correct horse battery staple')
+
+    expect(manager.requireData().tabs).toEqual([])
+  })
+
+  it('removes an empty legacy local tab when its database file is missing', async () => {
+    const { manager, directory } = createManager()
+    await manager.create('correct horse battery staple')
+    const now = new Date().toISOString()
+    manager.requireData().tabs.push({
+      id: 'local',
+      name: '本地账号',
+      color: '#5C6BFF',
+      source: 'local',
+      databaseFileName: '本地账号.autologin',
+      hidden: false,
+      createdAt: now,
+      updatedAt: now
+    })
+    manager.save()
+
+    manager.lock()
+    await manager.unlock('correct horse battery staple')
+
+    expect(manager.requireData().tabs).toEqual([])
+    expect(existsSync(join(directory, 'tabs', 'autologin', '本地账号.autologin'))).toBe(
+      false
+    )
   })
 
   it('merges theme and scale updates without overwriting unrelated settings', async () => {
@@ -198,6 +266,7 @@ describe('VaultManager', () => {
         bypassList: 'localhost, 127.0.0.1, ::1',
         testUrl: 'https://www.google.com/'
       },
+      recordingDraftDirectory: '',
       groupOrder: [],
       groupOrders: {}
     })

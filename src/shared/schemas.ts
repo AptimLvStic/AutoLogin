@@ -6,6 +6,7 @@ import {
   APP_LANGUAGES,
   AUTO_LOCK_OPTIONS,
   COLOR_MODES,
+  CREDENTIAL_HISTORY_MAX_ENTRIES,
   DEFAULT_ACCOUNT_TAB_ID,
   DEFAULT_PROXY_TEST_URL,
   FONT_SIZE_SCALE_OPTIONS,
@@ -13,6 +14,7 @@ import {
   DEFAULT_TRASH_RETENTION_DAYS,
   INTERFACE_SCALE_MAX,
   INTERFACE_SCALE_MIN,
+  LOGIN_BROWSERS,
   LOGIN_STRATEGIES,
   PROXY_MODES,
   PROXY_PROTOCOLS,
@@ -74,7 +76,7 @@ const tabDatabaseFileNameSchema = z
 
 const defaultLocalTab = {
   id: DEFAULT_ACCOUNT_TAB_ID,
-  name: '本地账号',
+  name: '本地数据库',
   color: ACCOUNT_TAB_COLORS[0],
   source: 'local' as const,
   hidden: false,
@@ -128,6 +130,17 @@ export const recipeStepSchema = z.discriminatedUnion('type', [
     id: z.string().min(1),
     type: z.literal('focusChallenge'),
     selector: selectorSpecSchema.optional()
+  }),
+  z.object({
+    id: z.string().min(1),
+    type: z.literal('paste'),
+    selector: selectorSpecSchema,
+    source: z.enum(['username', 'password', 'literal'])
+  }),
+  z.object({
+    id: z.string().min(1),
+    type: z.literal('acceptCertWarning'),
+    optional: z.literal(true)
   })
 ])
 
@@ -189,8 +202,22 @@ export const storedAccountSchema = z.object({
   label: z.string().min(1).max(80),
   username: z.string().max(320),
   password: z.string().max(2048),
+  credentialHistory: z
+    .array(
+      z.object({
+        id: idSchema,
+        username: z.string().max(320),
+        password: z.string().max(2048),
+        validFrom: z.string(),
+        validUntil: z.string()
+      })
+    )
+    .max(CREDENTIAL_HISTORY_MAX_ENTRIES)
+    .default([]),
+  credentialUpdatedAt: z.string().optional(),
   favorite: z.boolean(),
   loginStrategy: z.enum(LOGIN_STRATEGIES).default('auto'),
+  loginBrowser: z.enum(LOGIN_BROWSERS).default('standalone'),
   manualSelectors: manualLoginSelectorsSchema.optional(),
   manualSteps: z.array(recipeStepSchema).max(30).optional(),
   recipes: z.array(accountRecipeSchema).max(3).default([]),
@@ -294,6 +321,7 @@ export const appSettingsSchema = z.object({
   accountCopyShortcutEnabled: z.boolean().default(false),
   accountCopyShortcut: z.string().trim().min(1).max(40).default('Ctrl+C'),
   proxy: proxySettingsSchema.default(defaultProxySettings),
+  recordingDraftDirectory: z.string().trim().max(4096).default(''),
   groupOrder: groupOrderSchema.default([]),
   groupOrders: z.record(z.string(), groupOrderSchema).default({})
 })
@@ -313,6 +341,7 @@ export const appSettingsPatchSchema = z
     accountCopyShortcutEnabled: z.boolean().optional(),
     accountCopyShortcut: z.string().trim().min(1).max(40).optional(),
     proxy: proxySettingsSchema.optional(),
+    recordingDraftDirectory: z.string().trim().max(4096).optional(),
     groupOrder: groupOrderSchema.optional(),
     groupOrders: z.record(z.string(), groupOrderSchema).optional()
   })
@@ -397,6 +426,7 @@ export const accountCreateInputSchema = z.object({
   password: z.string().max(2048),
   favorite: z.boolean().optional(),
   loginStrategy: z.enum(LOGIN_STRATEGIES).optional(),
+  loginBrowser: z.enum(LOGIN_BROWSERS).optional(),
   manualSelectors: manualLoginSelectorsSchema.optional(),
   manualSteps: z.array(recipeStepSchema).max(30).optional()
 })
@@ -408,6 +438,7 @@ export const accountUpdateInputSchema = z.object({
   favorite: z.boolean().optional(),
   activeRecipeId: idSchema.optional(),
   loginStrategy: z.enum(LOGIN_STRATEGIES).optional(),
+  loginBrowser: z.enum(LOGIN_BROWSERS).optional(),
   manualSelectors: manualLoginSelectorsSchema.optional(),
   manualSteps: z.array(recipeStepSchema).max(30).optional()
 })
@@ -428,6 +459,7 @@ export const accountBatchStrategyInputSchema = z
       .max(500)
       .refine((ids) => new Set(ids).size === ids.length, '账号标识不能重复'),
     loginStrategy: z.enum(LOGIN_STRATEGIES),
+    loginBrowser: z.enum(LOGIN_BROWSERS).optional(),
     manualSelectors: manualLoginSelectorsSchema.optional(),
     manualSteps: z.array(recipeStepSchema).max(30).optional()
   })
@@ -490,7 +522,23 @@ export const loginStartSchema = z.object({
   mode: z.enum(['login', 'record'])
 })
 
+export const loginFinishRecordingSchema = z
+  .object({
+    name: z.string().trim().min(1).max(60).optional()
+  })
+  .strict()
+  .optional()
+
 export const loginBatchStartSchema = z.array(idSchema).min(1).max(500)
+
+export const embeddedBrowserBoundsSchema = z
+  .object({
+    x: z.number().finite().min(-100_000).max(100_000),
+    y: z.number().finite().min(-100_000).max(100_000),
+    width: z.number().finite().min(1).max(100_000),
+    height: z.number().finite().min(1).max(100_000)
+  })
+  .strict()
 
 export const selectorTestInputSchema = z
   .object({

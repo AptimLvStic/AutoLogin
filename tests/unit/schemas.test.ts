@@ -13,12 +13,22 @@ import {
   groupMoveInputSchema,
   groupRenameInputSchema,
   masterPasswordSchema,
+  recipeStepSchema,
   siteInputSchema,
   storedAccountSchema
 } from '../../src/shared/schemas'
-import { DEFAULT_PROXY_SETTINGS } from '../../src/shared/theme'
+import {
+  DEFAULT_PROXY_SETTINGS,
+  interfaceScaleToZoom
+} from '../../src/shared/theme'
 
 describe('shared input schemas', () => {
+  it('maps the default 110 scale setting to the 90% visual baseline', () => {
+    expect(interfaceScaleToZoom(110)).toBeCloseTo(0.9)
+    expect(interfaceScaleToZoom(115)).toBeCloseTo(0.95)
+    expect(interfaceScaleToZoom(125)).toBeCloseTo(1.05)
+  })
+
   it('accepts only http and https site URLs', () => {
     expect(
       siteInputSchema.safeParse({
@@ -32,6 +42,36 @@ describe('shared input schemas', () => {
         name: 'Unsafe site',
         startUrl: 'javascript:alert(1)',
         autoSubmit: true
+      }).success
+    ).toBe(false)
+  })
+
+  it('keeps paste and certificate steps credential-free', () => {
+    const paste = recipeStepSchema.parse({
+      id: 'paste-1',
+      type: 'paste',
+      selector: { candidates: ['#password'] },
+      source: 'password',
+      value: 'must-not-be-stored'
+    })
+    expect(paste).toEqual({
+      id: 'paste-1',
+      type: 'paste',
+      selector: { candidates: ['#password'] },
+      source: 'password'
+    })
+    expect(
+      recipeStepSchema.safeParse({
+        id: 'cert-1',
+        type: 'acceptCertWarning',
+        optional: true
+      }).success
+    ).toBe(true)
+    expect(
+      recipeStepSchema.safeParse({
+        id: 'cert-2',
+        type: 'acceptCertWarning',
+        optional: false
       }).success
     ).toBe(false)
   })
@@ -84,6 +124,7 @@ describe('shared input schemas', () => {
         bypassList: 'localhost, 127.0.0.1, ::1',
         testUrl: 'https://www.google.com/'
       },
+      recordingDraftDirectory: '',
       groupOrder: [],
       groupOrders: {}
     })
@@ -146,6 +187,21 @@ describe('shared input schemas', () => {
     }))
     expect(storedAccountSchema.safeParse({ ...base, recipes: flows.slice(0, 3) }).success).toBe(true)
     expect(storedAccountSchema.safeParse({ ...base, recipes: flows }).success).toBe(false)
+    expect(
+      storedAccountSchema.safeParse({
+        ...base,
+        credentialUpdatedAt: now,
+        credentialHistory: [
+          {
+            id: 'credential-1',
+            username: 'previous-user',
+            password: 'secret-password',
+            validFrom: now,
+            validUntil: now
+          }
+        ]
+      }).success
+    ).toBe(true)
   })
 
   it('validates group actions and account batch inputs', () => {

@@ -53,6 +53,7 @@ function account(id: string, tabId: string, siteId: string): StoredAccount {
     password: 'secret',
     favorite: false,
     loginStrategy: 'auto',
+    loginBrowser: 'standalone',
     createdAt: now,
     updatedAt: now
   }

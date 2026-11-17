@@ -9,7 +9,7 @@ import { ProxyAgent, fetch as undiciFetch } from 'undici'
 declare global {
   namespace NodeJS {
     interface Process {
-      resourcesPath: string
+      readonly resourcesPath: string
     }
   }
 }
@@ -43,10 +43,17 @@ interface WireEvent {
 interface WireControl {
   type: 'control'
   action: string
+  requestId?: number
   payload?: unknown
 }
 
 type WireMessage = WireEvent | WireControl
+
+interface PendingNativeRequest {
+  resolve: (value: unknown) => void
+  reject: (error: Error) => void
+  timer: NodeJS.Timeout
+}
 
 interface UpdateProgress {
   transferred: number
@@ -87,6 +94,8 @@ const appListeners = new Map<string, Set<WindowEventListener>>()
 const ipcHandlers = new Map<string, IpcHandler>()
 const ipcEventListeners = new Map<string, Set<IpcEventListener>>()
 const windows: BrowserWindow[] = []
+const pendingNativeRequests = new Map<number, PendingNativeRequest>()
+let nextNativeRequestId = 1
 
 Object.defineProperty(process, 'resourcesPath', {
   value: resourcesPath,
@@ -102,8 +111,45 @@ export function emitBackendEvent(channel: string, payload: unknown): void {
   writeWire({ type: 'event', channel, payload })
 }
 
-function emitControl(action: string, payload?: unknown): void {
-  writeWire({ type: 'control', action, payload })
+function emitControl(action: string, payload?: unknown, requestId?: number): void {
+  writeWire({ type: 'control', action, requestId, payload })
+}
+
+export function requestNative<T = unknown>(
+  action: string,
+  payload?: unknown,
+  timeoutMilliseconds = 20_000
+): Promise<T> {
+  const requestId = nextNativeRequestId++
+  return new Promise<T>((resolve, reject) => {
+    const timer = setTimeout(() => {
+      pendingNativeRequests.delete(requestId)
+      reject(new Error('本地页面操作超时，请重试'))
+    }, timeoutMilliseconds)
+    timer.unref()
+    pendingNativeRequests.set(requestId, {
+      resolve: (value) => resolve(value as T),
+      reject,
+      timer
+    })
+    emitControl(action, payload, requestId)
+  })
+}
+
+export function resolveNativeRequest(
+  requestId: number,
+  result: unknown,
+  error?: string
+): void {
+  const pending = pendingNativeRequests.get(requestId)
+  if (!pending) return
+  pendingNativeRequests.delete(requestId)
+  clearTimeout(pending.timer)
+  if (error) {
+    pending.reject(new Error(error))
+  } else {
+    pending.resolve(result)
+  }
 }
 
 function trustedEvent(): IpcMainInvokeEvent {
@@ -140,7 +186,7 @@ export function backendHandlerCount(): number {
   return ipcHandlers.size
 }
 
-interface AppShim {
+interface AppRuntime {
   isPackaged: boolean
   commandLine: {
     appendSwitch: (name: string, value?: string) => void
@@ -153,13 +199,13 @@ interface AppShim {
   getAppPath: () => string
   getPath: (name: string) => string
   setPath: (name: string, value: string) => void
-  on: (event: string, listener: WindowEventListener) => AppShim
+  on: (event: string, listener: WindowEventListener) => AppRuntime
   relaunch: () => void
   quit: () => void
   exit: (code?: number) => void
 }
 
-export const app: AppShim = {
+export const app: AppRuntime = {
   isPackaged,
   commandLine: {
     appendSwitch: (_name: string, _value?: string): void => undefined
@@ -186,7 +232,7 @@ export const app: AppShim = {
   setPath: (name: string, value: string): void => {
     configuredPaths.set(name, resolve(value))
   },
-  on: (event: string, listener: WindowEventListener): AppShim => {
+  on: (event: string, listener: WindowEventListener): AppRuntime => {
     const listeners = appListeners.get(event) ?? new Set<WindowEventListener>()
     listeners.add(listener)
     appListeners.set(event, listeners)
@@ -378,6 +424,21 @@ $requestJson = [Text.Encoding]::UTF8.GetString(
 )
 $request = $requestJson | ConvertFrom-Json
 
+function Set-DialogDefaultPath($dialog, $defaultPath) {
+  if (-not $defaultPath) {
+    return
+  }
+  $path = [string]$defaultPath
+  $directory = [IO.Path]::GetDirectoryName($path)
+  $fileName = [IO.Path]::GetFileName($path)
+  if ($directory -and (Test-Path -LiteralPath $directory)) {
+    $dialog.InitialDirectory = $directory
+  }
+  if ($fileName) {
+    $dialog.FileName = $fileName
+  }
+}
+
 try {
   $owner = New-Object Windows.Forms.Form
   $owner.Text = [string]$request.title
@@ -444,26 +505,26 @@ try {
     $dialog.Filter = $filterText
     $dialog.OverwritePrompt = $true
     $dialog.AddExtension = $true
-    if ($request.defaultPath) {
-      $dialog.FileName = [string]$request.defaultPath
-    }
+    Set-DialogDefaultPath $dialog ([string]$request.defaultPath)
     $result = $dialog.ShowDialog($owner)
     if ($result -eq [Windows.Forms.DialogResult]::OK) {
-      $paths = @([string]$dialog.FileName)
+      $filePath = [string]$dialog.FileName
+      $paths = @($filePath)
       $canceled = $false
     } else {
+      $filePath = $null
       $paths = @()
       $canceled = $true
     }
+    Write-DialogResult @{ canceled = $canceled; filePath = $filePath; filePaths = $paths }
+    exit 0
   } else {
     $dialog = New-Object Windows.Forms.OpenFileDialog
     $dialog.Title = [string]$request.title
     $dialog.Filter = $filterText
     $dialog.Multiselect = (@($request.properties) -contains 'multiSelections')
     $dialog.CheckFileExists = $true
-    if ($request.defaultPath) {
-      $dialog.FileName = [string]$request.defaultPath
-    }
+    Set-DialogDefaultPath $dialog ([string]$request.defaultPath)
     $result = $dialog.ShowDialog($owner)
     if ($result -eq [Windows.Forms.DialogResult]::OK) {
       $paths = @($dialog.FileNames)
@@ -589,10 +650,17 @@ export const dialog = {
       'save',
       normalizeDialogArgs(first, second)
     )) as DialogResult
+    const filePaths = Array.isArray(result.filePaths) ? result.filePaths : []
+    const filePath =
+      typeof result.filePath === 'string'
+        ? result.filePath
+        : typeof filePaths[0] === 'string'
+          ? filePaths[0]
+          : undefined
     return {
       canceled: Boolean(result.canceled),
-      ...(result.filePath ? { filePath: result.filePath } : {}),
-      filePaths: Array.isArray(result.filePaths) ? result.filePaths : []
+      ...(filePath ? { filePath } : {}),
+      filePaths
     }
   },
   showMessageBox: async (
@@ -749,7 +817,7 @@ async function readWindowsSystemProxy(): Promise<string | null> {
   return /^[a-z]+:\/\//i.test(hostPort) ? hostPort : `http://${hostPort}`
 }
 
-class ShimSession {
+class BackendSession {
   private proxy: ProxyConfiguration = { mode: 'system' }
 
   setProxy(configuration: ProxyConfiguration): Promise<void> {
@@ -786,11 +854,11 @@ class ShimSession {
   }
 }
 
-const defaultSession = new ShimSession()
+const defaultSession = new BackendSession()
 
 export const session = {
   defaultSession,
-  fromPartition: (_partition: string): ShimSession => new ShimSession()
+  fromPartition: (_partition: string): BackendSession => new BackendSession()
 }
 
 export const net = {
@@ -836,7 +904,7 @@ function feedDownloadUrl(feed: UpdateFeed, entry: LatestFeedEntry): string {
   return `https://github.com/${feed.owner}/${feed.repo}/releases/download/v${entry.version}/${entry.fileName}`
 }
 
-class ShimAutoUpdater extends EventEmitter {
+class BackendAutoUpdater extends EventEmitter {
   autoDownload = false
   autoInstallOnAppQuit = true
   allowDowngrade = false
@@ -949,7 +1017,15 @@ class ShimAutoUpdater extends EventEmitter {
   }
 }
 
-export const autoUpdater = new ShimAutoUpdater()
+export const autoUpdater = new BackendAutoUpdater()
+
+export class CancellationToken {
+  cancelled = false
+
+  cancel(): void {
+    this.cancelled = true
+  }
+}
 
 void basename
 void dirname

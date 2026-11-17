@@ -16,12 +16,17 @@ export const INTERFACE_SCALE_DISPLAY_MIN =
   INTERFACE_SCALE_MIN - INTERFACE_SCALE_DISPLAY_OFFSET
 export const INTERFACE_SCALE_DISPLAY_MAX =
   INTERFACE_SCALE_MAX - INTERFACE_SCALE_DISPLAY_OFFSET
+export const INTERFACE_SCALE_VISUAL_OFFSET = 10
+export const INTERFACE_SCALE_ZOOM_MIN =
+  (INTERFACE_SCALE_DISPLAY_MIN - INTERFACE_SCALE_VISUAL_OFFSET) / 100
+export const INTERFACE_SCALE_ZOOM_MAX =
+  (INTERFACE_SCALE_DISPLAY_MAX - INTERFACE_SCALE_VISUAL_OFFSET) / 100
 
 export const DEFAULT_THEME_COLORS: ThemeColors = {
   background: '#F7F8FA',
   surface: '#FFFFFF',
   text: '#1F2328',
-  accent: '#5C6BFF'
+  accent: '#4A55E0'
 }
 
 export const DEFAULT_PROXY_SETTINGS: ProxySettings = {
@@ -46,6 +51,7 @@ export const DEFAULT_APP_SETTINGS: AppSettings = {
   accountCopyShortcutEnabled: false,
   accountCopyShortcut: 'Ctrl+C',
   proxy: DEFAULT_PROXY_SETTINGS,
+  recordingDraftDirectory: '',
   groupOrder: [],
   groupOrders: {}
 }
@@ -66,6 +72,17 @@ export function interfaceScaleDisplayToActual(displayScale: number): number {
   )
 }
 
+export function interfaceScaleToZoom(actualScale: number): number {
+  const displayScale = interfaceScaleActualToDisplay(actualScale)
+  return Math.min(
+    INTERFACE_SCALE_ZOOM_MAX,
+    Math.max(
+      INTERFACE_SCALE_ZOOM_MIN,
+      (displayScale - INTERFACE_SCALE_VISUAL_OFFSET) / 100
+    )
+  )
+}
+
 interface ThemePresetDefinition {
   label: string
   colors: ThemeColors
@@ -79,7 +96,7 @@ export const THEME_PRESETS: Record<Exclude<ThemePreset, 'custom'>, ThemePresetDe
       background: '#FFFFFF',
       surface: '#F7F8FA',
       text: '#1F2328',
-      accent: '#5C6BFF'
+      accent: '#4A55E0'
     },
     darkColors: {
       background: '#151619',

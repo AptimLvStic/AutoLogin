@@ -1,18 +1,20 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import {
   Check,
-  ChevronRight,
+  CircleCheck,
+  CircleX,
+  Clock3,
   Eye,
   FileText,
+  Hand,
   LoaderCircle,
   RefreshCw,
+  RotateCcw,
   SearchX,
   TriangleAlert,
   Trash2
 } from 'lucide-react'
 import type {
-  AccountWithSite,
-  GroupDefinition,
   LoginLogEntry,
   Site
 } from '@shared/types'
@@ -22,7 +24,19 @@ import {
   type LogPageSize
 } from './LogPagination'
 import { LogsTabs, type LogView } from './LogsTabs'
+import { CollectionPageHeader } from './CollectionPageHeader'
 import { ConfirmDialog, Modal } from './Modal'
+import { PageActionMenu } from './PageActionMenu'
+import {
+  emptyLogDateRange,
+  LogDateFilter,
+  matchesLogDateRange
+} from './LogDateFilter'
+import {
+  CollectionSearchField,
+  useCollectionSearch
+} from './CollectionSearchField'
+import { CollectionFilterSelect } from './CollectionFilterSelect'
 import {
   useResizableColumns,
   type TableColumnDefinition
@@ -31,8 +45,7 @@ import {
 type LogStatusFilter = 'all' | LoginLogEntry['status']
 type LoginLogColumnKey =
   | 'status'
-  | 'account'
-  | 'site'
+  | 'identity'
   | 'group'
   | 'details'
   | 'time'
@@ -42,14 +55,10 @@ const MAX_DELETE_COUNT = 100
 
 export function LoginLogsPage({
   sites,
-  accounts,
-  groups,
   notify,
   onNavigate
 }: {
   sites: Site[]
-  accounts: AccountWithSite[]
-  groups: GroupDefinition[]
   notify: (kind: 'success' | 'error' | 'info', message: string) => void
   onNavigate: (view: LogView) => void
 }): React.JSX.Element {
@@ -58,10 +67,17 @@ export function LoginLogsPage({
   const [loading, setLoading] = useState(true)
   const [loadError, setLoadError] = useState('')
   const [openingRawLog, setOpeningRawLog] = useState(false)
-  const [date, setDate] = useState('')
+  const {
+    searchInput,
+    search,
+    searchRef,
+    setSearchInput,
+    clearSearch
+  } = useCollectionSearch(language)
+  const [dateRange, setDateRange] = useState(emptyLogDateRange)
   const [siteId, setSiteId] = useState('all')
-  const [groupName, setGroupName] = useState('all')
   const [status, setStatus] = useState<LogStatusFilter>('all')
+  const [moreOpen, setMoreOpen] = useState(false)
   const [pageSize, setPageSize] = useState<LogPageSize>(20)
   const [page, setPage] = useState(1)
   const [selectedIds, setSelectedIds] = useState<Set<string>>(() => new Set())
@@ -75,23 +91,16 @@ export function LoginLogsPage({
       {
         key: 'status',
         label: tr('状态', 'Status', '狀態'),
-        track: 'minmax(64px, 0.55fr)',
-        defaultWidth: 72,
-        minWidth: 58
+        track: 'minmax(92px, 0.65fr)',
+        defaultWidth: 96,
+        minWidth: 86
       },
       {
-        key: 'account',
-        label: tr('账号', 'Account', '帳號'),
-        track: 'minmax(96px, 0.9fr)',
-        defaultWidth: 120,
-        minWidth: 80
-      },
-      {
-        key: 'site',
-        label: tr('站点', 'Site', '站點'),
-        track: 'minmax(96px, 0.9fr)',
-        defaultWidth: 120,
-        minWidth: 80
+        key: 'identity',
+        label: tr('站点 / 账号', 'Site / Account', '站點 / 帳號'),
+        track: 'minmax(180px, 1.45fr)',
+        defaultWidth: 220,
+        minWidth: 150
       },
       {
         key: 'group',
@@ -117,9 +126,9 @@ export function LoginLogsPage({
       {
         key: 'action',
         label: tr('操作', 'Action', '操作'),
-        track: '92px',
-        defaultWidth: 92,
-        minWidth: 72,
+        track: '44px',
+        defaultWidth: 44,
+        minWidth: 40,
         hideable: false
       }
     ],
@@ -176,25 +185,23 @@ export function LoginLogsPage({
     [language, sites]
   )
 
-  const groupOptions = useMemo(() => {
-    const names = new Set<string>()
-    for (const group of groups) {
-      if (group.path.trim()) names.add(group.path.trim())
-    }
-    for (const site of sites) {
-      if (site.group?.trim()) names.add(site.group.trim())
-    }
-    for (const account of accounts) {
-      if (account.site.group?.trim()) names.add(account.site.group.trim())
-    }
-    return [...names].sort((left, right) => left.localeCompare(right, language))
-  }, [accounts, groups, language, sites])
-
   const selectedSite = sites.find((site) => site.id === siteId)
+  const normalizedSearch = search.trim().toLocaleLowerCase(language)
   const filtered = useMemo(
     () =>
       entries.filter((entry) => {
-        if (date && localDateKey(entry.timestamp) !== date) return false
+        if (normalizedSearch) {
+          const haystack = [
+            entry.siteName,
+            entry.accountLabel,
+            entry.groupName,
+            entry.reason
+          ]
+            .join(' ')
+            .toLocaleLowerCase(language)
+          if (!haystack.includes(normalizedSearch)) return false
+        }
+        if (!matchesLogDateRange(entry.timestamp, dateRange)) return false
         if (
           selectedSite &&
           entry.siteId !== selectedSite.id &&
@@ -202,18 +209,17 @@ export function LoginLogsPage({
         ) {
           return false
         }
-        if (groupName !== 'all' && entry.groupName !== groupName) return false
         if (status !== 'all' && entry.status !== status) return false
         return true
       }),
-    [date, entries, groupName, selectedSite, status]
+    [dateRange, entries, language, normalizedSearch, selectedSite, status]
   )
 
   const pageCount = Math.max(1, Math.ceil(filtered.length / pageSize))
   const currentPage = Math.min(page, pageCount)
   const visible = filtered.slice((currentPage - 1) * pageSize, currentPage * pageSize)
   const tableColumns = useResizableColumns({
-    storageKey: 'autologin.loginLogs.columns',
+    storageKey: 'autologin.loginLogs.columns.v2',
     columns: logColumns,
     tableRef: logTableRef,
     headerSelector: '.log-table__header',
@@ -227,7 +233,7 @@ export function LoginLogsPage({
 
   useEffect(() => {
     setPage(1)
-  }, [date, groupName, pageSize, siteId, status])
+  }, [dateRange, pageSize, search, siteId, status])
 
   useEffect(() => {
     if (!selectAllRef.current) return
@@ -353,23 +359,18 @@ export function LoginLogsPage({
       return (
         <span data-column-key={key} key={key}>
           <span className={`log-status is-${entry.status}`}>
+            <LoginStatusIcon status={entry.status} />
             {statusLabel(entry.status, tr)}
           </span>
         </span>
       )
     }
-    if (key === 'account') {
+    if (key === 'identity') {
       return (
-        <strong data-column-key={key} key={key}>
-          {entry.accountLabel}
-        </strong>
-      )
-    }
-    if (key === 'site') {
-      return (
-        <span data-column-key={key} key={key}>
-          {entry.siteName}
-        </span>
+        <div className="log-identity-cell" data-column-key={key} key={key}>
+          <strong title={entry.siteName}>{entry.siteName}</strong>
+          <span title={entry.accountLabel}>{entry.accountLabel}</span>
+        </div>
       )
     }
     if (key === 'group') {
@@ -381,7 +382,7 @@ export function LoginLogsPage({
     }
     if (key === 'details') {
       return (
-        <p data-column-key={key} key={key}>
+        <p data-column-key={key} key={key} title={entry.reason}>
           {entry.reason}
         </p>
       )
@@ -393,17 +394,21 @@ export function LoginLogsPage({
             month: '2-digit',
             day: '2-digit',
             hour: '2-digit',
-            minute: '2-digit',
-            second: '2-digit'
+            minute: '2-digit'
           })}
         </time>
       )
     }
     return (
-      <span data-column-key={key} key={key}>
-        <button className="text-button" onClick={() => setDetailEntry(entry)}>
+      <span className="log-action-cell" data-column-key={key} key={key}>
+        <button
+          type="button"
+          className="button button--ghost button--small button--icon-only"
+          onClick={() => setDetailEntry(entry)}
+          aria-label={tr('查看详情', 'View details', '查看詳情')}
+          title={tr('查看详情', 'View details', '查看詳情')}
+        >
           <Eye size={14} />
-          {tr('查看详情', 'View details', '查看詳情')}
         </button>
       </span>
     )
@@ -412,145 +417,181 @@ export function LoginLogsPage({
   return (
     <>
       <section className="page-section logs-page">
-        <nav className="page-breadcrumb" aria-label={tr('面包屑', 'Breadcrumb', '麵包屑')}>
-          <span>{tr('日志', 'Logs', '日誌')}</span>
-          <ChevronRight size={12} />
-          <h2>{tr('登录日志', 'Login history', '登入日誌')}</h2>
-        </nav>
-
-        <LogsTabs active="loginLogs" onChange={onNavigate} />
-
-        <div className="log-filters log-filters--login">
-          <label className="field">
-            <span className="field__label">{tr('日期', 'Date', '日期')}</span>
-            <input
-              className="filter-control"
-              type="date"
-              value={date}
-              onChange={(event) => setDate(event.target.value)}
-            />
-          </label>
-          <label className="field">
-            <span className="field__label">{tr('站点名称', 'Site', '站點名稱')}</span>
-            <select
-              className="filter-control"
-              value={siteId}
-              onChange={(event) => setSiteId(event.target.value)}
-            >
-              <option value="all">{tr('全部站点', 'All sites', '全部站點')}</option>
-              {siteOptions.map((site) => (
-                <option key={site.id} value={site.id}>
-                  {site.name}
-                </option>
-              ))}
-            </select>
-          </label>
-          <label className="field">
-            <span className="field__label">{tr('分组', 'Group', '分組')}</span>
-            <select
-              className="filter-control"
-              value={groupName}
-              onChange={(event) => setGroupName(event.target.value)}
-            >
-              <option value="all">{tr('全部分组', 'All groups', '全部分組')}</option>
-              {groupOptions.map((group) => (
-                <option key={group} value={group}>
-                  {group}
-                </option>
-              ))}
-            </select>
-          </label>
-          <label className="field">
-            <span className="field__label">{tr('状态', 'Status', '狀態')}</span>
-            <select
-              className="filter-control"
-              value={status}
-              onChange={(event) => setStatus(event.target.value as LogStatusFilter)}
-            >
-              <option value="all">{tr('全部状态', 'All statuses', '全部狀態')}</option>
-              <option value="success">{tr('成功', 'Success', '成功')}</option>
-              <option value="error">{tr('失败', 'Failed', '失敗')}</option>
-              <option value="timeout">{tr('超时', 'Timed out', '逾時')}</option>
-              <option value="manual">{tr('待人工处理', 'Manual action', '待人工處理')}</option>
-            </select>
-          </label>
-          <div className="log-filters__actions">
-            <button className="button button--soft" onClick={() => void load()} disabled={loading}>
-              {loading ? <LoaderCircle size={15} className="spin" /> : <RefreshCw size={15} />}
-              {tr('刷新', 'Refresh', '重新整理')}
-            </button>
-            <button
-              className="button button--ghost"
-              onClick={() => void openRawLog()}
-              disabled={openingRawLog}
-              aria-busy={openingRawLog}
-            >
-              {openingRawLog ? (
-                <LoaderCircle size={15} className="spin" />
-              ) : (
-                <FileText size={15} />
-              )}
-              {openingRawLog
-                ? tr('打开中…', 'Opening…', '開啟中…')
-                : tr('打开原始日志', 'Open raw log', '開啟原始日誌')}
-            </button>
-          </div>
-        </div>
-
-        <div className="log-bulk-bar">
-          <span>
-            {selectedIds.size > 0
-              ? tr(
-                  `已选择 ${selectedIds.size} 条`,
-                  `${selectedIds.size} selected`,
-                  `已選取 ${selectedIds.size} 筆`
-                )
-              : tr(
-                  `可勾选当前页，单次最多删除 ${MAX_DELETE_COUNT} 条`,
-                  `Select rows for deletion, up to ${MAX_DELETE_COUNT} at once.`,
-                  `可勾選目前頁，單次最多刪除 ${MAX_DELETE_COUNT} 筆`
-                )}
-          </span>
-          <div>
-            {selectedIds.size > 0 && (
-              <button className="text-button" onClick={() => setSelectedIds(new Set())}>
-                {tr('取消选择', 'Clear selection', '取消選取')}
+        <CollectionPageHeader
+          title={tr('登录日志', 'Login history', '登入日誌')}
+          actions={
+            <>
+              <button
+                className={`button button--ghost button--small${
+                  loading ? ' is-loading' : ''
+                }`}
+                onClick={() => void load()}
+                disabled={loading}
+                aria-busy={loading}
+              >
+                {loading ? <LoaderCircle size={15} className="spin" /> : <RefreshCw size={15} />}
+                {tr('刷新', 'Refresh', '重新整理')}
               </button>
-            )}
+              <PageActionMenu
+                open={moreOpen}
+                onOpenChange={setMoreOpen}
+                label={tr('更多登录日志操作', 'More login log actions', '更多登入日誌操作')}
+              >
+                <button
+                  type="button"
+                  role="menuitem"
+                  disabled={openingRawLog}
+                  onClick={() => {
+                    setMoreOpen(false)
+                    void openRawLog()
+                  }}
+                >
+                  {openingRawLog ? (
+                    <LoaderCircle size={15} className="spin" />
+                  ) : (
+                    <FileText size={15} />
+                  )}
+                  <span>
+                    {openingRawLog
+                      ? tr('打开中…', 'Opening…', '開啟中…')
+                      : tr('打开原始日志', 'Open raw log', '開啟原始日誌')}
+                  </span>
+                </button>
+              </PageActionMenu>
+            </>
+          }
+          tabs={<LogsTabs active="loginLogs" onChange={onNavigate} />}
+          filters={
+            <div className="collection-filter-bar">
+              <CollectionSearchField
+                searchRef={searchRef}
+                value={searchInput}
+                onChange={setSearchInput}
+                onClear={clearSearch}
+                placeholder={tr(
+                  '搜索站点、账号或分组',
+                  'Search site, account or group',
+                  '搜尋站點、帳號或分組'
+                )}
+                ariaLabel={tr('搜索登录日志', 'Search login history', '搜尋登入日誌')}
+              />
+              <LogDateFilter
+                value={dateRange}
+                onChange={setDateRange}
+              />
+              <CollectionFilterSelect
+                value={siteId}
+                onChange={setSiteId}
+                ariaLabel={tr('站点名称', 'Site', '站點名稱')}
+                searchable
+                searchPlaceholder={tr('搜索站点', 'Search sites', '搜尋站點')}
+                options={[
+                  {
+                    value: 'all',
+                    label: tr('全部站点', 'All sites', '全部站點')
+                  },
+                  ...siteOptions.map((site) => ({
+                    value: site.id,
+                    label: site.name
+                  }))
+                ]}
+              />
+              <CollectionFilterSelect
+                value={status}
+                onChange={(next) => setStatus(next as LogStatusFilter)}
+                ariaLabel={tr('状态', 'Status', '狀態')}
+                options={[
+                  {
+                    value: 'all',
+                    label: tr('全部状态', 'All statuses', '全部狀態')
+                  },
+                  { value: 'success', label: tr('成功', 'Success', '成功') },
+                  { value: 'error', label: tr('失败', 'Failed', '失敗') },
+                  { value: 'timeout', label: tr('超时', 'Timed out', '逾時') },
+                  {
+                    value: 'manual',
+                    label: tr('待人工处理', 'Manual action', '待人工處理')
+                  }
+                ]}
+              />
+              <button
+                type="button"
+                className="collection-filter-reset"
+                onClick={() => {
+                  clearSearch()
+                  setDateRange(emptyLogDateRange())
+                  setSiteId('all')
+                  setStatus('all')
+                }}
+              >
+                <RotateCcw size={14} />
+                {tr('重置', 'Reset', '重設')}
+              </button>
+            </div>
+          }
+        />
+
+        {selectedIds.size > 0 && (
+          <div
+            className="selection-dock selection-dock--page"
+            role="toolbar"
+            aria-label={tr('日志批量操作', 'Log batch actions', '日誌批次操作')}
+          >
+            <span className="selection-dock__count">
+              {tr(
+                `已选 ${selectedIds.size} 项`,
+                `${selectedIds.size} selected`,
+                `已選 ${selectedIds.size} 項`
+              )}
+            </span>
             <button
-              className="button button--danger-ghost"
+              type="button"
+              className="selection-dock__primary"
               onClick={() => setConfirmDeleteOpen(true)}
-              disabled={selectedIds.size === 0 || deleting}
+              disabled={deleting}
             >
               <Trash2 size={15} />
               {tr('批量删除', 'Delete selected', '批次刪除')}
             </button>
-          </div>
-        </div>
-
-        {loading ? (
-          <div className="logs-empty">
-            <LoaderCircle size={22} className="spin" />
-            <span>{tr('正在读取本地日志', 'Reading local logs', '正在讀取本機日誌')}</span>
-          </div>
-        ) : loadError ? (
-          <div className="logs-empty">
-            <TriangleAlert size={24} />
-            <strong>{tr('读取日志失败', 'Could not read logs', '讀取日誌失敗')}</strong>
-            <span>{loadError}</span>
-            <button className="button button--soft" onClick={() => void load()}>
-              <RefreshCw size={15} />
-              {tr('重试', 'Retry', '重試')}
+            <button
+              type="button"
+              className="selection-dock__cancel"
+              onClick={() => setSelectedIds(new Set())}
+            >
+              {tr('取消', 'Cancel', '取消')}
             </button>
           </div>
-        ) : visible.length === 0 ? (
-          <div className="logs-empty">
-            <SearchX size={24} />
-            <strong>{tr('暂无数据', 'No data', '暫無資料')}</strong>
-            <span>{tr('调整筛选条件或等待下一次登录记录。', 'Adjust the filters or wait for the next login.', '調整篩選條件或等待下一次登入記錄。')}</span>
-          </div>
-        ) : (
-          <div className="log-table-wrap">
+        )}
+
+        <div className="log-table-wrap">
+          {loading ? (
+            <div className="logs-empty">
+              <LoaderCircle size={22} className="spin" />
+              <span>{tr('正在读取本地日志', 'Reading local logs', '正在讀取本機日誌')}</span>
+            </div>
+          ) : loadError ? (
+            <div className="logs-empty">
+              <TriangleAlert size={24} />
+              <strong>{tr('读取日志失败', 'Could not read logs', '讀取日誌失敗')}</strong>
+              <span>{loadError}</span>
+              <button className="button button--soft" onClick={() => void load()}>
+                <RefreshCw size={15} />
+                {tr('重试', 'Retry', '重試')}
+              </button>
+            </div>
+          ) : visible.length === 0 ? (
+            <div className="logs-empty">
+              <SearchX size={24} />
+              <strong>{tr('暂无数据', 'No data', '暫無資料')}</strong>
+              <span>
+                {tr(
+                  '调整筛选条件或等待下一次登录记录。',
+                  'Adjust the filters or wait for the next login.',
+                  '調整篩選條件或等待下一次登入記錄。'
+                )}
+              </span>
+            </div>
+          ) : (
             <div
               className="log-table"
               role="table"
@@ -607,18 +648,18 @@ export function LoginLogsPage({
                 </article>
               ))}
             </div>
-            {tableColumns.menu}
+          )}
+          {tableColumns.menu}
 
-            <LogPagination
-              count={filtered.length}
-              page={currentPage}
-              pageCount={pageCount}
-              pageSize={pageSize}
-              onPageChange={setPage}
-              onPageSizeChange={setPageSize}
-            />
-          </div>
-        )}
+          <LogPagination
+            count={filtered.length}
+            page={currentPage}
+            pageCount={pageCount}
+            pageSize={pageSize}
+            onPageChange={setPage}
+            onPageSizeChange={setPageSize}
+          />
+        </div>
       </section>
 
       {confirmDeleteOpen && (
@@ -692,15 +733,6 @@ export function LoginLogsPage({
   )
 }
 
-function localDateKey(value: string): string {
-  const date = new Date(value)
-  if (Number.isNaN(date.getTime())) return ''
-  const year = date.getFullYear()
-  const month = String(date.getMonth() + 1).padStart(2, '0')
-  const day = String(date.getDate()).padStart(2, '0')
-  return `${year}-${month}-${day}`
-}
-
 function statusLabel(
   status: LoginLogEntry['status'],
   tr: (zhCN: string, en: string, zhTW: string) => string
@@ -709,6 +741,17 @@ function statusLabel(
   if (status === 'timeout') return tr('超时', 'Timed out', '逾時')
   if (status === 'manual') return tr('待人工', 'Manual', '待人工')
   return tr('失败', 'Failed', '失敗')
+}
+
+function LoginStatusIcon({
+  status
+}: {
+  status: LoginLogEntry['status']
+}): React.JSX.Element {
+  if (status === 'success') return <CircleCheck size={12} />
+  if (status === 'timeout') return <Clock3 size={12} />
+  if (status === 'manual') return <Hand size={12} />
+  return <CircleX size={12} />
 }
 
 function displayGroup(

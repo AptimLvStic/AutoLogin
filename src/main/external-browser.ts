@@ -5,6 +5,7 @@ import type { ProxySettings, RecipeStep } from '@shared/types'
 import { isHttpUrl } from '@shared/url'
 import pageAgentSource from 'virtual:page-agent-source'
 import type { DefaultBrowser } from './browser-discovery'
+import { buildBrowserArguments } from './browser-arguments'
 import { CdpClient } from './cdp-client'
 
 const AGENT_WORLD = 'autologin-agent'
@@ -37,11 +38,23 @@ export type BrowserAgentCommand =
     }
   | { type: 'record-start' }
   | { type: 'record-stop' }
+  | { type: 'record-pause' }
+  | { type: 'record-resume' }
+  | { type: 'record-clear-dedupe' }
+  | {
+      type: 'record-copy-source'
+      source: 'username' | 'password'
+      digest: string
+      expiresAt: number
+    }
+  | { type: 'capture-login-form' }
   | { type: 'detect-challenge' }
+  | { type: 'detect-cert-warning' }
+  | { type: 'accept-cert-warning' }
   | { type: 'run-step'; step: RecipeStep; username: string; password: string }
 
 export type BrowserAgentEvent =
-  | { type: 'record-action'; step: unknown }
+  | { type: 'record-action'; step: unknown; frameId?: string }
   | { type: 'challenge-detected' }
   | { type: 'activity' }
 
@@ -58,11 +71,18 @@ export interface ExternalBrowserSnapshot {
 }
 
 export interface ExternalBrowserHostOptions {
-  browser: DefaultBrowser
+  browser?: DefaultBrowser
   profileDirectory: string
   headless: boolean
   proxy?: ProxySettings
   initialUrl?: string
+  /**
+   * SHA-256 SPKI fingerprints (base64) of certificates that may bypass TLS
+   * validation. Empty by default: every certificate is verified, so a MITM
+   * proxy or a hijacked DNS answer cannot receive filled credentials.
+   * Intranet self-signed hosts must be listed explicitly.
+   */
+  trustedCertificateSpkiList?: string[]
 }
 
 interface ExternalBrowserPageOptions {
@@ -132,48 +152,29 @@ export class ExternalBrowserHost {
   private closeNotified = false
 
   private constructor(
-    private readonly child: ChildProcess,
+    private readonly child: ChildProcess | null,
     private readonly options: ExternalBrowserHostOptions,
-    private readonly portFile: string
+    private readonly portFile: string | null
   ) {
-    child.once('exit', () => {
+    child?.once('exit', () => {
       this.closed = true
-      this.notifyPagesClosed('默认浏览器已关闭')
+      this.notifyPagesClosed('浏览器已关闭')
     })
-    child.once('error', () => {
+    child?.once('error', () => {
       this.closed = true
-      this.notifyPagesClosed('默认浏览器启动失败')
+      this.notifyPagesClosed('浏览器启动失败')
     })
   }
 
   static async launch(options: ExternalBrowserHostOptions): Promise<ExternalBrowserHost> {
+    if (!options.browser) {
+      throw new Error('未找到可用浏览器')
+    }
     mkdirSync(options.profileDirectory, { recursive: true })
     const portFile = join(options.profileDirectory, DEBUG_PORT_FILE)
     rmSync(portFile, { force: true })
 
-    const args = [
-      `--user-data-dir=${options.profileDirectory}`,
-      '--remote-debugging-address=127.0.0.1',
-      '--remote-debugging-port=0',
-      '--no-first-run',
-      '--no-default-browser-check',
-      '--disable-background-mode',
-      // The managed profile is isolated to AutoLogin. This allows legacy
-      // intranet sites with self-signed or private-CA certificates to load.
-      '--ignore-certificate-errors',
-      ...proxyArguments(options.proxy),
-      ...(options.headless
-        ? [
-            '--headless=new',
-            '--disable-gpu',
-            '--disable-background-timer-throttling',
-            '--disable-backgrounding-occluded-windows',
-            '--disable-renderer-backgrounding'
-          ]
-        : []),
-      '--new-window',
-      options.initialUrl ?? 'about:blank'
-    ]
+    const args = buildBrowserArguments(options)
     const child = spawn(options.browser.executablePath, args, {
       stdio: 'ignore',
       windowsHide: false
@@ -181,6 +182,27 @@ export class ExternalBrowserHost {
     const host = new ExternalBrowserHost(child, options, portFile)
     try {
       await host.connect()
+      return host
+    } catch (error) {
+      await host.close()
+      throw error
+    }
+  }
+
+  static async attach(options: {
+    debugPort: number
+    profileDirectory: string
+  }): Promise<ExternalBrowserHost> {
+    const host = new ExternalBrowserHost(
+      null,
+      {
+        profileDirectory: options.profileDirectory,
+        headless: false
+      },
+      null
+    )
+    try {
+      await host.connect(options.debugPort)
       return host
     } catch (error) {
       await host.close()
@@ -237,6 +259,12 @@ export class ExternalBrowserHost {
     this.targetToPage.clear()
 
     if (client) {
+      if (!this.child) {
+        client.close()
+        this.closed = true
+        this.notifyCloseOnce()
+        return
+      }
       try {
         await client.send('Browser.close', {}, undefined, 1_500)
       } catch {
@@ -245,7 +273,7 @@ export class ExternalBrowserHost {
       client.close()
     }
 
-    if (!(await waitForExit(this.child, 1_200))) {
+    if (this.child && !(await waitForExit(this.child, 1_200))) {
       await killProcessTree(this.child.pid)
     }
     this.closed = true
@@ -276,15 +304,18 @@ export class ExternalBrowserHost {
     }
   }
 
-  private async connect(): Promise<void> {
-    const websocketUrl = await this.waitForDebugPort()
+  private async connect(debugPort?: number): Promise<void> {
+    const websocketUrl =
+      debugPort !== undefined
+        ? await this.waitForAttachedDebugPort(debugPort)
+        : await this.waitForDebugPort()
     this.client = await CdpClient.connect(
       websocketUrl,
       (method, params, sessionId) => this.handleCdpEvent(method, params, sessionId),
       () => {
         if (!this.closing) {
           this.closed = true
-          this.notifyPagesClosed('默认浏览器调试连接已关闭')
+          this.notifyPagesClosed('浏览器连接已关闭')
           this.notifyCloseOnce()
         }
       }
@@ -375,10 +406,10 @@ export class ExternalBrowserHost {
   private async waitForDebugPort(): Promise<string> {
     const deadline = Date.now() + 15_000
     while (Date.now() < deadline) {
-      if (this.child.exitCode !== null) {
+      if (this.child?.exitCode !== null && this.child?.exitCode !== undefined) {
         throw new Error('默认浏览器启动后立即退出')
       }
-      if (existsSync(this.portFile)) {
+      if (this.portFile && existsSync(this.portFile)) {
         try {
           const [portLine, pathLine] = readFileSync(this.portFile, 'utf8')
             .trim()
@@ -401,9 +432,28 @@ export class ExternalBrowserHost {
     throw new Error('启动默认浏览器超时，请确认浏览器已正确安装')
   }
 
+  private async waitForAttachedDebugPort(port: number): Promise<string> {
+    const deadline = Date.now() + 15_000
+    while (Date.now() < deadline) {
+      try {
+        const response = await fetch(`http://127.0.0.1:${port}/json/version`)
+        if (response.ok) {
+          const value = (await response.json()) as { webSocketDebuggerUrl?: string }
+          if (value.webSocketDebuggerUrl) {
+            return value.webSocketDebuggerUrl
+          }
+        }
+      } catch {
+        // The page engine may still be starting.
+      }
+      await delay(120)
+    }
+    throw new Error('内置页面启动超时，请重试')
+  }
+
   private requireClient(): CdpClient {
     if (!this.client || this.closed) {
-      throw new Error('默认浏览器未连接')
+      throw new Error('浏览器未连接')
     }
     return this.client
   }
@@ -412,12 +462,14 @@ export class ExternalBrowserHost {
 export class ExternalBrowserPage {
   private mainFrameId = ''
   private agentContextId: number | null = null
+  private readonly agentContextFrames = new Map<number, string>()
   private contextWaiters: ContextWaiter[] = []
   private navigationEpoch = 0
   private snapshot: ExternalBrowserSnapshot = { url: 'about:blank', title: '', loading: true }
   private closed = false
   private closing = false
   private closeNotified = false
+  private recordingRequested = false
 
   constructor(
     private readonly host: ExternalBrowserHost,
@@ -506,9 +558,50 @@ export class ExternalBrowserPage {
   }
 
   async runAgentCommand(command: BrowserAgentCommand): Promise<unknown> {
+    if (command.type === 'record-start') {
+      this.recordingRequested = true
+      return this.runRecordingCommand(command)
+    }
+    if (command.type === 'record-stop') {
+      this.recordingRequested = false
+      return this.runRecordingCommand(command)
+    }
+    if (
+      command.type === 'record-pause' ||
+      command.type === 'record-resume' ||
+      command.type === 'record-clear-dedupe' ||
+      command.type === 'record-copy-source'
+    ) {
+      return this.runRecordingCommand(command)
+    }
+    if (
+      command.type === 'detect-cert-warning' ||
+      command.type === 'accept-cert-warning'
+    ) {
+      return this.runCertificateWarningCommand(command.type)
+    }
+    if (command.type === 'capture-login-form') {
+      const results = await this.runAgentCommandAcrossFrames(command)
+      return results.flatMap((result) => (Array.isArray(result) ? result : []))
+    }
+    if (
+      command.type === 'run-step' ||
+      command.type === 'fill-generic' ||
+      command.type === 'fill-manual' ||
+      command.type === 'test-selector' ||
+      command.type === 'detect-challenge'
+    ) {
+      return this.runBestAgentCommand(command)
+    }
+    return this.runAgentCommandInContext(await this.waitForAgentContext(), command)
+  }
+
+  private async runAgentCommandInContext(
+    contextId: number,
+    command: BrowserAgentCommand
+  ): Promise<unknown> {
     const expression = `window.__autologinAgent.handleCommand(${JSON.stringify(command)})`
     for (let attempt = 0; attempt < 2; attempt += 1) {
-      const contextId = await this.waitForAgentContext()
       try {
         await this.ensureAgentInstalled(contextId)
         const response = await this.requireClient().send<RuntimeEvaluateResult>(
@@ -533,13 +626,166 @@ export class ExternalBrowserPage {
         return response.result?.value ?? null
       } catch (error) {
         if (attempt === 0 && !this.closed) {
-          this.agentContextId = null
+          if (this.agentContextId === contextId) {
+            this.agentContextId = null
+          }
           continue
         }
         throw error
       }
     }
     return null
+  }
+
+  private async runRecordingCommand(command: BrowserAgentCommand): Promise<unknown> {
+    const contextIds = this.orderedAgentContextIds()
+    if (contextIds.length === 0) {
+      contextIds.push(await this.waitForAgentContext())
+    }
+    const results = await Promise.allSettled(
+      contextIds.map((contextId) => this.runAgentCommandInContext(contextId, command))
+    )
+    const rejected = results.find(
+      (result): result is PromiseRejectedResult => result.status === 'rejected'
+    )
+    if (rejected && results.every((result) => result.status === 'rejected')) {
+      throw rejected.reason
+    }
+    return { ok: true }
+  }
+
+  private async runCertificateWarningCommand(
+    command: 'detect-cert-warning' | 'accept-cert-warning'
+  ): Promise<unknown> {
+    const expression =
+      command === 'detect-cert-warning'
+        ? `(() => {
+            const proceed = document.querySelector('#proceed-link')
+            const details = document.querySelector('#details-button')
+            const title = String(document.title || '')
+            const detected = Boolean(
+              proceed ||
+              (details && /privacy\\s*error|隐私设置错误|隱私權設定錯誤/i.test(title))
+            )
+            return { detected }
+          })()`
+        : `(async () => {
+            const proceed = document.querySelector('#proceed-link')
+            if (!proceed) return { detected: false, accepted: false }
+            const details = document.querySelector('#details-button')
+            if (details instanceof HTMLElement) {
+              details.click()
+              await new Promise((resolve) => setTimeout(resolve, 250))
+            }
+            const next = document.querySelector('#proceed-link')
+            if (next instanceof HTMLElement) {
+              next.click()
+              return { detected: true, accepted: true }
+            }
+            return { detected: true, accepted: false }
+          })()`
+
+    const evaluate = async (contextId?: number): Promise<unknown> => {
+      const response = await this.requireClient().send<RuntimeEvaluateResult>(
+        'Runtime.evaluate',
+        {
+          expression,
+          ...(contextId === undefined ? {} : { contextId }),
+          awaitPromise: true,
+          returnByValue: true,
+          userGesture: true
+        },
+        this.sessionId,
+        4_000
+      )
+      if (response.exceptionDetails) {
+        throw new Error(
+          response.exceptionDetails.exception?.description ||
+            response.exceptionDetails.text ||
+            '页面脚本执行失败'
+        )
+      }
+      return response.result?.value ?? null
+    }
+
+    if (this.agentContextId !== null) {
+      try {
+        return await evaluate(this.agentContextId)
+      } catch {
+        // Chrome error pages can replace the execution context while loading.
+      }
+    }
+    return evaluate()
+  }
+
+  private async runAgentCommandAcrossFrames(
+    command: BrowserAgentCommand
+  ): Promise<unknown[]> {
+    const contextIds = this.orderedAgentContextIds()
+    if (contextIds.length === 0) {
+      contextIds.push(await this.waitForAgentContext())
+    }
+    const results: unknown[] = []
+    for (const contextId of contextIds) {
+      try {
+        results.push(await this.runAgentCommandInContext(contextId, command))
+      } catch {
+        // A frame can disappear while the page is still settling.
+      }
+    }
+    return results
+  }
+
+  private async runBestAgentCommand(command: BrowserAgentCommand): Promise<unknown> {
+    const contextIds = this.orderedAgentContextIds()
+    if (contextIds.length === 0) {
+      contextIds.push(await this.waitForAgentContext())
+    }
+    let lastResult: unknown = null
+    for (const contextId of contextIds) {
+      try {
+        const result = await this.runAgentCommandInContext(contextId, command)
+        lastResult = result
+        if (this.isHelpfulAgentResult(command, result)) {
+          return result
+        }
+      } catch {
+        // Continue with the remaining frames.
+      }
+    }
+    return lastResult
+  }
+
+  private orderedAgentContextIds(): number[] {
+    const contextIds: number[] = []
+    if (this.agentContextId !== null) {
+      contextIds.push(this.agentContextId)
+    }
+    for (const contextId of this.agentContextFrames.keys()) {
+      if (!contextIds.includes(contextId)) {
+        contextIds.push(contextId)
+      }
+    }
+    return contextIds
+  }
+
+  private isHelpfulAgentResult(command: BrowserAgentCommand, result: unknown): boolean {
+    if (!result || typeof result !== 'object') {
+      return false
+    }
+    const value = result as Record<string, unknown>
+    switch (command.type) {
+      case 'run-step':
+      case 'test-selector':
+        return value.found === true
+      case 'fill-generic':
+      case 'fill-manual':
+        return value.formFound === true
+      case 'detect-challenge':
+        return value.detected === true
+      default:
+        return false
+    }
   }
 
   async focus(): Promise<void> {
@@ -628,10 +874,20 @@ export class ExternalBrowserPage {
       if (
         typeof context?.id === 'number' &&
         context.name === AGENT_WORLD &&
-        context.auxData?.frameId === this.mainFrameId
+        typeof context.auxData?.frameId === 'string'
       ) {
-        this.agentContextId = context.id
-        this.resolveContextWaiters(context.id)
+        const contextId = context.id
+        const frameId = context.auxData.frameId
+        this.agentContextFrames.set(contextId, frameId)
+        if (frameId === this.mainFrameId) {
+          this.agentContextId = contextId
+          this.resolveContextWaiters(contextId)
+        }
+        if (this.recordingRequested) {
+          void this.runAgentCommandInContext(contextId, { type: 'record-start' }).catch(
+            () => undefined
+          )
+        }
       }
       return
     }
@@ -640,16 +896,25 @@ export class ExternalBrowserPage {
       if (params.executionContextId === this.agentContextId) {
         this.agentContextId = null
       }
+      if (typeof params.executionContextId === 'number') {
+        this.agentContextFrames.delete(params.executionContextId)
+      }
       return
     }
 
     if (method === 'Runtime.executionContextsCleared') {
       this.agentContextId = null
+      this.agentContextFrames.clear()
       return
     }
 
     if (method === 'Runtime.bindingCalled') {
-      if (params.executionContextId !== this.agentContextId || typeof params.payload !== 'string') {
+      const executionContextId = params.executionContextId
+      const frameId =
+        typeof executionContextId === 'number'
+          ? this.agentContextFrames.get(executionContextId)
+          : undefined
+      if (!frameId || typeof params.payload !== 'string') {
         return
       }
       try {
@@ -659,7 +924,13 @@ export class ExternalBrowserPage {
           payload.type === 'challenge-detected' ||
           payload.type === 'activity'
         ) {
-          this.emit({ type: 'agent', event: payload })
+          this.emit({
+            type: 'agent',
+            event:
+              payload.type === 'record-action'
+                ? { ...payload, frameId }
+                : payload
+          })
         }
       } catch {
         // Ignore malformed page messages.
@@ -808,21 +1079,6 @@ export class ExternalBrowserPage {
     }
     return this.client
   }
-}
-
-function proxyArguments(proxy: ProxySettings | undefined): string[] {
-  if (!proxy || proxy.mode === 'system' || !proxy.enabled || !proxy.host.trim()) {
-    return []
-  }
-  const bypass = proxy.bypassList
-    .split(/[;,]/)
-    .map((entry) => entry.trim())
-    .filter(Boolean)
-    .join(';')
-  return [
-    `--proxy-server=${proxy.protocol}://${proxy.host.trim()}:${proxy.port}`,
-    ...(bypass ? [`--proxy-bypass-list=${bypass}`] : [])
-  ]
 }
 
 function waitForExit(child: ChildProcess, timeoutMilliseconds: number): Promise<boolean> {

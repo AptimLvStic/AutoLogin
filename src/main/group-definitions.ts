@@ -3,6 +3,7 @@ import {
   GROUP_PATH_SEPARATOR,
   UNGROUPED_GROUP_KEY
 } from '@shared/types'
+import { normalizeGroupPath } from '@shared/group-tree'
 import type { GroupDefinition, VaultData } from '@shared/types'
 
 function groupPrefixes(path: string): string[] {
@@ -63,6 +64,24 @@ export function repairGroupDefinitions(data: VaultData): boolean {
   const originalGroups = JSON.stringify(data.groupDefinitions)
   const originalOrders = JSON.stringify(data.settings.groupOrders)
   const originalLegacyOrder = JSON.stringify(data.settings.groupOrder)
+  for (const site of data.sites) {
+    if (site.group) site.group = normalizeGroupPath(site.group) || undefined
+  }
+  for (const record of data.deletedAccounts) {
+    if (record.site.group) {
+      record.site.group = normalizeGroupPath(record.site.group) || undefined
+    }
+  }
+  for (const group of data.groupDefinitions) {
+    group.path = normalizeGroupPath(group.path)
+  }
+  for (const [tabId, paths] of Object.entries(data.settings.groupOrders)) {
+    data.settings.groupOrders[tabId] = paths.map(normalizeGroupPath).filter(Boolean)
+  }
+  data.settings.groupOrder = data.settings.groupOrder
+    .map(normalizeGroupPath)
+    .filter(Boolean)
+
   const tabIds = new Set(data.tabs.map((tab) => tab.id))
   const referencedScopes = new Map<string, Set<string>>()
   const definitionScopes = new Map<string, Set<string>>()

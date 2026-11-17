@@ -4,10 +4,8 @@ import {
   Check,
   Eye,
   EyeOff,
-  Fingerprint,
-  Globe2,
   KeyRound,
-  Layers3,
+  LoaderCircle,
   LockKeyhole,
   ShieldCheck
 } from 'lucide-react'
@@ -26,51 +24,34 @@ function AuthShell({
     <main className={`auth-shell auth-shell--${mode}`}>
       <section className="auth-story">
         <div className="auth-story__content">
-          <span className="eyebrow eyebrow--light">LOCAL WORKSPACE</span>
+          <span className="eyebrow">LOCAL-FIRST LOGIN WORKSPACE</span>
           <h1>
-            {tr('一次解锁，', 'One unlock.', '一次解鎖，')}
+            {tr('记住一次登录，', 'Remember a sign-in once.', '記住一次登入，')}
             <br />
-            {tr('连接每个入口。', 'Every destination.', '連接每個入口。')}
+            {tr('以后点一下就好。', 'Then it is one click.', '以後點一下就好。')}
           </h1>
           <p>
             {tr(
-              '在一个本地加密工作台中管理账号、书签与分组；通过默认浏览器自动填充，复用已登录会话，备份、导入导出与日志都只留在本机。',
-              'Manage accounts, bookmarks, groups and access history in one encrypted local workspace. Auto-fill through your default browser, reuse signed-in sessions, and keep backups, imports, exports and logs on this device.',
-              '在一個本機加密工作台中管理帳號、書籤與分組；透過預設瀏覽器自動填入，重用已登入工作階段，備份、匯入匯出與日誌都只留在本機。'
+              '完整记录点击与输入的序列，重放失败自动回退到通用表单识别。适用于二次跳转、验证码前置页与 SSO 中转。',
+              'Record the complete click and input sequence, then fall back to generic form detection if replay fails. Built for redirects, pre-login challenges and SSO hops.',
+              '完整記錄點擊與輸入的順序，重放失敗時自動回到通用表單辨識。適用於二次跳轉、驗證碼前置頁與 SSO 中轉。'
             )}
           </p>
-        </div>
-        <div className="auth-feature-strip">
-          <span>
-            <ShieldCheck size={16} />
-            {tr('本地加密', 'Local encryption', '本機加密')}
-          </span>
-          <span>
-            <Fingerprint size={16} />
-            {tr('人工验证', 'Manual verification', '人工驗證')}
-          </span>
-          <span>
-            <Globe2 size={16} />
-            {tr('默认浏览器', 'Default browser', '預設瀏覽器')}
-          </span>
-          <span>
-            <Layers3 size={16} />
-            {tr('自动填充', 'Auto-fill', '自動填入')}
-          </span>
-          <span>
-            <Fingerprint size={16} />
-            {tr('会话与日志', 'Sessions & logs', '工作階段與日誌')}
-          </span>
         </div>
         <div className="auth-orbit" aria-hidden="true">
           <span className="auth-orbit__ring auth-orbit__ring--one" />
           <span className="auth-orbit__ring auth-orbit__ring--two" />
           <span className="auth-orbit__ring auth-orbit__ring--three" />
           <span className="auth-orbit__core">
-            <LockKeyhole size={28} strokeWidth={1.6} />
+            <LockKeyhole size={24} strokeWidth={1.5} />
           </span>
           <span className="auth-orbit__dot auth-orbit__dot--one" />
           <span className="auth-orbit__dot auth-orbit__dot--two" />
+        </div>
+        <div className="auth-trust-row">
+          <span>{tr('仅保存在本机', 'Stored locally', '僅保存在本機')}</span>
+          <span>{tr('无遥测追踪', 'No telemetry', '無遙測追蹤')}</span>
+          <span>AES-256-GCM</span>
         </div>
       </section>
       <section className="auth-panel">
@@ -181,12 +162,18 @@ export function SetupScreen({
         </div>
         {error && <p className="form-error">{error}</p>}
         <button
-          className="button button--primary button--large auth-submit"
+          className={`button button--primary button--large auth-submit${
+            busy ? ' is-loading' : ''
+          }`}
           type="submit"
           disabled={busy || score === 0}
+          aria-busy={busy}
         >
+          {busy && <LoaderCircle size={15} className="spin" />}
           {busy ? tr('正在创建…', 'Creating…', '正在建立…') : tr('创建保险库', 'Create vault', '建立保險庫')}
-          {!busy && <ArrowRight size={17} />}
+          <span className={`button-icon-slot${busy ? ' is-hidden' : ''}`}>
+            <ArrowRight size={17} />
+          </span>
         </button>
       </form>
       <div className="auth-assurance">
@@ -237,20 +224,14 @@ export function UnlockScreen({
 
   return (
     <AuthShell mode="unlock">
-      <div className="unlock-seal" aria-hidden="true">
-        <span className="unlock-seal__halo" />
-        <span className="unlock-seal__disc">
-          <LockKeyhole size={26} strokeWidth={1.7} />
-        </span>
-      </div>
-      <div className="auth-form-heading auth-form-heading--center">
-        <span className="eyebrow">WELCOME BACK</span>
-        <h2>{tr('保险库已锁定', 'Vault locked', '保險庫已鎖定')}</h2>
+      <div className="auth-form-heading">
+        <span className="eyebrow">UNLOCK VAULT</span>
+        <h2>{tr('解锁保险库', 'Unlock your vault', '解鎖保險庫')}</h2>
         <p>
           {tr(
-            '输入主密码，继续访问你的工作台。',
-            'Enter your master password to continue to your workspace.',
-            '輸入主密碼，繼續存取你的工作台。'
+            '输入主密码继续 · 本机验证，不联网',
+            'Enter your master password · verified locally, never online',
+            '輸入主密碼繼續 · 本機驗證，不連網'
           )}
         </p>
       </div>
@@ -258,7 +239,6 @@ export function UnlockScreen({
         <label className="field">
           <span className="field__label">{tr('主密码', 'Master password', '主密碼')}</span>
           <span className="input-shell input-shell--large">
-            <KeyRound size={18} />
             <input
               type={showPassword ? 'text' : 'password'}
               value={password}
@@ -269,26 +249,37 @@ export function UnlockScreen({
             />
             <button
               type="button"
-              className="input-action"
+              className="input-text-action"
               onClick={() => setShowPassword((value) => !value)}
               aria-label={showPassword ? tr('隐藏密码', 'Hide password', '隱藏密碼') : tr('显示密码', 'Show password', '顯示密碼')}
             >
-              {showPassword ? <EyeOff size={17} /> : <Eye size={17} />}
+              {showPassword ? <EyeOff size={16} /> : <Eye size={16} />}
+              <span>
+                {showPassword
+                  ? tr('隐藏', 'Hide', '隱藏')
+                  : tr('显示', 'Show', '顯示')}
+              </span>
             </button>
           </span>
         </label>
         {error && <p className="form-error">{error}</p>}
         <button
-          className="button button--primary button--large auth-submit"
+          className={`button button--primary button--large auth-submit${
+            busy ? ' is-loading' : ''
+          }`}
           type="submit"
           disabled={busy || password.length === 0}
+          aria-busy={busy}
         >
-          {busy ? tr('正在解锁…', 'Unlocking…', '正在解鎖…') : tr('解锁保险库', 'Unlock vault', '解鎖保險庫')}
-          {!busy && <ArrowRight size={17} />}
+          {busy && <LoaderCircle size={15} className="spin" />}
+          {busy ? tr('正在解锁…', 'Unlocking…', '正在解鎖…') : tr('解锁', 'Unlock', '解鎖')}
+          <span className={`button-icon-slot${busy ? ' is-hidden' : ''}`}>
+            <ArrowRight size={17} />
+          </span>
         </button>
       </form>
       <button className="text-button auth-forgot" onClick={onForgot}>
-        {tr('忘记主密码？', 'Forgot master password?', '忘記主密碼？')}
+        <span>{tr('忘记主密码？', 'Forgot master password?', '忘記主密碼？')}</span>
       </button>
     </AuthShell>
   )

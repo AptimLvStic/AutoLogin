@@ -6,6 +6,7 @@ import {
   fillInput,
   findChallengeField,
   focusChallenge,
+  inspectPage,
   scoreChallenge,
   scoreUsername,
   selectorFor
@@ -37,6 +38,16 @@ type AgentCommand =
     }
   | { type: 'record-start' }
   | { type: 'record-stop' }
+  | { type: 'record-pause' }
+  | { type: 'record-resume' }
+  | { type: 'record-clear-dedupe' }
+  | {
+      type: 'record-copy-source'
+      source: 'username' | 'password'
+      digest: string
+      expiresAt: number
+    }
+  | { type: 'capture-login-form' }
   | { type: 'detect-challenge' }
   | { type: 'run-step'; step: RecipeStep; username: string; password: string }
 
@@ -53,11 +64,20 @@ declare global {
 
 if (!window.__autologinAgent) {
   let recording = false
+  let recordingPaused = false
   let recordingListenersAttached = false
-  const recordedAt = new Map<string, number>()
+  const recordedKeys = new Set<string>()
+  let clipboardSource:
+    | {
+        source: 'username' | 'password'
+        digest: string
+        expiresAt: number
+      }
+    | null = null
   let pendingPointerTarget: Element | null = null
   let pendingPointerAt = 0
   let lastActivityReport = 0
+  let pendingEnterTimer: number | null = null
 
   attachActivityListeners()
 
@@ -73,15 +93,53 @@ if (!window.__autologinAgent) {
 
     if (command.type === 'record-start') {
       recording = true
+      recordingPaused = false
+      recordedKeys.clear()
       attachRecordingListeners()
+      void captureInitialForm()
       return { ok: true }
     }
 
     if (command.type === 'record-stop') {
       recording = false
-      recordedAt.clear()
+      recordingPaused = false
+      recordedKeys.clear()
+      clipboardSource = null
       pendingPointerTarget = null
+      if (pendingEnterTimer !== null) {
+        window.clearTimeout(pendingEnterTimer)
+        pendingEnterTimer = null
+      }
       return { ok: true }
+    }
+
+    if (command.type === 'record-pause') {
+      recordingPaused = true
+      return { ok: true }
+    }
+
+    if (command.type === 'record-resume') {
+      recordingPaused = false
+      attachRecordingListeners()
+      return { ok: true }
+    }
+
+    if (command.type === 'record-clear-dedupe') {
+      recordedKeys.clear()
+      return { ok: true }
+    }
+
+    if (command.type === 'record-copy-source') {
+      clipboardSource = {
+        source: command.source,
+        digest: command.digest,
+        expiresAt: command.expiresAt
+      }
+      return { ok: true }
+    }
+
+    if (command.type === 'capture-login-form') {
+      return captureCurrentFormSteps()
     }
 
     if (command.type === 'detect-challenge') {
@@ -218,10 +276,10 @@ if (!window.__autologinAgent) {
     document.addEventListener(
       'focusin',
       (event) => {
-        if (!recording) {
+        if (!isRecordingActive()) {
           return
         }
-        const target = event.target
+        const target = eventTarget(event)
         if (!(target instanceof HTMLInputElement)) {
           return
         }
@@ -238,12 +296,89 @@ if (!window.__autologinAgent) {
     )
 
     document.addEventListener(
-      'mousedown',
+      'input',
       (event) => {
-        if (!recording) {
+        if (!isRecordingActive()) return
+        const target = eventTarget(event)
+        if (!(target instanceof HTMLInputElement)) return
+        recordInputFromElement(target)
+      },
+      true
+    )
+
+    document.addEventListener(
+      'change',
+      (event) => {
+        if (!isRecordingActive()) return
+        const target = eventTarget(event)
+        if (!(target instanceof HTMLInputElement)) return
+        recordInputFromElement(target)
+      },
+      true
+    )
+
+    document.addEventListener(
+      'keydown',
+      (event) => {
+        if (!isRecordingActive() || event.key !== 'Enter') return
+        const target = eventTarget(event)
+        if (!(target instanceof HTMLInputElement)) return
+        if (pendingEnterTimer !== null) {
+          window.clearTimeout(pendingEnterTimer)
+        }
+        pendingEnterTimer = window.setTimeout(() => {
+          pendingEnterTimer = null
+          const submit = findSubmitElementForInput(target)
+          if (submit) {
+            recordStep(clickStepFor(submit))
+          } else {
+            recordStep({
+              id: crypto.randomUUID(),
+              type: 'press',
+              selector: selectorFor(target),
+              key: 'Enter'
+            })
+          }
+        }, 120)
+      },
+      true
+    )
+
+    document.addEventListener(
+      'submit',
+      (event) => {
+        if (!isRecordingActive()) return
+        if (pendingEnterTimer !== null) {
+          window.clearTimeout(pendingEnterTimer)
+          pendingEnterTimer = null
+        }
+        const form = event.target
+        if (!(form instanceof HTMLFormElement)) return
+        const submit = findSubmitElementForInput(form)
+        if (submit) {
+          recordStep(clickStepFor(submit))
           return
         }
-        const target = event.target
+        const active = document.activeElement
+        if (active instanceof HTMLInputElement) {
+          recordStep({
+            id: crypto.randomUUID(),
+            type: 'press',
+            selector: selectorFor(active),
+            key: 'Enter'
+          })
+        }
+      },
+      true
+    )
+
+    document.addEventListener(
+      'mousedown',
+      (event) => {
+        if (!isRecordingActive()) {
+          return
+        }
+        const target = eventTarget(event)
         if (!(target instanceof Element)) {
           return
         }
@@ -256,8 +391,8 @@ if (!window.__autologinAgent) {
     document.addEventListener(
       'click',
       (event) => {
-        if (!recording || event.button !== 0) return
-        const target = event.target
+        if (!isRecordingActive() || event.button !== 0) return
+        const target = eventTarget(event)
         if (!(target instanceof Element)) return
         const clicked =
           pendingPointerTarget &&
@@ -274,8 +409,8 @@ if (!window.__autologinAgent) {
     document.addEventListener(
       'contextmenu',
       (event) => {
-        if (!recording) return
-        const target = event.target
+        if (!isRecordingActive()) return
+        const target = eventTarget(event)
         if (!(target instanceof Element)) return
         const clicked =
           pendingPointerTarget &&
@@ -284,6 +419,20 @@ if (!window.__autologinAgent) {
             : target
         pendingPointerTarget = null
         recordClickStep(clicked, false)
+      },
+      true
+    )
+
+    document.addEventListener(
+      'paste',
+      (event) => {
+        if (!isRecordingActive()) return
+        const target = eventTarget(event)
+        if (!(target instanceof HTMLInputElement) && !(target instanceof HTMLTextAreaElement)) {
+          return
+        }
+        const value = event.clipboardData?.getData('text/plain') ?? ''
+        void recordPasteStep(target, value)
       },
       true
     )
@@ -309,6 +458,44 @@ if (!window.__autologinAgent) {
     })
   }
 
+  function clickStepFor(target: Element): RecipeStep {
+    const clickable =
+      target.closest(
+        'button, input, select, textarea, a, label, summary, [role="button"], [role="link"], [role="menuitem"], [role="tab"], [onclick]'
+      ) ?? target
+    const element = clickable instanceof Element ? clickable : target
+    return {
+      id: crypto.randomUUID(),
+      type: 'click',
+      selector: selectorFor(element),
+      navigationExpected: Boolean(
+        element.closest('a[href], button, input[type="submit"], [role="button"], [role="link"]')
+      )
+    }
+  }
+
+  function findSubmitElementForInput(target: Element): HTMLElement | null {
+    const form = target.closest('form')
+    const scope: ParentNode = form ?? document
+    const candidates = Array.from(
+      scope.querySelectorAll(
+        'button, input[type="submit"], [role="button"], button[type="button"]'
+      )
+    ).filter((element): element is HTMLElement => {
+      if (!(element instanceof HTMLElement)) return false
+      const text = `${element.textContent ?? ''} ${element.getAttribute('aria-label') ?? ''} ${element.getAttribute('value') ?? ''}`
+      return (
+        isVisibleElement(element) &&
+        /(登录|登入|登陆|提交|继续|下一步|sign\s*in|log\s*in|login|continue|next|submit)/i.test(
+          text
+        )
+      )
+    })
+    if (candidates[0]) return candidates[0]
+    const submit = scope.querySelector('button[type="submit"], input[type="submit"]')
+    return submit instanceof HTMLElement && isVisibleElement(submit) ? submit : null
+  }
+
   function recordInputStep(
     type: 'fillUsername' | 'fillPassword' | 'focusChallenge',
     input: HTMLInputElement
@@ -320,18 +507,134 @@ if (!window.__autologinAgent) {
     })
   }
 
-  function recordStep(step: RecipeStep): void {
-    const selectorKey =
-      step.type === 'focusChallenge'
-        ? (step.selector?.candidates.join('|') ?? '')
-        : step.selector.candidates.join('|')
-    const key = `${step.type}:${selectorKey}`
-    const now = Date.now()
-    if (now - (recordedAt.get(key) ?? 0) < 250) {
+  function recordInputFromElement(input: HTMLInputElement): void {
+    if (scoreChallenge(input) >= 3) {
+      recordInputStep('focusChallenge', input)
+      sendEvent({ type: 'challenge-detected' })
       return
     }
-    recordedAt.set(key, now)
+    if (input.type === 'password') {
+      recordInputStep('fillPassword', input)
+      return
+    }
+    if (isLikelyUsernameInput(input)) {
+      recordInputStep('fillUsername', input)
+    }
+  }
+
+  function isLikelyUsernameInput(input: HTMLInputElement): boolean {
+    if (
+      ['hidden', 'submit', 'button', 'checkbox', 'radio', 'file', 'image', 'reset', 'search'].includes(
+        input.type
+      ) ||
+      !isVisibleElement(input)
+    ) {
+      return false
+    }
+    if (input.type === 'email' || input.type === 'tel') return true
+    if (scoreUsername(input) >= 1) return true
+    const form = input.closest('form')
+    if (form?.querySelector('input[type="password"]')) return true
+    const textInputs = Array.from(document.querySelectorAll('input')).filter(
+      (element): element is HTMLInputElement =>
+        element instanceof HTMLInputElement &&
+        isVisibleElement(element) &&
+        !['password', 'hidden', 'submit', 'button', 'checkbox', 'radio'].includes(
+          element.type
+        )
+    )
+    return textInputs.length === 1 && textInputs[0] === input
+  }
+
+  function recordStep(step: RecipeStep): void {
+    const selectorKey =
+      step.type === 'acceptCertWarning'
+        ? ''
+        : step.type === 'focusChallenge'
+        ? (step.selector?.candidates.join('|') ?? '')
+        : step.selector.candidates.join('|')
+    const key = `${step.type}:${selectorKey}:${step.type === 'paste' ? step.source : ''}`
+    if (recordedKeys.has(key)) {
+      return
+    }
+    recordedKeys.add(key)
     sendEvent({ type: 'record-action', step })
+  }
+
+  function captureCurrentFormSteps(): RecipeStep[] {
+    const detection = inspectPage()
+    const steps: RecipeStep[] = []
+    if (detection.username) {
+      steps.push({
+        id: crypto.randomUUID(),
+        type: 'fillUsername',
+        selector: selectorFor(detection.username)
+      })
+    }
+    if (detection.password) {
+      steps.push({
+        id: crypto.randomUUID(),
+        type: 'fillPassword',
+        selector: selectorFor(detection.password)
+      })
+    }
+    return steps
+  }
+
+  async function captureInitialForm(): Promise<void> {
+    await waitForDom()
+    for (const delayMs of [0, 350, 900]) {
+      if (!isRecordingActive()) return
+      if (delayMs > 0) await delay(delayMs)
+      const steps = captureCurrentFormSteps()
+      if (steps.length === 0) continue
+      for (const step of steps) recordStep(step)
+      return
+    }
+  }
+
+  function eventTarget(event: Event): Element | null {
+    const path = typeof event.composedPath === 'function' ? event.composedPath() : []
+    const target = path.find((entry) => entry instanceof Element)
+    return target instanceof Element
+      ? target
+      : event.target instanceof Element
+        ? event.target
+        : null
+  }
+
+  function isRecordingActive(): boolean {
+    return recording && !recordingPaused
+  }
+
+  async function recordPasteStep(
+    target: HTMLInputElement | HTMLTextAreaElement,
+    value: string
+  ): Promise<void> {
+    let source: 'username' | 'password' | 'literal' = 'literal'
+    if (clipboardSource && clipboardSource.expiresAt >= Date.now()) {
+      const digest = await digestText(value)
+      if (digest === clipboardSource.digest) {
+        source = clipboardSource.source
+        clipboardSource = null
+      }
+    }
+    recordStep({
+      id: crypto.randomUUID(),
+      type: 'paste',
+      selector: selectorFor(target),
+      source
+    })
+  }
+
+  async function digestText(value: string): Promise<string> {
+    const digest = await crypto.subtle.digest(
+      'SHA-256',
+      new TextEncoder().encode(value)
+    )
+    return Array.from(new Uint8Array(digest))
+      .map((byte) => byte.toString(16).padStart(2, '0'))
+      .join('')
   }
 
   function findElementBySelector(selector: string | undefined): HTMLElement | null {

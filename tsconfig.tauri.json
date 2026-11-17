@@ -15,18 +15,20 @@
     "types": ["node"],
     "baseUrl": ".",
     "paths": {
-      "@shared/*": ["src/shared/*"],
-      "electron": ["src/tauri/electron-shim.ts"],
-      "electron-updater": ["src/tauri/electron-shim.ts"]
+      "@shared/*": ["src/shared/*"]
     }
   },
   "include": [
     "vite.config.ts",
     "vitest.config.ts",
+    "src/agent/**/*.ts",
     "src/main/**/*.ts",
     "src/shared/**/*.ts",
     "src/tauri/**/*.ts",
+    "src/renderer/src/env.d.ts",
     "src/renderer/src/i18n.tsx",
+    "src/renderer/src/native-browser-bounds.ts",
+    "src/renderer/src/components/BrowserWorkspace.tsx",
     "src/renderer/src/components/Modal.tsx",
     "src/renderer/src/components/UpdateDialog.tsx",
     "tests/unit/**/*.ts"

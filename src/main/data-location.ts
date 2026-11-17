@@ -21,8 +21,10 @@ const MANAGED_DATA_ENTRIES = [
   'BrowserProfiles',
   'Partitions',
   'tabs',
+  'pending-recipes',
   'logs'
 ] as const
+const CRITICAL_DATA_FILES = ['vault.enc', 'vault.enc.bak'] as const
 
 interface DataLocationFile {
   version: 1
@@ -31,6 +33,49 @@ interface DataLocationFile {
 
 interface MigrateDataDirectoryOptions {
   replaceExisting?: boolean
+  copyEntry?: (source: string, destination: string) => void
+}
+
+interface TreeMeasurement {
+  files: number
+  bytes: number
+}
+
+/** Counts regular files and total bytes so a partial copy can be detected. */
+export function measureTree(target: string): TreeMeasurement {
+  const stats = statSync(target)
+  if (!stats.isDirectory()) {
+    return { files: 1, bytes: stats.size }
+  }
+  let files = 0
+  let bytes = 0
+  for (const entry of readdirSync(target, { withFileTypes: true })) {
+    const child = measureTree(join(target, entry.name))
+    files += child.files
+    bytes += child.bytes
+  }
+  return { files, bytes }
+}
+
+/**
+ * Copies then verifies file count and byte size. A partial copy (full disk, or
+ * an antivirus lock released after the copy started) would otherwise pass
+ * silently, the pointer would move, and the source would be deleted — leaving
+ * no complete vault on either side.
+ */
+export function copyVerified(
+  from: string,
+  to: string,
+  copy: (source: string, destination: string) => void = (source, destination) => {
+    cpSync(source, destination, { recursive: true, preserveTimestamps: true })
+  }
+): void {
+  copy(from, to)
+  const expected = measureTree(from)
+  const actual = measureTree(to)
+  if (expected.files !== actual.files || expected.bytes !== actual.bytes) {
+    throw new Error('数据复制不完整，已保留原目录，请检查目标磁盘空间')
+  }
 }
 
 export function readDataDirectory(
@@ -121,12 +166,29 @@ export function migrateDataDirectory(
     backupTargetData(target)
   }
 
-  for (const entry of MANAGED_DATA_ENTRIES) {
-    const sourcePath = join(source, entry)
-    if (!existsSync(sourcePath)) {
-      continue
+  const copiedTargetEntries: string[] = []
+  try {
+    for (const entry of MANAGED_DATA_ENTRIES) {
+      const sourcePath = join(source, entry)
+      if (!existsSync(sourcePath)) {
+        continue
+      }
+      const targetPath = join(target, entry)
+      copiedTargetEntries.push(targetPath)
+      copyVerified(sourcePath, targetPath, options.copyEntry)
     }
-    cpSync(sourcePath, join(target, entry), { recursive: true, preserveTimestamps: true })
+    verifyCriticalDataFiles(source, target)
+  } catch (error) {
+    // The pointer has not moved yet. Remove only this attempt's target copies
+    // so the source remains the single authoritative and retryable copy.
+    for (const targetPath of copiedTargetEntries.reverse()) {
+      try {
+        rmSync(targetPath, { recursive: true, force: true })
+      } catch {
+        // Preserve the original copy/verification error.
+      }
+    }
+    throw error
   }
 
   writeDataDirectory(configDirectory, target)
@@ -137,6 +199,28 @@ export function migrateDataDirectory(
     rmSync(join(source, entry), { recursive: true, force: true, maxRetries: 5, retryDelay: 150 })
   }
   return target
+}
+
+function verifyCriticalDataFiles(source: string, target: string): void {
+  for (const entry of CRITICAL_DATA_FILES) {
+    const sourcePath = join(source, entry)
+    if (!existsSync(sourcePath)) {
+      continue
+    }
+    const targetPath = join(target, entry)
+    try {
+      const sourceBytes = readFileSync(sourcePath)
+      const targetBytes = readFileSync(targetPath)
+      if (!sourceBytes.equals(targetBytes)) {
+        throw new Error(`${entry} 内容校验失败，已保留原目录`)
+      }
+    } catch (error) {
+      if (error instanceof Error && error.message.includes('已保留原目录')) {
+        throw error
+      }
+      throw new Error(`无法读取复制后的关键数据文件 ${entry}，已保留原目录`)
+    }
+  }
 }
 
 export function recoverDataDirectoryFromInstall(

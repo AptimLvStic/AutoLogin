@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import {
   ArrowLeft,
   Check,
@@ -18,6 +18,7 @@ import {
 } from 'lucide-react'
 import type { AccountWithSite, LoginMode, LoginStatus, LoginViewState } from '@shared/types'
 import { useI18n } from '../i18n'
+import { embeddedBrowserBounds } from '../native-browser-bounds'
 import { ConfirmDialog } from './Modal'
 import { SiteMark } from './SiteMark'
 
@@ -40,6 +41,8 @@ const INITIAL_STATE: LoginViewState = {
   recording: false,
   recipeExists: false,
   recordingStepCount: 0,
+  recordingSteps: [],
+  recordingPaused: false,
   browserName: ''
 }
 
@@ -66,6 +69,8 @@ export function LoginWorkspace({
   })
   const [confirmClear, setConfirmClear] = useState(false)
   const [busy, setBusy] = useState(false)
+  const embeddedViewportRef = useRef<HTMLDivElement>(null)
+  const isBuiltinBrowser = account.loginBrowser === 'builtin'
 
   useEffect(() => {
     let cancelled = false
@@ -83,9 +88,9 @@ export function LoginWorkspace({
               language === 'zh-CN' && error instanceof Error
                 ? error.message
                 : tr(
-                    '无法打开 Windows 默认浏览器',
-                    'Could not open the Windows default browser.',
-                    '無法開啟 Windows 預設瀏覽器'
+                    '无法打开浏览器',
+                    'Could not open the browser.',
+                    '無法開啟瀏覽器'
                   )
           }))
         }
@@ -99,6 +104,36 @@ export function LoginWorkspace({
       void window.autologin.login.close()
     }
   }, [account.id, language, mode, tr])
+
+  useEffect(() => {
+    if (!isBuiltinBrowser) return
+    const viewport = embeddedViewportRef.current
+    if (!viewport) return
+    let frame = 0
+    const updateBounds = (): void => {
+      const bounds = embeddedBrowserBounds(viewport)
+      if (bounds) {
+        void window.autologin.login.setEmbeddedBounds(bounds)
+        void window.autologin.login.setEmbeddedActive(account.id)
+      }
+    }
+    const schedule = (): void => {
+      if (frame) window.cancelAnimationFrame(frame)
+      frame = window.requestAnimationFrame(() => {
+        frame = 0
+        updateBounds()
+      })
+    }
+    const observer = new ResizeObserver(schedule)
+    observer.observe(viewport)
+    window.addEventListener('resize', schedule)
+    schedule()
+    return () => {
+      observer.disconnect()
+      window.removeEventListener('resize', schedule)
+      if (frame) window.cancelAnimationFrame(frame)
+    }
+  }, [isBuiltinBrowser, state.active, state.browserName])
 
   function errorMessage(
     error: unknown,
@@ -314,19 +349,21 @@ export function LoginWorkspace({
         </div>
       </header>
 
-      <div className="browser-toolbar browser-toolbar--external">
+      <div className={`browser-toolbar${isBuiltinBrowser ? ' browser-toolbar--builtin' : ' browser-toolbar--external'}`}>
         <div className="external-browser-identity">
           <Globe2 size={15} />
-          <span>{browserName}</span>
+          <span>{isBuiltinBrowser ? tr('内置浏览器', 'Built-in browser', '內建瀏覽器') : browserName}</span>
         </div>
         <div className="address-pill">
           <LockKeyhole size={13} />
           <span>{pageAddress}</span>
         </div>
-        <button className="toolbar-external" onClick={() => void focusBrowser()}>
-          <ExternalLink size={15} />
-          {tr('切换到浏览器', 'Switch to browser', '切換到瀏覽器')}
-        </button>
+        {!isBuiltinBrowser && (
+          <button className="toolbar-external" onClick={() => void focusBrowser()}>
+            <ExternalLink size={15} />
+            {tr('切换到浏览器', 'Switch to browser', '切換到瀏覽器')}
+          </button>
+        )}
       </div>
 
       {isRecording && (
@@ -404,6 +441,11 @@ export function LoginWorkspace({
         </div>
       )}
 
+      {isBuiltinBrowser ? (
+        <div className="login-surface login-surface--builtin">
+          <div ref={embeddedViewportRef} className="embedded-browser-viewport" />
+        </div>
+      ) : (
       <div className="login-surface login-surface--external">
         <section className="external-browser-card" aria-live="polite">
           <div className="external-browser-card__header">
@@ -502,6 +544,7 @@ export function LoginWorkspace({
           </p>
         </section>
       </div>
+      )}
 
       {confirmClear && (
         <ConfirmDialog
@@ -511,12 +554,13 @@ export function LoginWorkspace({
             '清除此帳號的網站工作階段？'
           )}
           description={tr(
-            '将删除该账号独立的默认浏览器配置目录，下次登录需要重新输入账号密码。已保存的凭据和录制流程不会被删除。',
-            'This removes the account’s isolated default-browser profile. You will need to enter the credentials again next time. Saved credentials and recorded flows are kept.',
-            '將刪除該帳號獨立的預設瀏覽器設定目錄，下次登入需要重新輸入帳號密碼。已儲存的憑證和錄製流程不會被刪除。'
+            '将删除该账号独立的浏览器配置目录，下次登录需要重新输入账号密码。已保存的凭据和录制流程不会被删除。',
+            'This removes the account’s isolated browser profile. You will need to enter the credentials again next time. Saved credentials and recorded flows are kept.',
+            '將刪除該帳號獨立的瀏覽器設定目錄，下次登入需要重新輸入帳號密碼。已儲存的憑證和錄製流程不會被刪除。'
           )}
           confirmLabel={tr('清除会话', 'Clear session', '清除工作階段')}
           busy={busy}
+          closeWhileBusy
           onConfirm={() => void clearSession()}
           onClose={() => setConfirmClear(false)}
         />

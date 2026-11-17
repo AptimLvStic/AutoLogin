@@ -1,8 +1,10 @@
 import { createInterface } from 'node:readline'
 import {
   backendHandlerCount,
-  dispatchBackendRequest
-} from './electron-shim'
+  dispatchBackendRequest,
+  resolveNativeRequest
+} from './backend-runtime'
+import { markChannel } from '../main/block-watchdog'
 
 interface BackendRequest {
   id: number
@@ -13,6 +15,14 @@ interface BackendRequest {
 
 interface BackendResponse {
   id: number
+  ok: boolean
+  result?: unknown
+  error?: string
+}
+
+interface NativeResponse {
+  type: 'native-response'
+  requestId: number
   ok: boolean
   result?: unknown
   error?: string
@@ -63,16 +73,34 @@ async function main(): Promise<void> {
   })
 
   input.on('line', (line) => {
-    let request: BackendRequest
+    let incoming: unknown
     try {
-      request = JSON.parse(line) as BackendRequest
+      incoming = JSON.parse(line)
     } catch {
       console.error('Ignoring malformed local service request')
       return
     }
+    if (
+      incoming &&
+      typeof incoming === 'object' &&
+      (incoming as { type?: unknown }).type === 'native-response'
+    ) {
+      const response = incoming as NativeResponse
+      if (typeof response.requestId === 'number') {
+        resolveNativeRequest(
+          response.requestId,
+          response.result ?? null,
+          response.ok ? undefined : response.error || '本地页面操作失败'
+        )
+      }
+      return
+    }
+    let request: BackendRequest
+    request = incoming as BackendRequest
     if (request.type !== 'call' || typeof request.channel !== 'string') {
       return
     }
+    markChannel(request.channel)
     void dispatchBackendRequest(request.channel, request.args ?? [])
       .then((result) => {
         write({

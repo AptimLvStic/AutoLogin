@@ -2,7 +2,6 @@ import { useEffect, useRef, useState } from 'react'
 import {
   ArchiveRestore,
   Check,
-  ChevronRight,
   Database,
   Download,
   FolderOpen,
@@ -112,6 +111,9 @@ export function SettingsPage({
   const [locationConflictBusy, setLocationConflictBusy] =
     useState<DataLocationConflictAction | null>(null)
   const [openingDataLocation, setOpeningDataLocation] = useState(false)
+  const [recordingDraftBusy, setRecordingDraftBusy] = useState(false)
+  const [openingRecordingDraftDirectory, setOpeningRecordingDraftDirectory] =
+    useState(false)
   const [restartingApp, setRestartingApp] = useState(false)
   const [openingPrivacy, setOpeningPrivacy] = useState(false)
   const [restoreLocationOpen, setRestoreLocationOpen] = useState(false)
@@ -367,6 +369,7 @@ export function SettingsPage({
           accountCopyShortcutEnabled: DEFAULT_APP_SETTINGS.accountCopyShortcutEnabled,
           accountCopyShortcut: DEFAULT_APP_SETTINGS.accountCopyShortcut,
           proxy: DEFAULT_APP_SETTINGS.proxy,
+          recordingDraftDirectory: DEFAULT_APP_SETTINGS.recordingDraftDirectory,
           groupOrder: []
         },
         translate(
@@ -728,6 +731,91 @@ export function SettingsPage({
     }
   }
 
+  async function chooseRecordingDraftDirectory(): Promise<void> {
+    if (recordingDraftBusy) return
+    setRecordingDraftBusy(true)
+    try {
+      const directory = await window.autologin.app.chooseRecordingDraftDirectory()
+      if (!directory) return
+      await onSettingsChange({ recordingDraftDirectory: directory })
+      notify(
+        'success',
+        tr(
+          '录制副本保存位置已更新',
+          'Recording draft location updated.',
+          '錄製副本儲存位置已更新'
+        )
+      )
+    } catch (error) {
+      notify(
+        'error',
+        error instanceof Error
+          ? error.message
+          : tr(
+              '录制副本保存位置更新失败',
+              'Could not update the recording draft location.',
+              '錄製副本儲存位置更新失敗'
+            )
+      )
+    } finally {
+      setRecordingDraftBusy(false)
+    }
+  }
+
+  async function resetRecordingDraftDirectory(): Promise<void> {
+    if (recordingDraftBusy || !settings.recordingDraftDirectory) return
+    setRecordingDraftBusy(true)
+    try {
+      await onSettingsChange({ recordingDraftDirectory: '' })
+      notify(
+        'success',
+        tr(
+          '录制副本已恢复默认位置',
+          'Recording draft location reset to default.',
+          '錄製副本已恢復預設位置'
+        )
+      )
+    } catch (error) {
+      notify(
+        'error',
+        error instanceof Error
+          ? error.message
+          : tr(
+              '恢复默认位置失败',
+              'Could not reset the recording draft location.',
+              '恢復預設位置失敗'
+            )
+      )
+    } finally {
+      setRecordingDraftBusy(false)
+    }
+  }
+
+  async function openRecordingDraftDirectory(): Promise<void> {
+    if (openingRecordingDraftDirectory) return
+    setOpeningRecordingDraftDirectory(true)
+    try {
+      await window.autologin.app.openRecordingDraftDirectory()
+      notify(
+        'success',
+        tr('已打开录制副本目录', 'Recording draft folder opened.', '已開啟錄製副本目錄')
+      )
+    } catch (error) {
+      notify(
+        'error',
+        error instanceof Error
+          ? error.message
+          : tr(
+              '无法打开录制副本目录',
+              'Could not open the recording draft folder.',
+              '無法開啟錄製副本目錄'
+            )
+      )
+    } finally {
+      setOpeningRecordingDraftDirectory(false)
+    }
+  }
+
   async function restartApp(): Promise<void> {
     if (restartingApp) return
     setRestartingApp(true)
@@ -787,7 +875,6 @@ export function SettingsPage({
     }
   }
 
-  const title = settingsModuleTitle(module, tr)
   const settingsModules: Array<[SettingsModule, string]> = [
     ['general', tr('通用配置', 'General', '一般設定')],
     ['network', tr('网络代理', 'Network proxy', '網路代理')],
@@ -799,14 +886,6 @@ export function SettingsPage({
     <>
       <section className="page-section settings-page settings-page--controlled">
         <div className="settings-page__sticky">
-          <header className="settings-page__header">
-            <nav className="page-breadcrumb" aria-label={tr('面包屑', 'Breadcrumb', '麵包屑')}>
-              <span>{tr('设置', 'Settings', '設定')}</span>
-              <ChevronRight size={12} />
-              <h2>{title}</h2>
-            </nav>
-          </header>
-
           <nav
             className="settings-tabs"
             role="tablist"
@@ -1361,7 +1440,9 @@ export function SettingsPage({
                 </div>
                 {nextPassword && <PasswordStrength password={nextPassword} />}
                 <button
-                  className="button button--soft button--align-self"
+                  className={`button button--soft button--align-self${
+                    changingPassword ? ' is-loading' : ''
+                  }`}
                   type="submit"
                   disabled={
                     changingPassword ||
@@ -1369,7 +1450,9 @@ export function SettingsPage({
                     nextPassword.length < 10 ||
                     nextPassword !== confirmPassword
                   }
+                  aria-busy={changingPassword}
                 >
+                  {changingPassword && <LoaderCircle size={14} className="spin" />}
                   {changingPassword
                     ? tr('正在更新…', 'Updating…', '正在更新…')
                     : tr('更新主密码', 'Update master password', '更新主密碼')}
@@ -1469,9 +1552,10 @@ export function SettingsPage({
               )}
               <div className="settings-inline-actions settings-location-actions">
                 <button
-                  className="button button--soft"
+                  className={`button button--soft${locationBusy ? ' is-loading' : ''}`}
                   onClick={() => void chooseLocation()}
                   disabled={locationBusy}
+                  aria-busy={locationBusy}
                 >
                   {locationBusy ? (
                     <LoaderCircle size={15} className="spin" />
@@ -1505,6 +1589,80 @@ export function SettingsPage({
                 >
                   <RotateCcw size={14} />
                   {tr('恢复默认位置', 'Restore default location', '恢復預設位置')}
+                </button>
+              </div>
+            </div>
+
+            <div className="settings-card">
+              <SettingsCardHeading
+                icon={<ArchiveRestore size={17} />}
+                title={tr(
+                  '录制副本保存位置',
+                  'Recording draft location',
+                  '錄製副本儲存位置'
+                )}
+                description={tr(
+                  '录制流程在保存完成前会先写入一份副本，保存异常时可在重启后自动补回。留空时使用数据目录下的 pending-recipes 文件夹。',
+                  'A draft copy is written before saving completes, so it can be recovered after a restart if saving fails. Leave empty to use the pending-recipes folder in the data directory.',
+                  '錄製流程在儲存完成前會先寫入一份副本，儲存異常時可在重新啟動後自動補回。留空時使用資料目錄下的 pending-recipes 資料夾。'
+                )}
+              />
+              <div className="settings-location">
+                <code>
+                  {settings.recordingDraftDirectory ||
+                    (dataLocation?.directory
+                      ? `${dataLocation.directory.replace(/[\\/]+$/, '')}\\pending-recipes`
+                      : tr(
+                          '数据目录\\pending-recipes',
+                          'Data directory\\pending-recipes',
+                          '資料目錄\\pending-recipes'
+                        ))}
+                </code>
+                <span className="settings-location__badge">
+                  {settings.recordingDraftDirectory
+                    ? tr('自定义位置', 'Custom', '自訂位置')
+                    : tr('默认位置', 'Default', '預設位置')}
+                </span>
+              </div>
+              <div className="settings-inline-actions settings-location-actions">
+                <button
+                  className={`button button--soft${recordingDraftBusy ? ' is-loading' : ''}`}
+                  onClick={() => void chooseRecordingDraftDirectory()}
+                  disabled={recordingDraftBusy}
+                  aria-busy={recordingDraftBusy}
+                >
+                  {recordingDraftBusy ? (
+                    <LoaderCircle size={15} className="spin" />
+                  ) : (
+                    <FolderOpen size={15} />
+                  )}
+                  {recordingDraftBusy
+                    ? tr('正在保存…', 'Saving…', '正在儲存…')
+                    : tr('更改位置', 'Change location', '變更位置')}
+                </button>
+                <button
+                  className="button button--ghost"
+                  onClick={() => void openRecordingDraftDirectory()}
+                  disabled={openingRecordingDraftDirectory || recordingDraftBusy}
+                  aria-busy={openingRecordingDraftDirectory}
+                >
+                  {openingRecordingDraftDirectory ? (
+                    <LoaderCircle size={15} className="spin" />
+                  ) : (
+                    <FolderOpen size={15} />
+                  )}
+                  {openingRecordingDraftDirectory
+                    ? tr('打开中…', 'Opening…', '開啟中…')
+                    : tr('打开目录', 'Open folder', '開啟目錄')}
+                </button>
+                <button
+                  type="button"
+                  className="reset-setting-button"
+                  onClick={() => void resetRecordingDraftDirectory()}
+                  disabled={recordingDraftBusy || !settings.recordingDraftDirectory}
+                >
+                  <RotateCcw size={14} />
+                  {tr('恢复默认位置', 'Restore default', '恢復預設位置')}
                 </button>
               </div>
             </div>
@@ -1633,7 +1791,7 @@ export function SettingsPage({
               />
               <div className="settings-update-row">
                 <button
-                  className="button button--soft"
+                  className={`button button--soft${checkingUpdates ? ' is-loading' : ''}`}
                   onClick={() => void checkUpdates()}
                   disabled={checkingUpdates}
                   aria-busy={checkingUpdates}
@@ -1924,20 +2082,6 @@ function SettingsCardHeading({
       </div>
     </div>
   )
-}
-
-function settingsModuleTitle(
-  module: SettingsModule,
-  tr: (zhCN: string, en: string, zhTW: string) => string
-): string {
-  const titles: Record<SettingsModule, string> = {
-    general: tr('通用配置', 'General', '一般設定'),
-    network: tr('网络代理', 'Network proxy', '網路代理'),
-    security: tr('安全与隐私', 'Security & privacy', '安全性與隱私'),
-    data: tr('数据与备份', 'Data & backups', '資料與備份'),
-    about: tr('关于与更新', 'About & updates', '關於與更新')
-  }
-  return titles[module]
 }
 
 function platformLabel(platform: string): string {

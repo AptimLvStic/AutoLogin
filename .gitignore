@@ -1,5 +1,8 @@
 node_modules/
 out/
+_old/
+_pack_stage/
+_verify/
 dist/
 dist-backend/
 src-tauri/target/
@@ -8,7 +11,6 @@ outputs/*
 !outputs/.gitkeep
 work/
 test-results/
-playwright-report/
 *.tsbuildinfo
 .env
 .env.*

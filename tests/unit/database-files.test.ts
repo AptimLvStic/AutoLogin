@@ -198,6 +198,7 @@ describe('database files', () => {
       password: 'encrypted-in-real-vault',
       favorite: false,
       loginStrategy: 'auto',
+      loginBrowser: 'standalone',
       createdAt,
       updatedAt: createdAt
     }))

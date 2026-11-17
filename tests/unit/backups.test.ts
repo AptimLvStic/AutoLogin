@@ -28,7 +28,7 @@ describe('BackupManager', () => {
   it('keeps only the latest three encrypted snapshots', () => {
     const directory = createDirectory()
     const vaultPath = join(directory, 'vault.enc')
-    const manager = new BackupManager(directory)
+    const manager = new BackupManager(join(directory, 'backups'))
     const baseTime = Math.floor(Date.now() / 1000) - 500
 
     for (let index = 0; index < 5; index += 1) {
@@ -51,7 +51,7 @@ describe('BackupManager', () => {
     const directory = createDirectory()
     const vaultPath = join(directory, 'vault.enc')
     writeFileSync(vaultPath, 'encrypted', 'utf8')
-    const manager = new BackupManager(directory)
+    const manager = new BackupManager(join(directory, 'backups'))
     const record = manager.createFromVault(vaultPath)!
 
     expect(manager.resolve(record.id)).toBe(join(manager.path, record.fileName))
@@ -60,8 +60,22 @@ describe('BackupManager', () => {
 
   it('does not create a backup before the vault exists', () => {
     const directory = createDirectory()
-    const manager = new BackupManager(directory)
+    const manager = new BackupManager(join(directory, 'backups'))
     expect(manager.createFromVault(join(directory, 'vault.enc'))).toBeNull()
     expect(manager.list()).toEqual([])
+  })
+
+  it('uses a selected backup directory', () => {
+    const directory = createDirectory()
+    const backupDirectory = join(createDirectory(), 'selected-backups')
+    const vaultPath = join(directory, 'vault.enc')
+    writeFileSync(vaultPath, 'encrypted', 'utf8')
+    const manager = new BackupManager(backupDirectory)
+
+    const record = manager.createFromVault(vaultPath)
+
+    expect(manager.path).toBe(backupDirectory)
+    expect(record).not.toBeNull()
+    expect(manager.list()).toHaveLength(1)
   })
 })

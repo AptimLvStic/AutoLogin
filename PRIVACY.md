@@ -1,25 +1,25 @@
 # AutoLogin 隐私说明
 
-更新日期：2026-11-04
+更新日期：2026-11-17
 
 AutoLogin 是本地优先的 Windows 桌面应用。当前版本没有 AutoLogin 账号系统、云同步、遥测、广告 SDK 或分析服务。
 
 ## 本机保存的数据
 
-AutoLogin 默认在 `%APPDATA%\AutoLogin` 中保存数据，也可在设置中迁移到用户选择的其他本地目录：
+AutoLogin 安装版默认在与安装目录同级的 `AutoLogin-Data` 文件夹中保存数据，位置指针保存在 `%APPDATA%\AutoLogin`。用户也可在设置中迁移到其他本地目录：
 
 - 站点名称、登录地址和允许来源。
 - 账号名称和用户名。
 - 登录密码。
 - 登录流程录制结果。
 - 应用设置，包括自动锁定时间、界面语言、亮暗模式、主题、界面比例和网络代理。
-- 启动时生成的加密保险库备份，滚动保留最新 3 份。
+- 启动时生成的加密保险库备份，滚动保留最新 3 份，并可单独选择保存位置。
 - 单账号使用的默认浏览器配置目录和网站会话数据。
 - 批量登录使用的共享浏览器配置目录和网站会话数据。
 - 批量登录失败日志。
 - 软件运行日志。
 
-账号密码、站点、账号和设置保存在加密保险库 `vault.enc` 中，并保留加密备份 `vault.enc.bak`。启动备份位于 `backups/autologin-backup-*.enc`，内容同样是完整保险库密文，达到 3 份后会自动删除最旧的一份。
+账号密码、站点、账号和设置保存在加密保险库 `vault.enc` 中，并保留加密备份 `vault.enc.bak`。启动备份默认位于数据目录的 `backups/autologin-backup-*.enc`，内容同样是完整保险库密文，达到 3 份后会自动删除最旧的一份。自动备份也可在设置中选择其他目录；切换后已有备份仍保留在原目录。
 
 ## 加密方式
 
@@ -37,7 +37,7 @@ AutoLogin 默认在 `%APPDATA%\AutoLogin` 中保存数据，也可在设置中�
 
 ## 网站会话
 
-单账号登录使用 `%APPDATA%\AutoLogin\BrowserProfiles\<accountId>` 中独立的浏览器配置目录。批量登录使用 `%APPDATA%\AutoLogin\BrowserProfiles\batch` 共享配置目录，并在同一个浏览器窗口的多个标签页中打开所选站点。Cookie、缓存和网站本地存储由 Windows 默认浏览器与 Windows 用户级机制保护，不受保险库主密码直接加密。
+单账号登录使用数据目录下 `BrowserProfiles\<accountId>` 中独立的浏览器配置目录。批量登录使用数据目录下 `BrowserProfiles\batch` 共享配置目录，并在同一个浏览器窗口的多个标签页中打开所选站点。Cookie、缓存和网站本地存储由 Windows 默认浏览器与 Windows 用户级机制保护，不受保险库主密码直接加密。
 
 AutoLogin 通过 Windows 注册表识别默认浏览器，并使用仅绑定 `127.0.0.1` 的随机本地调试端口连接该浏览器。该端口只在活动登录会话期间存在，不会监听局域网地址。Firefox 和 Internet Explorer 暂不支持自动填充。
 

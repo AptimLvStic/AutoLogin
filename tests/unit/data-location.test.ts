@@ -13,12 +13,16 @@ import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 import {
   copyVerified,
+  defaultDataDirectoryForExecutable,
   hasManagedDataDirectory,
   measureTree,
+  migrateLegacyDefaultDataDirectory,
   migrateDataDirectory,
   pathIsInside,
+  readBackupDirectory,
   readDataDirectory,
   recoverDataDirectoryFromInstall,
+  writeBackupDirectory,
   writeDataDirectory
 } from '../../src/main/data-location'
 
@@ -69,6 +73,27 @@ describe('data location recovery', () => {
 
     expect(recovered).toBe(join(config, 'Data'))
     expect(readDataDirectory(config)).toBe(recovered)
+  })
+
+  it('recovers installation data into the configured external default directory', () => {
+    const config = createDirectory()
+    const install = join(createDirectory(), 'AutoLogin')
+    const stable = join(createDirectory(), 'AutoLogin-Data')
+    mkdirSync(install, { recursive: true })
+    writeFileSync(join(install, 'vault.enc'), 'install-vault')
+    writeFileSync(join(install, 'AutoLogin.exe'), 'application-binary')
+
+    const recovered = recoverDataDirectoryFromInstall(
+      config,
+      install,
+      install,
+      config,
+      stable
+    )
+
+    expect(recovered).toBe(stable)
+    expect(readFileSync(join(stable, 'vault.enc'), 'utf8')).toBe('install-vault')
+    expect(existsSync(join(install, 'AutoLogin.exe'))).toBe(true)
   })
 
   it('keeps a custom data location through installer userData changes', () => {
@@ -155,6 +180,61 @@ describe('data location recovery', () => {
     expect(pathIsInside('C:\\Apps\\AutoLogin', 'C:\\Apps\\AutoLogin\\data')).toBe(true)
     expect(pathIsInside('C:\\Apps\\AutoLogin', 'C:\\Apps\\AutoLogin')).toBe(true)
     expect(pathIsInside('C:\\Apps\\AutoLogin', 'C:\\Users\\Data\\AutoLogin')).toBe(false)
+  })
+
+  it('uses a sibling AutoLogin-Data directory outside the installation folder', () => {
+    const root = createDirectory()
+    const executable = join(root, 'Tools', 'AutoLogin', 'AutoLogin.exe')
+
+    expect(defaultDataDirectoryForExecutable(executable)).toBe(
+      join(root, 'Tools', 'AutoLogin-Data')
+    )
+  })
+
+  it('migrates legacy AppData data to the new external default directory', () => {
+    const root = createDirectory()
+    const legacy = join(root, 'AppData', 'AutoLogin')
+    const target = join(root, 'Tools', 'AutoLogin-Data')
+    mkdirSync(join(legacy, 'backups'), { recursive: true })
+    writeFileSync(join(legacy, 'vault.enc'), 'legacy-vault')
+    writeFileSync(join(legacy, 'backups', 'old.enc'), 'legacy-backup')
+
+    expect(migrateLegacyDefaultDataDirectory(legacy, legacy, target)).toBe(target)
+    expect(readFileSync(join(target, 'vault.enc'), 'utf8')).toBe('legacy-vault')
+    expect(readFileSync(join(target, 'backups', 'old.enc'), 'utf8')).toBe(
+      'legacy-backup'
+    )
+    expect(existsSync(join(legacy, 'vault.enc'))).toBe(false)
+    expect(readDataDirectory(legacy, [], target)).toBe(target)
+  })
+
+  it('keeps legacy data visible when the new default directory is only partially populated', () => {
+    const root = createDirectory()
+    const legacy = join(root, 'AppData', 'AutoLogin')
+    const target = join(root, 'Tools', 'AutoLogin-Data')
+    mkdirSync(join(legacy), { recursive: true })
+    mkdirSync(join(target, 'logs'), { recursive: true })
+    writeFileSync(join(legacy, 'vault.enc'), 'legacy-vault')
+
+    expect(migrateLegacyDefaultDataDirectory(legacy, legacy, target)).toBe(legacy)
+    expect(readFileSync(join(legacy, 'vault.enc'), 'utf8')).toBe('legacy-vault')
+  })
+
+  it('persists a custom backup directory and falls back to its default', () => {
+    const pointerDirectory = createDirectory()
+    const defaultBackup = join(pointerDirectory, 'data', 'backups')
+    const customBackup = join(createDirectory(), 'selected-backups')
+
+    writeBackupDirectory(pointerDirectory, customBackup, defaultBackup)
+
+    expect(readBackupDirectory(pointerDirectory, [], defaultBackup)).toBe(customBackup)
+    expect(existsSync(join(pointerDirectory, 'backup-location.json'))).toBe(true)
+
+    writeBackupDirectory(pointerDirectory, defaultBackup, defaultBackup)
+
+    expect(readBackupDirectory(pointerDirectory, [], defaultBackup)).toBe(defaultBackup)
+    expect(existsSync(join(pointerDirectory, 'backup-location.json'))).toBe(false)
+    expect(existsSync(join(pointerDirectory, 'backup-location.bak.json'))).toBe(false)
   })
 })
 

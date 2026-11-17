@@ -650,6 +650,12 @@ export interface DataLocationInfo {
   restartRequired?: boolean
 }
 
+export interface BackupLocationInfo {
+  directory: string
+  defaultDirectory: string
+  isDefault: boolean
+}
+
 export type DataLocationConflictAction = 'load' | 'overwrite'
 
 export type DataLocationChoiceResult =
@@ -898,6 +904,10 @@ export interface AutologinApi {
     getDataLocation: () => Promise<DataLocationInfo>
     chooseDataLocation: () => Promise<DataLocationChoiceResult | null>
     chooseRecordingDraftDirectory: () => Promise<string | null>
+    getBackupLocation: () => Promise<BackupLocationInfo>
+    chooseBackupLocation: () => Promise<BackupLocationInfo | null>
+    restoreDefaultBackupLocation: () => Promise<BackupLocationInfo>
+    openBackupLocation: () => Promise<void>
     resolveDataLocationConflict: (
       directory: string,
       action: DataLocationConflictAction

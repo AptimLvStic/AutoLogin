@@ -431,6 +431,12 @@ fn handle_backend_control(
                 // blocked event loop.
                 "embedded-browser-open" => open_embedded_browser(&app, &payload),
                 "embedded-browser-control" => control_embedded_browser(&app, &payload),
+                "open-path" => payload
+                    .get("path")
+                    .and_then(Value::as_str)
+                    .ok_or_else(|| "缺少文件路径".to_string())
+                    .and_then(|path| open_path(path.to_string()))
+                    .map(|_| Value::Null),
                 _ => Err(format!("未知的本地窗口操作：{action}")),
             };
             let response = match result {

@@ -4831,16 +4831,16 @@ export function LibraryScreen({
         >
           {isAccountCollectionView && (
             <div className="account-workspace">
-            <AccountTabs
-              tabs={visibleTabs}
-              activeTabId={activeTabId}
-              bookmarkMode={view === 'bookmarks'}
-              busy={tabBusy}
-              onSelect={(tab) => void selectTab(tab)}
-              onOpenMenu={openTabMenu}
-              onClose={(tab, anchor) => openTabClosePrompt(tab, anchor)}
-              controls={
-                showDatabaseEmptyState ? null : (
+            {!showDatabaseEmptyState && (
+              <AccountTabs
+                tabs={visibleTabs}
+                activeTabId={activeTabId}
+                bookmarkMode={view === 'bookmarks'}
+                busy={tabBusy}
+                onSelect={(tab) => void selectTab(tab)}
+                onOpenMenu={openTabMenu}
+                onClose={(tab, anchor) => openTabClosePrompt(tab, anchor)}
+                controls={
                   <>
                     <div
                       ref={searchContainerRef}
@@ -4942,9 +4942,9 @@ export function LibraryScreen({
                       />
                     )}
                   </>
-                )
-              }
-            />
+                }
+              />
+            )}
             {showDatabaseEmptyState ? (
               <DatabaseWorkspaceEmptyState
                 bookmarkMode={view === 'bookmarks'}

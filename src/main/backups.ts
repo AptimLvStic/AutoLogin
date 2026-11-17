@@ -12,7 +12,7 @@ import {
   statSync,
   writeSync
 } from 'node:fs'
-import { basename, join } from 'node:path'
+import { basename, join, resolve } from 'node:path'
 import { randomBytes } from 'node:crypto'
 import type { BackupRecord } from '@shared/types'
 
@@ -22,8 +22,8 @@ const MAX_BACKUPS = 3
 export class BackupManager {
   private readonly directory: string
 
-  constructor(dataDirectory: string) {
-    this.directory = join(dataDirectory, 'backups')
+  constructor(directory: string) {
+    this.directory = resolve(directory)
   }
 
   get path(): string {

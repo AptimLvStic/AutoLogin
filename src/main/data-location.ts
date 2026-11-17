@@ -13,6 +13,10 @@ import { dirname, isAbsolute, join, parse, relative, resolve } from 'node:path'
 
 const LOCATION_FILE = 'data-location.json'
 const LOCATION_BACKUP_FILE = 'data-location.bak.json'
+const BACKUP_LOCATION_FILE = 'backup-location.json'
+const BACKUP_LOCATION_BACKUP_FILE = 'backup-location.bak.json'
+const DATA_LOCATION_FILES = [LOCATION_FILE, LOCATION_BACKUP_FILE] as const
+const BACKUP_LOCATION_FILES = [BACKUP_LOCATION_FILE, BACKUP_LOCATION_BACKUP_FILE] as const
 const MANAGED_DATA_ENTRIES = [
   'vault.enc',
   'vault.enc.bak',
@@ -83,25 +87,12 @@ export function readDataDirectory(
   additionalDirectories: string[] = [],
   defaultDirectory = configDirectory
 ): string {
-  for (const directory of [configDirectory, ...additionalDirectories]) {
-    for (const fileName of [LOCATION_FILE, LOCATION_BACKUP_FILE]) {
-      const pointerPath = join(directory, fileName)
-      if (!existsSync(pointerPath)) continue
-      try {
-        const parsed = JSON.parse(readFileSync(pointerPath, 'utf8')) as Partial<DataLocationFile>
-        if (
-          parsed.version === 1 &&
-          typeof parsed.directory === 'string' &&
-          isAbsolute(parsed.directory)
-        ) {
-          return resolve(parsed.directory)
-        }
-      } catch {
-        // A damaged location pointer falls back to the next durable copy.
-      }
-    }
-  }
-  return resolve(defaultDirectory)
+  return (
+    readLocationPointer(
+      [configDirectory, ...additionalDirectories],
+      DATA_LOCATION_FILES
+    ) ?? resolve(defaultDirectory)
+  )
 }
 
 export function writeDataDirectory(configDirectory: string, dataDirectory: string): void {
@@ -120,6 +111,71 @@ export function writeDataDirectory(configDirectory: string, dataDirectory: strin
   const payload: DataLocationFile = { version: 1, directory: target }
   writeAtomicPointer(backupPointerPath, JSON.stringify(payload))
   writeAtomicPointer(pointerPath, JSON.stringify(payload))
+}
+
+export function readBackupDirectory(
+  configDirectory: string,
+  additionalDirectories: string[] = [],
+  defaultDirectory = configDirectory
+): string {
+  return (
+    readLocationPointer(
+      [configDirectory, ...additionalDirectories],
+      BACKUP_LOCATION_FILES
+    ) ?? resolve(defaultDirectory)
+  )
+}
+
+export function writeBackupDirectory(
+  configDirectory: string,
+  backupDirectory: string,
+  defaultDirectory: string
+): void {
+  const pointerPath = join(configDirectory, BACKUP_LOCATION_FILE)
+  const backupPointerPath = join(configDirectory, BACKUP_LOCATION_BACKUP_FILE)
+  const target = resolve(backupDirectory)
+  const fallback = resolve(defaultDirectory)
+
+  if (samePath(target, fallback)) {
+    rmSync(pointerPath, { force: true })
+    rmSync(backupPointerPath, { force: true })
+    return
+  }
+
+  mkdirSync(configDirectory, { recursive: true })
+  const payload: DataLocationFile = { version: 1, directory: target }
+  writeAtomicPointer(backupPointerPath, JSON.stringify(payload))
+  writeAtomicPointer(pointerPath, JSON.stringify(payload))
+}
+
+export function defaultDataDirectoryForExecutable(executablePath: string): string {
+  const installDirectory = dirname(resolve(executablePath))
+  return join(dirname(installDirectory), 'AutoLogin-Data')
+}
+
+export function migrateLegacyDefaultDataDirectory(
+  pointerDirectory: string,
+  legacyDirectory: string,
+  defaultDirectory: string
+): string {
+  const legacy = resolve(legacyDirectory)
+  const target = resolve(defaultDirectory)
+  if (samePath(legacy, target)) {
+    return target
+  }
+  if (hasVault(target) || !hasManagedDataDirectory(legacy)) {
+    return target
+  }
+  if (hasManagedDataDirectory(target)) {
+    return legacy
+  }
+  try {
+    migrateDataDirectory(pointerDirectory, legacy, target)
+    return target
+  } catch {
+    const committed = readDataDirectory(pointerDirectory, [], legacy)
+    return hasVault(committed) ? committed : legacy
+  }
 }
 
 function writeAtomicPointer(pointerPath: string, payload: string): void {
@@ -227,11 +283,12 @@ export function recoverDataDirectoryFromInstall(
   configDirectory: string,
   currentDirectory: string,
   installDirectory: string,
-  pointerDirectory = configDirectory
+  pointerDirectory = configDirectory,
+  stableDirectory = join(resolve(configDirectory), 'Data')
 ): string {
   const current = resolve(currentDirectory)
   const install = resolve(installDirectory)
-  const stable = join(resolve(configDirectory), 'Data')
+  const stable = resolve(stableDirectory)
   const currentIsInstalled = isNested(install, current) || samePath(install, current)
 
   if (!currentIsInstalled) {
@@ -288,6 +345,31 @@ function isNested(parent: string, child: string): boolean {
 
 function hasVault(directory: string): boolean {
   return existsSync(join(resolve(directory), 'vault.enc'))
+}
+
+function readLocationPointer(
+  directories: string[],
+  fileNames: readonly string[]
+): string | null {
+  for (const directory of directories) {
+    for (const fileName of fileNames) {
+      const pointerPath = join(directory, fileName)
+      if (!existsSync(pointerPath)) continue
+      try {
+        const parsed = JSON.parse(readFileSync(pointerPath, 'utf8')) as Partial<DataLocationFile>
+        if (
+          parsed.version === 1 &&
+          typeof parsed.directory === 'string' &&
+          isAbsolute(parsed.directory)
+        ) {
+          return resolve(parsed.directory)
+        }
+      } catch {
+        // A damaged location pointer falls back to the next durable copy.
+      }
+    }
+  }
+  return null
 }
 
 export function hasManagedDataDirectory(directory: string): boolean {

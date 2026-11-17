@@ -3,7 +3,6 @@ import { spawn } from 'node:child_process'
 import { existsSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { homedir, tmpdir } from 'node:os'
 import { basename, dirname, isAbsolute, join, resolve } from 'node:path'
-import { pathToFileURL } from 'node:url'
 import { ProxyAgent, fetch as undiciFetch } from 'undici'
 
 declare global {
@@ -762,13 +761,10 @@ export const shell = {
   },
   openPath: async (path: string): Promise<string> => {
     if (!existsSync(path)) return '文件不存在'
-    if (statSync(path).isDirectory()) {
-      await runDetachedProcess('explorer.exe', [path])
-    } else {
-      await runDetachedProcess('rundll32.exe', [
-        'url.dll,FileProtocolHandler',
-        pathToFileURL(path).href
-      ])
+    try {
+      await requestNative('open-path', { path })
+    } catch (error) {
+      return error instanceof Error ? error.message : String(error)
     }
     return ''
   },

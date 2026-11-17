@@ -35,6 +35,7 @@ import {
   type AppSettingsPatch,
   type AppUpdateState,
   type AutoLockMinutes,
+  type BackupLocationInfo,
   type BackupRecord,
   type ColorMode,
   type DataLocationConflictAction,
@@ -106,6 +107,11 @@ export function SettingsPage({
   const [dataLocation, setDataLocation] = useState<DataLocationInfo | null>(null)
   const [dataLocationLoading, setDataLocationLoading] = useState(true)
   const [dataLocationError, setDataLocationError] = useState('')
+  const [backupLocation, setBackupLocation] = useState<BackupLocationInfo | null>(null)
+  const [backupLocationLoading, setBackupLocationLoading] = useState(true)
+  const [backupLocationError, setBackupLocationError] = useState('')
+  const [choosingBackupLocation, setChoosingBackupLocation] = useState(false)
+  const [openingBackupLocation, setOpeningBackupLocation] = useState(false)
   const [locationBusy, setLocationBusy] = useState(false)
   const [locationConflict, setLocationConflict] = useState<{ directory: string } | null>(null)
   const [locationConflictBusy, setLocationConflictBusy] =
@@ -167,9 +173,12 @@ export function SettingsPage({
   async function loadSettingsInfo(): Promise<void> {
     setDataLocationLoading(true)
     setDataLocationError('')
-    const [aboutResult, locationResult] = await Promise.allSettled([
+    setBackupLocationLoading(true)
+    setBackupLocationError('')
+    const [aboutResult, locationResult, backupLocationResult] = await Promise.allSettled([
       window.autologin.app.getAbout(),
-      window.autologin.app.getDataLocation()
+      window.autologin.app.getDataLocation(),
+      window.autologin.app.getBackupLocation()
     ])
     if (aboutResult.status === 'fulfilled') {
       setAbout(aboutResult.value)
@@ -191,7 +200,22 @@ export function SettingsPage({
       setDataLocationError(message)
       notify('error', message)
     }
+    if (backupLocationResult.status === 'fulfilled') {
+      setBackupLocation(backupLocationResult.value)
+    } else {
+      const message =
+        backupLocationResult.reason instanceof Error
+          ? backupLocationResult.reason.message
+          : tr(
+              '无法读取自动备份位置',
+              'Could not read the backup location.',
+              '無法讀取自動備份位置'
+            )
+      setBackupLocationError(message)
+      notify('error', message)
+    }
     setDataLocationLoading(false)
+    setBackupLocationLoading(false)
   }
 
   async function changeAutoLock(value: AutoLockMinutes): Promise<void> {
@@ -728,6 +752,96 @@ export function SettingsPage({
       )
     } finally {
       setOpeningDataLocation(false)
+    }
+  }
+
+  async function chooseBackupLocation(): Promise<void> {
+    if (choosingBackupLocation) return
+    setChoosingBackupLocation(true)
+    try {
+      const next = await window.autologin.app.chooseBackupLocation()
+      if (!next) return
+      setBackupLocation(next)
+      setBackupLocationError('')
+      await loadBackups()
+      notify(
+        'success',
+        tr(
+          '自动备份保存位置已更新',
+          'Automatic backup location updated.',
+          '自動備份儲存位置已更新'
+        )
+      )
+    } catch (error) {
+      notify(
+        'error',
+        error instanceof Error
+          ? error.message
+          : tr(
+              '自动备份保存位置更新失败',
+              'Could not update the automatic backup location.',
+              '自動備份儲存位置更新失敗'
+            )
+      )
+    } finally {
+      setChoosingBackupLocation(false)
+    }
+  }
+
+  async function openBackupLocation(): Promise<void> {
+    if (openingBackupLocation) return
+    setOpeningBackupLocation(true)
+    try {
+      await window.autologin.app.openBackupLocation()
+      notify(
+        'success',
+        tr('已打开自动备份目录', 'Backup folder opened.', '已開啟自動備份目錄')
+      )
+    } catch (error) {
+      notify(
+        'error',
+        error instanceof Error
+          ? error.message
+          : tr(
+              '无法打开自动备份目录',
+              'Could not open the backup folder.',
+              '無法開啟自動備份目錄'
+            )
+      )
+    } finally {
+      setOpeningBackupLocation(false)
+    }
+  }
+
+  async function restoreDefaultBackupLocation(): Promise<void> {
+    if (choosingBackupLocation || !backupLocation) return
+    setChoosingBackupLocation(true)
+    try {
+      const next = await window.autologin.app.restoreDefaultBackupLocation()
+      setBackupLocation(next)
+      setBackupLocationError('')
+      await loadBackups()
+      notify(
+        'success',
+        tr(
+          '自动备份已恢复默认位置',
+          'Automatic backups restored to the default location.',
+          '自動備份已恢復預設位置'
+        )
+      )
+    } catch (error) {
+      notify(
+        'error',
+        error instanceof Error
+          ? error.message
+          : tr(
+              '恢复默认自动备份位置失败',
+              'Could not restore the default backup location.',
+              '恢復預設自動備份位置失敗'
+            )
+      )
+    } finally {
+      setChoosingBackupLocation(false)
     }
   }
 
@@ -1496,9 +1610,9 @@ export function SettingsPage({
                 icon={<FolderOpen size={17} />}
                 title={tr('数据保存位置', 'Data location', '資料儲存位置')}
                 description={tr(
-                  '保险库、账号配置、登录日志、备份和浏览器会话都保存在此目录。',
-                  'Vault, accounts, logs, backups and browser sessions are stored here.',
-                  '保險庫、帳號設定、登入日誌、備份和瀏覽器工作階段都儲存在此目錄。'
+                  '保险库、账号配置、登录日志和浏览器会话都保存在此目录；自动备份可单独设置。',
+                  'The vault, accounts, logs and browser sessions are stored here; automatic backups can use a separate folder.',
+                  '保險庫、帳號設定、登入日誌和瀏覽器工作階段都儲存在此目錄；自動備份可單獨設定。'
                 )}
               />
               <div className="settings-location">
@@ -1674,9 +1788,9 @@ export function SettingsPage({
                   <h4>{tr('自动备份', 'Automatic backups', '自動備份')}</h4>
                   <p>
                     {tr(
-                      '每次启动软件时静默备份当前加密保险库，滚动保留最新 3 份。',
-                      'The encrypted vault is backed up silently on every app launch, keeping the latest three copies.',
-                      '每次啟動軟體時靜默備份目前加密保險庫，滾動保留最新 3 份。'
+                      '每次启动软件时静默备份当前加密保险库，滚动保留最新 3 份。可单独选择保存位置，已有备份不会随目录切换移动。',
+                      'The encrypted vault is backed up silently on every app launch, keeping the latest three copies. You can choose a separate location; existing backups stay in the previous folder.',
+                      '每次啟動軟體時靜默備份目前加密保險庫，滾動保留最新 3 份。可單獨選擇儲存位置，既有備份不會隨目錄切換移動。'
                     )}
                   </p>
                 </div>
@@ -1687,6 +1801,80 @@ export function SettingsPage({
                   aria-label={tr('刷新备份列表', 'Refresh backups', '重新整理備份')}
                 >
                   <RefreshCw size={14} className={backupsLoading ? 'spin' : ''} />
+                </button>
+              </div>
+              <div className="settings-location">
+                <code>
+                  {backupLocationLoading
+                    ? tr('正在读取…', 'Loading…', '正在讀取…')
+                    : backupLocationError
+                      ? tr('读取失败', 'Could not load', '讀取失敗')
+                      : backupLocation?.directory}
+                </code>
+                {backupLocation && !backupLocationError && (
+                  <span className="settings-location__badge">
+                    {backupLocation.isDefault
+                      ? tr('默认位置', 'Default', '預設位置')
+                      : tr('自定义位置', 'Custom', '自訂位置')}
+                  </span>
+                )}
+              </div>
+              {backupLocationError && (
+                <div className="settings-notice settings-notice--error">
+                  <TriangleAlert size={16} />
+                  <span>{backupLocationError}</span>
+                  <button className="text-button" onClick={() => void loadSettingsInfo()}>
+                    {tr('重试', 'Retry', '重試')}
+                  </button>
+                </div>
+              )}
+              <div className="settings-inline-actions settings-location-actions">
+                <button
+                  className={`button button--soft${choosingBackupLocation ? ' is-loading' : ''}`}
+                  onClick={() => void chooseBackupLocation()}
+                  disabled={choosingBackupLocation || backupLocationLoading}
+                  aria-busy={choosingBackupLocation}
+                >
+                  {choosingBackupLocation ? (
+                    <LoaderCircle size={15} className="spin" />
+                  ) : (
+                    <FolderOpen size={15} />
+                  )}
+                  {choosingBackupLocation
+                    ? tr('正在保存…', 'Saving…', '正在儲存…')
+                    : tr('更改位置', 'Change location', '變更位置')}
+                </button>
+                <button
+                  className="button button--ghost"
+                  onClick={() => void openBackupLocation()}
+                  disabled={
+                    openingBackupLocation ||
+                    backupLocationLoading ||
+                    Boolean(backupLocationError)
+                  }
+                  aria-busy={openingBackupLocation}
+                >
+                  {openingBackupLocation ? (
+                    <LoaderCircle size={15} className="spin" />
+                  ) : (
+                    <FolderOpen size={15} />
+                  )}
+                  {openingBackupLocation
+                    ? tr('打开中…', 'Opening…', '開啟中…')
+                    : tr('打开目录', 'Open folder', '開啟目錄')}
+                </button>
+                <button
+                  type="button"
+                  className="reset-setting-button"
+                  onClick={() => void restoreDefaultBackupLocation()}
+                  disabled={
+                    choosingBackupLocation ||
+                    !backupLocation ||
+                    backupLocation.isDefault
+                  }
+                >
+                  <RotateCcw size={14} />
+                  {tr('恢复默认位置', 'Restore default', '恢復預設位置')}
                 </button>
               </div>
               {backupsLoading ? (

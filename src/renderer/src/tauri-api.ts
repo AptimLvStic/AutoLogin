@@ -43,6 +43,10 @@ const CALL_LABELS: Record<string, string> = {
   'network:test-proxy': '测试网络连接',
   'app:choose-data-location': '选择数据保存位置',
   'app:choose-recording-draft-directory': '选择录制副本保存位置',
+  'app:get-backup-location': '读取自动备份位置',
+  'app:choose-backup-location': '选择自动备份保存位置',
+  'app:restore-default-backup-location': '恢复默认自动备份位置',
+  'app:open-backup-location': '打开自动备份目录',
   'app:resolve-data-location-conflict': '处理数据位置冲突',
   'app:restore-default-data-location': '恢复默认数据位置',
   'app:open-data-location': '打开数据目录',
@@ -308,6 +312,11 @@ const api: AutologinApi = {
     chooseDataLocation: () => call('app:choose-data-location'),
     chooseRecordingDraftDirectory: () =>
       call('app:choose-recording-draft-directory'),
+    getBackupLocation: () => call('app:get-backup-location'),
+    chooseBackupLocation: () => call('app:choose-backup-location'),
+    restoreDefaultBackupLocation: () =>
+      call('app:restore-default-backup-location'),
+    openBackupLocation: () => call('app:open-backup-location'),
     resolveDataLocationConflict: (directory, action) =>
       call('app:resolve-data-location-conflict', { directory, action }),
     restoreDefaultDataLocation: () => call('app:restore-default-data-location'),

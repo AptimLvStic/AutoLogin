@@ -47,7 +47,7 @@ AutoLogin 的做法是：把一次成功的登录过程完整演一遍，记录�
 - 账号支持站点、分组、多账号、搜索、批量打开、列宽调整和显示列配置。
 - 书签支持分组、访问默认浏览器和批量打开，不包含账号密码、自动提交或登录流程。
 - 账号与书签共用回收站，可恢复或永久删除，并显示记录来源标签。
-- 内置密码生成器、闲置自动锁定、三语界面、亮暗模式、主题与界面比例、网络代理和数据目录迁移。
+- 内置密码生成器、闲置自动锁定、三语界面、亮暗模式、主题与界面比例、网络代理、数据目录迁移和自动备份位置设置。
 
 ## 安全设计
 
@@ -95,23 +95,25 @@ AutoLogin 不在应用内嵌网页，而是调用 Windows 默认浏览器，并�
 
 ## 数据保存位置
 
-默认数据目录为：
+安装版默认数据目录与安装目录同级，但位于安装目录外部：
 
 ```text
-%APPDATA%\AutoLogin
+<安装目录的上一级>\AutoLogin-Data
 ```
 
-可在“设置 → 数据保存位置”中迁移到其他本地目录。自定义路径会持久化到 `%APPDATA%\AutoLogin` 下的位置指针，常规覆盖升级不会把它重置为默认目录。
+例如软件安装在 `D:\Tools\AutoLogin`，默认数据目录为 `D:\Tools\AutoLogin-Data`。这样既与软件位置保持同级，也不会因覆盖升级而写入安装目录。
+
+可在“设置 → 数据保存位置”中迁移到其他本地目录。自定义路径会持久化到 `%APPDATA%\AutoLogin` 下的位置指针，常规覆盖升级不会把它重置为默认目录。从旧版升级时，如果 `%APPDATA%\AutoLogin` 仍保存着数据，会先校验并迁移到新的默认目录；迁移失败则继续使用旧目录，避免数据被隐藏。
+
+自动备份默认保存在数据目录下的 `backups` 文件夹，也可在“设置 → 自动备份”中单独选择保存位置。切换后，新备份写入新目录，已有备份保留在原目录。
 
 目录中的主要文件：
 
 ```text
-%APPDATA%\AutoLogin\
+AutoLogin-Data\
 ├─ vault.enc
 ├─ vault.enc.bak
-├─ data-location.json
-├─ data-location.bak.json
-├─ backups\
+├─ backups\                 # 自动备份默认位置
 ├─ tabs\
 │  ├─ autologin\<数据库名>.autologin
 │  ├─ kdbx\<数据库名>.kdbx
@@ -122,6 +124,16 @@ AutoLogin 不在应用内嵌网页，而是调用 Windows 默认浏览器，并�
 └─ logs\
    ├─ app.jsonl
    └─ login-failures.jsonl
+```
+
+位置设置指针保存在：
+
+```text
+%APPDATA%\AutoLogin\
+├─ data-location.json
+├─ data-location.bak.json
+├─ backup-location.json
+└─ backup-location.bak.json
 ```
 
 - 关闭数据库标签页只隐藏页面，不会删除对应的磁盘文件。

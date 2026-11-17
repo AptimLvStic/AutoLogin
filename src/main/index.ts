@@ -22,7 +22,7 @@ import {
   statSync,
   writeFileSync
 } from 'node:fs'
-import { basename, dirname, join, resolve } from 'node:path'
+import { basename, dirname, join, parse, resolve } from 'node:path'
 import { randomUUID } from 'node:crypto'
 import { fileURLToPath } from 'node:url'
 import {
@@ -99,6 +99,7 @@ import type {
   AboutInfo,
   AppUpdateState,
   AppSettings,
+  BackupLocationInfo,
   BackupRecord,
   BookmarkVisitResult,
   CredentialHistoryEntry,
@@ -170,11 +171,15 @@ import {
   type ParsedImport
 } from './data-transfer'
 import {
+  defaultDataDirectoryForExecutable,
   hasManagedDataDirectory,
+  migrateLegacyDefaultDataDirectory,
   migrateDataDirectory,
   pathIsInside,
+  readBackupDirectory,
   readDataDirectory,
   recoverDataDirectoryFromInstall,
+  writeBackupDirectory,
   writeDataDirectory
 } from './data-location'
 import { repairGroupDefinitions } from './group-definitions'
@@ -249,7 +254,10 @@ let sessionIndex: SessionIndex
 let clipboardClearTimer: NodeJS.Timeout | null = null
 let configDirectory = ''
 let dataLocationPointerDirectory = ''
+let defaultDataDirectory = ''
 let dataDirectory = ''
+let defaultBackupDirectory = ''
+let backupDirectory = ''
 let updateState: AppUpdateState = {
   phase: 'idle',
   currentVersion: app.getVersion(),
@@ -310,21 +318,33 @@ app.whenReady().then(() => {
     allowDevelopmentOverrides && process.env.AUTOLOGIN_DATA_LOCATION_POINTER_DIR
       ? resolve(process.env.AUTOLOGIN_DATA_LOCATION_POINTER_DIR)
       : join(app.getPath('appData'), 'AutoLogin')
+  defaultDataDirectory = allowDevelopmentOverrides
+    ? resolve(configDirectory)
+    : defaultDataDirectoryForExecutable(app.getPath('exe'))
   dataDirectory = readDataDirectory(
     dataLocationPointerDirectory,
     [configDirectory],
-    configDirectory
+    defaultDataDirectory
   )
   dataDirectory = recoverDataDirectoryFromInstall(
     configDirectory,
     dataDirectory,
     dirname(app.getPath('exe')),
-    dataLocationPointerDirectory
+    dataLocationPointerDirectory,
+    defaultDataDirectory
   )
+  if (sameDirectory(dataDirectory, defaultDataDirectory)) {
+    dataDirectory = migrateLegacyDefaultDataDirectory(
+      dataLocationPointerDirectory,
+      configDirectory,
+      defaultDataDirectory
+    )
+  }
   writeDataDirectory(dataLocationPointerDirectory, dataDirectory)
   if (dataLocationPointerDirectory !== configDirectory) {
     writeDataDirectory(configDirectory, dataDirectory)
   }
+  initializeBackupLocation()
   initializeDataStores()
   startBlockWatchdog((durationMs, trace) => {
     appendAppLog(dataDirectory, {
@@ -504,8 +524,25 @@ function initializeDataStores(): void {
   vault.setSaveListener((data, options) =>
     syncTabSnapshotFiles(data, options?.tabIds)
   )
-  backupManager = new BackupManager(dataDirectory)
+  backupManager = new BackupManager(backupDirectory)
   sessionIndex = new SessionIndex(dataDirectory)
+}
+
+function initializeBackupLocation(): void {
+  defaultBackupDirectory = join(dataDirectory, 'backups')
+  backupDirectory = readBackupDirectory(
+    dataLocationPointerDirectory,
+    [configDirectory],
+    defaultBackupDirectory
+  )
+  writeBackupDirectory(
+    dataLocationPointerDirectory,
+    backupDirectory,
+    defaultBackupDirectory
+  )
+  if (dataLocationPointerDirectory !== configDirectory) {
+    writeBackupDirectory(configDirectory, backupDirectory, defaultBackupDirectory)
+  }
 }
 
 function syncTabSnapshotFiles(data: VaultData, tabIds?: string[]): void {
@@ -2289,11 +2326,22 @@ function registerIpc(): void {
     assertTrustedSender(event)
     return dataLocationInfo()
   })
+  ipcMain.handle('app:get-backup-location', (event): BackupLocationInfo => {
+    assertTrustedSender(event)
+    return backupLocationInfo()
+  })
   ipcMain.handle(
     'app:choose-data-location',
     async (event): Promise<DataLocationChoiceResult | null> => {
       assertTrustedSender(event)
       return chooseDataLocation()
+    }
+  )
+  ipcMain.handle(
+    'app:choose-backup-location',
+    async (event): Promise<BackupLocationInfo | null> => {
+      assertTrustedSender(event)
+      return chooseBackupLocation()
     }
   )
   ipcMain.handle(
@@ -2330,12 +2378,27 @@ function registerIpc(): void {
     assertTrustedSender(event)
     return restoreDefaultDataLocation()
   })
+  ipcMain.handle(
+    'app:restore-default-backup-location',
+    (event): BackupLocationInfo => {
+      assertTrustedSender(event)
+      return restoreDefaultBackupLocation()
+    }
+  )
   ipcMain.handle('app:open-data-location', async (event) => {
     assertTrustedSender(event)
     mkdirSync(dataDirectory, { recursive: true })
     const error = await shell.openPath(dataDirectory)
     if (error) {
       throw new Error(`无法打开数据目录：${error}`)
+    }
+  })
+  ipcMain.handle('app:open-backup-location', async (event) => {
+    assertTrustedSender(event)
+    mkdirSync(backupDirectory, { recursive: true })
+    const error = await shell.openPath(backupDirectory)
+    if (error) {
+      throw new Error(`无法打开自动备份目录：${error}`)
     }
   })
   ipcMain.handle('app:open-failure-log', async (event) => {
@@ -4355,9 +4418,17 @@ function assertTrustedSender(event: IpcMainInvokeEvent | IpcMainEvent): void {
 function dataLocationInfo(restartRequired = false): DataLocationInfo {
   return {
     directory: dataDirectory,
-    defaultDirectory: configDirectory,
-    isDefault: sameDirectory(dataDirectory, configDirectory),
+    defaultDirectory: defaultDataDirectory,
+    isDefault: sameDirectory(dataDirectory, defaultDataDirectory),
     ...(restartRequired ? { restartRequired: true } : {})
+  }
+}
+
+function backupLocationInfo(): BackupLocationInfo {
+  return {
+    directory: backupDirectory,
+    defaultDirectory: defaultBackupDirectory,
+    isDefault: sameDirectory(backupDirectory, defaultBackupDirectory)
   }
 }
 
@@ -4405,6 +4476,41 @@ async function chooseRecordingDraftDirectory(): Promise<string | null> {
   }
 
   const target = resolve(selected)
+  ensureWritableDirectory(target)
+  return target
+}
+
+async function chooseBackupLocation(): Promise<BackupLocationInfo | null> {
+  if (!mainWindow) {
+    return null
+  }
+  const selection = await dialog.showOpenDialog(mainWindow, {
+    title: '选择自动备份保存目录',
+    buttonLabel: '使用此文件夹',
+    properties: ['openDirectory', 'createDirectory']
+  })
+  const selected = selection.filePaths[0]
+  if (selection.canceled || !selected) {
+    return null
+  }
+
+  const target = resolve(selected)
+  assertBackupLocationTarget(target)
+  ensureWritableDirectory(target)
+  writeBackupDirectory(
+    dataLocationPointerDirectory,
+    target,
+    defaultBackupDirectory
+  )
+  if (dataLocationPointerDirectory !== configDirectory) {
+    writeBackupDirectory(configDirectory, target, defaultBackupDirectory)
+  }
+  backupDirectory = target
+  backupManager = new BackupManager(backupDirectory)
+  return backupLocationInfo()
+}
+
+function ensureWritableDirectory(target: string): void {
   mkdirSync(target, { recursive: true })
   const probe = join(target, `.autologin-write-test-${randomUUID()}`)
   try {
@@ -4412,7 +4518,6 @@ async function chooseRecordingDraftDirectory(): Promise<string | null> {
   } finally {
     rmSync(probe, { force: true })
   }
-  return target
 }
 
 async function resolveDataLocationConflict(
@@ -4436,6 +4541,15 @@ function assertDataLocationTarget(target: string): void {
   }
 }
 
+function assertBackupLocationTarget(target: string): void {
+  if (sameDirectory(target, parse(target).root)) {
+    throw new Error('不能直接使用磁盘根目录作为自动备份目录')
+  }
+  if (pathIsInside(dirname(app.getPath('exe')), target)) {
+    throw new Error('自动备份目录不能位于 AutoLogin 安装目录内，以免升级时丢失')
+  }
+}
+
 async function applyDataLocationChange(
   targetDirectory: string,
   mode: 'migrate' | 'load' | 'overwrite'
@@ -4454,6 +4568,7 @@ async function applyDataLocationChange(
     }
     writeDataDirectory(configDirectory, target)
     dataDirectory = target
+    initializeBackupLocation()
     initializeDataStores()
     ensureLoginManagers()
     sendToRenderer('vault:locked')
@@ -4464,8 +4579,9 @@ async function applyDataLocationChange(
     dataDirectory = readDataDirectory(
       dataLocationPointerDirectory,
       [configDirectory],
-      configDirectory
+      defaultDataDirectory
     )
+    initializeBackupLocation()
     initializeDataStores()
     ensureLoginManagers()
     sendToRenderer('vault:locked')
@@ -4474,7 +4590,7 @@ async function applyDataLocationChange(
 }
 
 async function restoreDefaultDataLocation(): Promise<DataLocationInfo> {
-  const target = resolve(configDirectory)
+  const target = resolve(defaultDataDirectory)
   if (sameDirectory(target, dataDirectory)) {
     return dataLocationInfo()
   }
@@ -4485,6 +4601,7 @@ async function restoreDefaultDataLocation(): Promise<DataLocationInfo> {
     migrateDataDirectory(dataLocationPointerDirectory, dataDirectory, target)
     writeDataDirectory(configDirectory, target)
     dataDirectory = target
+    initializeBackupLocation()
     initializeDataStores()
     ensureLoginManagers()
     sendToRenderer('vault:locked')
@@ -4493,13 +4610,29 @@ async function restoreDefaultDataLocation(): Promise<DataLocationInfo> {
     dataDirectory = readDataDirectory(
       dataLocationPointerDirectory,
       [configDirectory],
-      configDirectory
+      defaultDataDirectory
     )
+    initializeBackupLocation()
     initializeDataStores()
     ensureLoginManagers()
     sendToRenderer('vault:locked')
     throw error
   }
+}
+
+function restoreDefaultBackupLocation(): BackupLocationInfo {
+  const target = resolve(defaultBackupDirectory)
+  writeBackupDirectory(
+    dataLocationPointerDirectory,
+    target,
+    defaultBackupDirectory
+  )
+  if (dataLocationPointerDirectory !== configDirectory) {
+    writeBackupDirectory(configDirectory, target, defaultBackupDirectory)
+  }
+  backupDirectory = target
+  backupManager = new BackupManager(backupDirectory)
+  return backupLocationInfo()
 }
 
 function initializeAutoUpdater(): void {

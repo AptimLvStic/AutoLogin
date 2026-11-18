@@ -165,12 +165,13 @@ export const siteSchema = z.object({
   id: idSchema,
   tabId: tabIdSchema,
   name: z.string().min(1).max(80),
-  startUrl: httpUrl,
-  allowedOrigins: z.array(originSchema).min(1),
+  startUrl: httpUrl.or(z.literal('')),
+  allowedOrigins: z.array(originSchema),
   autoSubmit: z.boolean(),
   group: groupPathSchema.optional(),
   icon: siteIconDataUrlSchema.optional(),
   recipe: loginRecipeSchema.optional(),
+  needsReview: z.boolean().optional(),
   createdAt: z.string(),
   updatedAt: z.string()
 })
@@ -202,6 +203,8 @@ export const storedAccountSchema = z.object({
   siteId: idSchema,
   label: z.string().min(1).max(80),
   username: z.string().max(320),
+  needsUsername: z.boolean().optional(),
+  needsSecret: z.boolean().optional(),
   password: z.string().max(2048),
   credentialHistory: z
     .array(
@@ -323,6 +326,8 @@ export const appSettingsSchema = z.object({
   accountCopyShortcut: z.string().trim().min(1).max(40).default('Ctrl+C'),
   proxy: proxySettingsSchema.default(defaultProxySettings),
   recordingDraftDirectory: z.string().trim().max(4096).default(''),
+  defaultLoginBrowser: z.enum(LOGIN_BROWSERS).default('builtin'),
+  pureBrowserMode: z.boolean().default(true),
   groupOrder: groupOrderSchema.default([]),
   groupOrders: z.record(z.string(), groupOrderSchema).default({})
 })
@@ -343,6 +348,8 @@ export const appSettingsPatchSchema = z
     accountCopyShortcut: z.string().trim().min(1).max(40).optional(),
     proxy: proxySettingsSchema.optional(),
     recordingDraftDirectory: z.string().trim().max(4096).optional(),
+    defaultLoginBrowser: z.enum(LOGIN_BROWSERS).optional(),
+    pureBrowserMode: z.boolean().optional(),
     groupOrder: groupOrderSchema.optional(),
     groupOrders: z.record(z.string(), groupOrderSchema).optional()
   })
@@ -636,5 +643,24 @@ export const csvImportInputSchema = z
   .object({
     mode: z.enum(['current', 'new']),
     tabId: idSchema
+  })
+  .strict()
+
+export const importCommitInputSchema = z
+  .object({
+    token: idSchema,
+    selectedIndexes: z
+      .array(z.number().int().min(0).max(999))
+      .max(1_000)
+      .refine(
+        (indexes) => new Set(indexes).size === indexes.length,
+        '导入条目不能重复'
+      )
+  })
+  .strict()
+
+export const importPreviewCancelInputSchema = z
+  .object({
+    token: idSchema
   })
   .strict()

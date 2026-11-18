@@ -150,6 +150,8 @@ export interface AppSettings {
   accountCopyShortcut: string
   proxy: ProxySettings
   recordingDraftDirectory: string
+  defaultLoginBrowser: LoginBrowser
+  pureBrowserMode: boolean
   groupOrder: string[]
   groupOrders: Record<string, string[]>
 }
@@ -296,6 +298,7 @@ export interface Site {
   group?: string
   icon?: string
   recipe?: LoginRecipe
+  needsReview?: boolean
   createdAt: string
   updatedAt: string
 }
@@ -306,6 +309,8 @@ export interface Account {
   siteId: string
   label: string
   username: string
+  needsUsername?: boolean
+  needsSecret?: boolean
   favorite: boolean
   loginStrategy: LoginStrategy
   loginBrowser: LoginBrowser
@@ -730,6 +735,42 @@ export interface ImportSkipDetail {
   reason: string
 }
 
+export type ImportMissingField = 'startUrl' | 'username' | 'password'
+
+export interface ImportPreviewCandidate {
+  index: number
+  rowNumber: number
+  siteName: string
+  startUrl: string
+  username: string
+  siteGroup?: string
+  missingFields: ImportMissingField[]
+  defaultSelected: boolean
+}
+
+export interface ImportPreview {
+  token: string
+  source: 'csv' | 'kdbx' | 'bookmarks'
+  fileName: string
+  readyCount: number
+  selectableCount: number
+  blockedCount: number
+  candidates: ImportPreviewCandidate[]
+  skipDetails: ImportSkipDetail[]
+  warnings: string[]
+}
+
+export interface ImportCommitInput {
+  token: string
+  selectedIndexes: number[]
+}
+
+export interface ImportPreviewCancelInput {
+  token: string
+}
+
+export type LocalDatabaseImportResult = DataImportResult | ImportPreview
+
 export interface DataImportResult {
   source: 'csv' | 'kdbx' | 'bookmarks' | 'autologin'
   tabId: string
@@ -925,6 +966,7 @@ export interface AutologinApi {
     ) => Promise<DataLocationInfo>
     restoreDefaultDataLocation: () => Promise<DataLocationInfo>
     openDataLocation: () => Promise<void>
+    resetBrowserProfile: () => Promise<void>
     openRecordingDraftDirectory: () => Promise<void>
     openFailureLog: () => Promise<void>
     listLoginLogs: (query?: LoginLogQuery) => Promise<LoginLogEntry[]>
@@ -949,14 +991,18 @@ export interface AutologinApi {
   data: {
     exportTab: (input: DataExportInput) => Promise<FileOperationResult>
     exportCsvTemplate: () => Promise<FileOperationResult>
-    importCsv: (input: CsvImportInput) => Promise<DataImportResult | null>
+    importCsv: (input: CsvImportInput) => Promise<ImportPreview | null>
     chooseDatabase: () => Promise<LocalDatabaseOpenSelection | null>
-    importDatabase: (input: LocalDatabaseImportInput) => Promise<DataImportResult>
+    importDatabase: (
+      input: LocalDatabaseImportInput
+    ) => Promise<LocalDatabaseImportResult>
     chooseKdbx: () => Promise<KdbxSelection | null>
-    importKdbx: (input: KdbxImportInput) => Promise<DataImportResult>
+    importKdbx: (input: KdbxImportInput) => Promise<ImportPreview>
     chooseAutologin: () => Promise<AutologinSelection | null>
     importAutologin: (input: AutologinImportInput) => Promise<DataImportResult>
     importBookmarks: () => Promise<DataImportResult | null>
+    commitImport: (input: ImportCommitInput) => Promise<DataImportResult>
+    cancelImportPreview: (input: ImportPreviewCancelInput) => Promise<void>
     listBackups: () => Promise<BackupRecord[]>
     restoreBackup: (backupId: string) => Promise<void>
   }

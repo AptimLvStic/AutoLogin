@@ -50,6 +50,7 @@ const CALL_LABELS: Record<string, string> = {
   'app:resolve-data-location-conflict': '处理数据位置冲突',
   'app:restore-default-data-location': '恢复默认数据位置',
   'app:open-data-location': '打开数据目录',
+  'app:reset-browser-profile': '重置浏览器配置',
   'app:open-recording-draft-directory': '打开录制副本目录',
   'app:clear-all-data': '清除本地数据',
   'app:restart': '重新启动应用',
@@ -60,6 +61,8 @@ const CALL_LABELS: Record<string, string> = {
   'data:import-kdbx': '导入 KDBX 数据库',
   'data:import-autologin': '导入配置',
   'data:import-bookmarks': '导入书签',
+  'data:commit-import': '确认导入',
+  'data:cancel-import-preview': '取消导入预览',
   'data:restore-backup': '恢复备份'
 }
 
@@ -84,6 +87,7 @@ function callTimeout(channel: string): number {
     channel === 'data:import-kdbx' ||
     channel === 'data:import-autologin' ||
     channel === 'data:import-bookmarks' ||
+    channel === 'app:reset-browser-profile' ||
     channel === 'app:download-update'
   ) {
     return LONG_CALL_TIMEOUT_MS
@@ -321,6 +325,7 @@ const api: AutologinApi = {
       call('app:resolve-data-location-conflict', { directory, action }),
     restoreDefaultDataLocation: () => call('app:restore-default-data-location'),
     openDataLocation: () => call('app:open-data-location'),
+    resetBrowserProfile: () => call('app:reset-browser-profile'),
     openRecordingDraftDirectory: () =>
       call('app:open-recording-draft-directory'),
     openFailureLog: () => call('app:open-failure-log'),
@@ -352,6 +357,8 @@ const api: AutologinApi = {
     chooseAutologin: () => call('data:choose-autologin'),
     importAutologin: (input) => call('data:import-autologin', input),
     importBookmarks: () => call('data:import-bookmarks'),
+    commitImport: (input) => call('data:commit-import', input),
+    cancelImportPreview: (input) => call('data:cancel-import-preview', input),
     listBackups: () => call('data:list-backups'),
     restoreBackup: (backupId) => call('data:restore-backup', backupId)
   },

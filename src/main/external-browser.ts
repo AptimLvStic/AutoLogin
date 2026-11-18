@@ -6,6 +6,7 @@ import { isHttpUrl } from '@shared/url'
 import pageAgentSource from 'virtual:page-agent-source'
 import type { DefaultBrowser } from './browser-discovery'
 import { buildBrowserArguments } from './browser-arguments'
+import { sanitizeProfilePreferences } from './browser-profile'
 import { CdpClient } from './cdp-client'
 
 const AGENT_WORLD = 'autologin-agent'
@@ -76,6 +77,7 @@ export interface ExternalBrowserHostOptions {
   headless: boolean
   proxy?: ProxySettings
   initialUrl?: string
+  pureMode?: boolean
   /**
    * SHA-256 SPKI fingerprints (base64) of certificates that may bypass TLS
    * validation. Empty by default: every certificate is verified, so a MITM
@@ -171,6 +173,7 @@ export class ExternalBrowserHost {
       throw new Error('未找到可用浏览器')
     }
     mkdirSync(options.profileDirectory, { recursive: true })
+    await sanitizeProfilePreferences(options.profileDirectory)
     const portFile = join(options.profileDirectory, DEBUG_PORT_FILE)
     rmSync(portFile, { force: true })
 

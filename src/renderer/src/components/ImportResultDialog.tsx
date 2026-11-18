@@ -151,9 +151,9 @@ export function ImportResultDialog({
 
         <p className="import-result-dialog__note">
           {tr(
-            '单次导入上限为 1,000 条；无登录地址或不完整的条目会保留在跳过明细中，可手动补录。',
-            'Each import is limited to 1,000 entries. Entries without a sign-in URL or other required fields are listed above and can be added manually.',
-            '單次匯入上限為 1,000 個項目；沒有登入位址或資料不完整的項目會保留在略過明細中，可手動補登。'
+            '单次导入上限为 1,000 条；无法识别的记录保留在跳过明细中，可在导入预览里选择导入的不完整记录已按占位值保存。',
+            'Each import is limited to 1,000 entries. Unrecognized records remain in the skipped list; incomplete entries selected in the preview were saved with placeholders.',
+            '單次匯入上限為 1,000 個項目；無法辨識的記錄保留在略過明細中，已在匯入預覽勾選的不完整記錄會以預留值儲存。'
           )}
         </p>
 

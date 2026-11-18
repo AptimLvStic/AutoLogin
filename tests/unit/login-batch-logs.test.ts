@@ -213,3 +213,53 @@ describe('login log persistence', () => {
     expect(existsSync(join(directory, 'BrowserProfiles', 'batch'))).toBe(false)
   })
 })
+
+describe('login batch browser startup', () => {
+  it('does not prewarm an external browser before an account needs it', async () => {
+    const directory = createLogFixture()
+    const accounts = ['account-1', 'account-2', 'account-3'].map((id) => ({
+      id,
+      label: id,
+      tabId: 'local',
+      siteId: `site-${id}`,
+      username: 'user',
+      password: 'secret',
+      loginBrowser: 'builtin' as const,
+      loginStrategy: 'auto' as const,
+      favorite: false,
+      createdAt: '2026-01-01T00:00:00.000Z',
+      updatedAt: '2026-01-01T00:00:00.000Z'
+    }))
+    const sites = accounts.map((account) => ({
+      id: account.siteId,
+      tabId: 'local',
+      name: account.label,
+      startUrl: `https://${account.id}.example/`,
+      allowedOrigins: [`https://${account.id}.example`],
+      autoSubmit: true,
+      createdAt: '2026-01-01T00:00:00.000Z',
+      updatedAt: '2026-01-01T00:00:00.000Z'
+    }))
+    const manager = new LoginBatchManager(
+      {
+        requireData: () => ({ accounts, sites }),
+        getSettings: () => ({})
+      } as never,
+      directory,
+      undefined,
+      true,
+      () => undefined
+    )
+    const internals = manager as unknown as {
+      ensureHost: (initialUrl?: string) => Promise<unknown>
+      pump: (generation: number) => void
+    }
+    const ensureHost = vi.spyOn(internals, 'ensureHost')
+    vi.spyOn(internals, 'pump').mockImplementation(() => undefined)
+
+    await manager.start(accounts.map((account) => account.id))
+
+    expect(ensureHost).not.toHaveBeenCalled()
+    await manager.close()
+  })
+})

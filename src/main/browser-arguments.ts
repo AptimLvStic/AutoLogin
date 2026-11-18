@@ -11,6 +11,7 @@ export interface BrowserLaunchArgumentsInput {
   headless: boolean
   proxy?: ProxySettings
   initialUrl?: string
+  pureMode?: boolean
   /**
    * SHA-256 SPKI fingerprints (base64) of certificates allowed to bypass TLS
    * validation. Empty by default: every certificate is verified, so a MITM
@@ -68,6 +69,16 @@ export function buildBrowserArguments(
     '--no-first-run',
     '--no-default-browser-check',
     '--disable-background-mode',
+    ...(options.pureMode !== false
+      ? [
+          '--disable-extensions',
+          '--disable-component-extensions-with-background-pages'
+        ]
+      : []),
+    '--hide-crash-restore-bubble',
+    '--disable-session-crashed-bubble',
+    '--no-service-autorun',
+    '--disable-features=Translate,MediaRouter',
     // Never pass the blanket --ignore-certificate-errors flag: it disables
     // verification for public sites too, and credentials are typed into pages.
     // Only explicitly pinned intranet certificates may bypass verification.

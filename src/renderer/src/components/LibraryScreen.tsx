@@ -130,7 +130,9 @@ type LibraryView =
   | 'settings'
 type GroupDropPosition = 'before' | 'after' | 'inside'
 type ColumnDropPosition = 'before' | 'after'
-type DrawerState = { mode: 'create'; siteId?: string } | { mode: 'edit'; accountId: string }
+type DrawerState =
+  | { mode: 'create'; siteId?: string }
+  | { mode: 'edit'; accountId: string; focusField?: 'url' | 'password' }
 type AccountMenuState =
   {
     kind: 'account'
@@ -3676,6 +3678,38 @@ export function LibraryScreen({
       }
       return
     }
+    if (!account.site.startUrl.trim()) {
+      setDrawer({
+        mode: 'edit',
+        accountId: account.id,
+        focusField: 'url'
+      })
+      notify(
+        'error',
+        tr(
+          `“${account.site.name}”缺少登录地址，请先补全`,
+          `“${account.site.name}” has no sign-in URL. Complete it first.`,
+          `「${account.site.name}」缺少登入位址，請先補全`
+        )
+      )
+      return
+    }
+    if (account.needsSecret) {
+      setDrawer({
+        mode: 'edit',
+        accountId: account.id,
+        focusField: 'password'
+      })
+      notify(
+        'error',
+        tr(
+          `“${account.site.name}”缺少密码，请先补全`,
+          `“${account.site.name}” has no password. Complete it first.`,
+          `「${account.site.name}」缺少密碼，請先補全`
+        )
+      )
+      return
+    }
     const opened = await onStartBatch([account.id])
     if (opened) {
       setDrawer(null)
@@ -4822,6 +4856,8 @@ export function LibraryScreen({
             mode={drawer.mode}
             bookmarkMode={view === 'bookmarks'}
             account={drawer.mode === 'edit' ? drawerAccount ?? undefined : undefined}
+            defaultLoginBrowser={settings.defaultLoginBrowser}
+            focusField={drawer.mode === 'edit' ? drawer.focusField : undefined}
             sites={sites}
             groups={groupDefinitions}
             initialSiteId={drawer.mode === 'create' ? drawer.siteId : undefined}
@@ -6647,7 +6683,9 @@ function AccountListRow({
 
   return (
     <article
-      className={`account-row${checked ? ' is-selected' : ''}`}
+      className={`account-row${checked ? ' is-selected' : ''}${
+        account.site.needsReview ? ' needs-review' : ''
+      }${account.needsSecret ? ' needs-secret' : ''}`}
       style={{ '--row-index': Math.min(index, 8) } as React.CSSProperties}
       title={tr(
         '双击编辑，右键查看更多操作',
@@ -6699,9 +6737,21 @@ function AccountListRow({
         <div>
           <div className="account-name-line">
             <strong>{account.site.name}</strong>
+            {account.site.needsReview && (
+              <span className="account-needs-badge">
+                {tr('待补全', 'Needs review', '待補全')}
+              </span>
+            )}
+            {account.needsSecret && (
+              <span className="account-needs-badge is-secret">
+                {tr('缺密码', 'No password', '缺密碼')}
+              </span>
+            )}
           </div>
           <small className="account-site-domain" title={account.site.startUrl}>
-            {siteDomain(account.site.startUrl)}
+            {account.site.startUrl
+              ? siteDomain(account.site.startUrl)
+              : tr('尚未填写登录地址', 'No sign-in URL', '尚未填寫登入位址')}
           </small>
         </div>
       </div>
@@ -6712,7 +6762,9 @@ function AccountListRow({
         data-column-key="username"
         style={{ order: accountColumnOrderStyle(columnOrder, 'username') }}
       >
-        <strong>{account.username}</strong>
+        <strong className={account.needsUsername ? 'is-placeholder' : ''}>
+          {account.needsUsername ? '—' : account.username}
+        </strong>
       </div>
       <div
         className={`account-group-cell${

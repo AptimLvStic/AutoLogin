@@ -222,6 +222,12 @@ export class LoginSessionManager {
     if (!site) {
       throw new Error('站点不存在')
     }
+    if (!site.startUrl.trim()) {
+      throw new Error('账号缺少登录地址，请先补全')
+    }
+    if (!account.password) {
+      throw new Error('账号缺少密码，请先补全')
+    }
     if (site.recipe && (account.recipes?.length ?? 0) === 0) {
       const legacyRecipe = {
         id: randomUUID(),
@@ -343,7 +349,8 @@ export class LoginSessionManager {
             profileDirectory: browserProfileDirectory(this.userDataPath, account.id),
             headless: this.headlessBrowser,
             proxy: this.vault.getSettings().proxy,
-            initialUrl: site.startUrl
+            initialUrl: site.startUrl,
+            pureMode: this.vault.getSettings().pureBrowserMode
           }))
       }
       this.host = host
@@ -1374,7 +1381,7 @@ export class LoginSessionManager {
     try {
       const commandPromise = this.runAgentCommand({
         type: 'fill-generic',
-        username: this.account.username,
+        username: this.loginUsername(),
         password: this.account.password,
         autoSubmit,
         recording
@@ -1406,6 +1413,10 @@ export class LoginSessionManager {
       })
       return null
     }
+  }
+
+  private loginUsername(): string {
+    return this.account?.needsUsername ? '' : this.account?.username ?? ''
   }
 
   private async fillManual(): Promise<void> {
@@ -1443,7 +1454,7 @@ export class LoginSessionManager {
     try {
       const commandPromise = this.runAgentCommand({
         type: 'fill-manual',
-        username: this.account.username,
+        username: this.loginUsername(),
         password: this.account.password,
         autoSubmit: this.site?.autoSubmit ?? false,
         selectors
@@ -1506,7 +1517,7 @@ export class LoginSessionManager {
         await this.runAgentCommand({
           type: 'run-step',
           step,
-          username: this.account.username,
+          username: this.loginUsername(),
           password: this.account.password
         })
       )
@@ -1620,7 +1631,7 @@ export class LoginSessionManager {
           await this.runAgentCommand({
             type: 'run-step',
             step,
-            username: this.account.username,
+            username: this.loginUsername(),
             password: this.account.password
           })
         )

@@ -96,7 +96,6 @@ jobs:
             outputs/latest.yml
 
       - name: Stage CDN update feed
-        if: github.ref == 'refs/heads/main'
         shell: pwsh
         run: |
           $site = Join-Path $env:GITHUB_WORKSPACE "updates-site"
@@ -107,14 +106,13 @@ jobs:
           New-Item -ItemType File -Path (Join-Path $site ".nojekyll") -Force | Out-Null
 
       - name: Upload CDN update feed
-        if: github.ref == 'refs/heads/main'
         uses: actions/upload-pages-artifact@v3
         with:
           path: updates-site
 
   deploy-pages:
     needs: release
-    if: github.repository == 'AptimLvStic/AutoLogin' && github.ref == 'refs/heads/main'
+    if: github.repository == 'AptimLvStic/AutoLogin'
     runs-on: ubuntu-latest
     environment:
       name: github-pages

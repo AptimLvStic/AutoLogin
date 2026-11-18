@@ -18,11 +18,13 @@ import type {
   DataExportFormat,
   DataImportResult,
   FileOperationResult,
+  ImportPreview,
   KdbxSelection
 } from '@shared/types'
 import { useI18n } from '../i18n'
 import { LoadingSpinner } from './LoadingSpinner'
 import { Modal } from './Modal'
+import { ImportPreviewDialog } from './ImportPreviewDialog'
 
 const MIN_DATABASE_IMPORT_FEEDBACK_MS = 450
 
@@ -59,6 +61,8 @@ export function AccountTransferControls({
   const [autologinPassword, setAutologinPassword] = useState('')
   const [autologinError, setAutologinError] = useState('')
   const [autologinBusy, setAutologinBusy] = useState(false)
+  const [importPreview, setImportPreview] = useState<ImportPreview | null>(null)
+  const [importPreviewBusy, setImportPreviewBusy] = useState(false)
   const [exportPasswordOpen, setExportPasswordOpen] = useState(false)
   const [exportPassword, setExportPassword] = useState('')
   const [exportPasswordConfirm, setExportPasswordConfirm] = useState('')
@@ -67,8 +71,23 @@ export function AccountTransferControls({
   const lastOpenDatabaseRequestRef = useRef(0)
 
   useEffect(() => {
-    onDatabaseBusyChange?.(creatingTab || importBusy || kdbxBusy || autologinBusy)
-  }, [autologinBusy, creatingTab, importBusy, kdbxBusy, onDatabaseBusyChange])
+    onDatabaseBusyChange?.(
+      creatingTab ||
+        importBusy ||
+        kdbxBusy ||
+        autologinBusy ||
+        Boolean(importPreview) ||
+        importPreviewBusy
+    )
+  }, [
+    autologinBusy,
+    creatingTab,
+    importBusy,
+    importPreview,
+    importPreviewBusy,
+    kdbxBusy,
+    onDatabaseBusyChange
+  ])
 
   useEffect(() => {
     if (
@@ -104,13 +123,23 @@ export function AccountTransferControls({
     onImported(result)
   }
 
+  function handleDatabaseImportResult(
+    result: Awaited<ReturnType<typeof window.autologin.data.importDatabase>>
+  ): void {
+    if ('token' in result) {
+      setImportPreview(result)
+      return
+    }
+    acceptImport(result)
+  }
+
   async function importCsv(mode: CsvImportMode): Promise<void> {
     if (importBusy) return
     setMenuOpen(false)
     setImportBusy(true)
     try {
       const result = await window.autologin.data.importCsv({ mode, tabId })
-      if (result) acceptImport(result)
+      if (result) setImportPreview(result)
     } catch (error) {
       notify(
         'error',
@@ -195,7 +224,7 @@ export function AccountTransferControls({
       })
       setKdbxSelection(null)
       setDatabasePassword('')
-      acceptImport(result)
+      handleDatabaseImportResult(result)
     } catch (error) {
       setKdbxError(
         error instanceof Error
@@ -230,7 +259,7 @@ export function AccountTransferControls({
       })
       setAutologinSelection(null)
       setAutologinPassword('')
-      acceptImport(result)
+      handleDatabaseImportResult(result)
     } catch (error) {
       setAutologinError(
         error instanceof Error
@@ -351,6 +380,39 @@ export function AccountTransferControls({
       if (!result.canceled) setExportPasswordOpen(false)
     } catch {
       // The shared export handler already reports the error.
+    }
+  }
+
+  async function cancelImportPreview(): Promise<void> {
+    if (!importPreview || importPreviewBusy) return
+    const token = importPreview.token
+    setImportPreview(null)
+    try {
+      await window.autologin.data.cancelImportPreview({ token })
+    } catch {
+      // The pending preview also expires in the main process.
+    }
+  }
+
+  async function commitImport(selectedIndexes: number[]): Promise<void> {
+    if (!importPreview || importPreviewBusy) return
+    setImportPreviewBusy(true)
+    try {
+      const result = await window.autologin.data.commitImport({
+        token: importPreview.token,
+        selectedIndexes
+      })
+      setImportPreview(null)
+      acceptImport(result)
+    } catch (error) {
+      notify(
+        'error',
+        error instanceof Error
+          ? error.message
+          : tr('导入所选记录失败', 'Could not import the selected entries.', '匯入所選項目失敗')
+      )
+    } finally {
+      setImportPreviewBusy(false)
     }
   }
 
@@ -738,6 +800,15 @@ export function AccountTransferControls({
             </div>
           </form>
         </Modal>
+      )}
+
+      {importPreview && (
+        <ImportPreviewDialog
+          preview={importPreview}
+          busy={importPreviewBusy}
+          onClose={() => void cancelImportPreview()}
+          onConfirm={commitImport}
+        />
       )}
 
       {exportPasswordOpen && (

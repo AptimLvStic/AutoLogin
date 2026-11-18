@@ -33,7 +33,14 @@ describe('browser profile preparation', () => {
       'utf8'
     )
     writeFileSync(join(sourceProfile, 'Network', 'Cookies'), 'cookie-db', 'utf8')
-    writeFileSync(join(sourceProfile, 'Preferences'), '{"profile":{}}', 'utf8')
+    writeFileSync(
+      join(sourceProfile, 'Preferences'),
+      JSON.stringify({
+        profile: { exit_type: 'Crashed', exited_cleanly: false },
+        extensions: { settings: { extensionA: {} } }
+      }),
+      'utf8'
+    )
 
     const result = await prepareUserBrowserProfile(
       {
@@ -53,9 +60,25 @@ describe('browser profile preparation', () => {
       JSON.parse(readFileSync(join(destination, 'Local State'), 'utf8')).profile.last_used
     ).toBe('Default')
     expect(
+      JSON.parse(readFileSync(join(destination, 'Default', 'Preferences'), 'utf8'))
+    ).toMatchObject({
+      profile: { exit_type: 'Normal', exited_cleanly: true },
+      extensions: { settings: {} },
+      session: { restore_on_startup: 5 }
+    })
+    expect(
       JSON.parse(readFileSync(join(destination, '.autologin-profile.json'), 'utf8'))
     ).toMatchObject({ version: 1, sourceProfile: 'Profile 2' })
 
+    writeFileSync(
+      join(destination, 'Default', 'Preferences'),
+      JSON.stringify({
+        profile: { exit_type: 'Crashed', exited_cleanly: false },
+        extensions: { settings: { broken: {} } },
+        session: { restore_on_startup: 1 }
+      }),
+      'utf8'
+    )
     const second = await prepareUserBrowserProfile(
       {
         name: 'Google Chrome',
@@ -66,5 +89,12 @@ describe('browser profile preparation', () => {
       localAppData
     )
     expect(second.imported).toBe(false)
+    expect(
+      JSON.parse(readFileSync(join(destination, 'Default', 'Preferences'), 'utf8'))
+    ).toMatchObject({
+      profile: { exit_type: 'Normal', exited_cleanly: true },
+      extensions: { settings: {} },
+      session: { restore_on_startup: 5 }
+    })
   })
 })

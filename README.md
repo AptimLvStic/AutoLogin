@@ -5,8 +5,8 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/AptimLvStic/AutoLogin/releases/tag/v1.0.1">
-    <img alt="Version" src="https://img.shields.io/badge/version-1.0.1-5457E5" />
+  <a href="https://github.com/AptimLvStic/AutoLogin/releases/tag/v1.0.2">
+    <img alt="Version" src="https://img.shields.io/badge/version-1.0.2-5457E5" />
   </a>
   <img alt="Platform" src="https://img.shields.io/badge/platform-Windows%2010%2F11-0078D4" />
   <img alt="Tauri" src="https://img.shields.io/badge/Tauri-2-24C8DB" />
@@ -14,7 +14,7 @@
 
 AutoLogin 是一款面向 Windows 10/11 x64 的本地优先登录工作台。它不只保存密码，还会记住你在某个站点上的完整登录流程，下次点一下即可重放。
 
-当前版本为 `1.0.1`。桌面外壳使用 Tauri 2，账号、密码、配置、书签和日志都保存在本机；没有 AutoLogin 云账号、云同步或遥测。软件不会绕过验证码、短信验证、二次验证或网站风控。
+当前版本为 `1.0.2`。桌面外壳使用 Tauri 2，账号、密码、配置、书签和日志都保存在本机；没有 AutoLogin 云账号、云同步或遥测。软件不会绕过验证码、短信验证、二次验证或网站风控。
 
 ## 为什么还要一个密码管理器
 
@@ -44,10 +44,12 @@ AutoLogin 的做法是：把一次成功的登录过程完整演一遍，记录�
 - 支持多个数据库标签页，格式包括 `.autologin`、`.kdbx`、`.csv` 和浏览器书签 `.html` / `.htm`。
 - 标签名称与数据库文件名绑定；重命名数据库时同步重命名磁盘文件，并保留原文件后缀。
 - 支持导入 KDBX、标准 CSV 和浏览器导出的书签 HTML；支持导出 AutoLogin、CSV、KDBX 和浏览器书签格式。
+- KDBX / CSV 导入会先显示可选预览；缺地址、缺用户名或缺密码的条目由用户决定是否导入，并在列表中标记待补全状态。
 - 账号支持站点、分组、多账号、搜索、批量打开、列宽调整和显示列配置。
 - 书签支持分组、访问默认浏览器和批量打开，不包含账号密码、自动提交或登录流程。
 - 账号与书签共用回收站，可恢复或永久删除，并显示记录来源标签。
 - 内置密码生成器、闲置自动锁定、三语界面、亮暗模式、主题与界面比例、网络代理、数据目录迁移和自动备份位置设置。
+- 默认使用内置浏览器；独立浏览器默认启用纯净模式，启动前清洗扩展和崩溃恢复配置，也可在设置中重置共享配置。
 
 ## 安全设计
 
@@ -85,8 +87,8 @@ AutoLogin 不在应用内嵌网页，而是调用 Windows 默认浏览器，并�
 
 ## 下载安装
 
-- 最新版本：[AutoLogin v1.0.1](https://github.com/AptimLvStic/AutoLogin/releases/tag/v1.0.1)
-- 当前安装包：`AutoLogin_1.0.1_x64-setup.exe`
+- 最新版本：[AutoLogin v1.0.2](https://github.com/AptimLvStic/AutoLogin/releases/tag/v1.0.2)
+- 当前安装包：`AutoLogin_1.0.2_x64-setup.exe`
 - 安装包尚未配置 Authenticode 代码签名，Windows SmartScreen 可能显示“未知发布者”提示。
 
 首次启动会要求创建主密码。主密码无法找回，也没有后门；忘记后只能清除本机数据并重新创建保险库。

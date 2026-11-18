@@ -120,6 +120,9 @@ export function SettingsPage({
   const [recordingDraftBusy, setRecordingDraftBusy] = useState(false)
   const [openingRecordingDraftDirectory, setOpeningRecordingDraftDirectory] =
     useState(false)
+  const [resetBrowserProfileConfirm, setResetBrowserProfileConfirm] =
+    useState(false)
+  const [resettingBrowserProfile, setResettingBrowserProfile] = useState(false)
   const [restartingApp, setRestartingApp] = useState(false)
   const [openingPrivacy, setOpeningPrivacy] = useState(false)
   const [restoreLocationOpen, setRestoreLocationOpen] = useState(false)
@@ -331,6 +334,56 @@ export function SettingsPage({
     }
   }
 
+  async function changeDefaultLoginBrowser(
+    loginBrowser: AppSettings['defaultLoginBrowser']
+  ): Promise<void> {
+    try {
+      await onSettingsChange({ defaultLoginBrowser: loginBrowser })
+      notify(
+        'success',
+        tr(
+          '默认登录方式已更新',
+          'Default sign-in browser updated.',
+          '預設登入方式已更新'
+        )
+      )
+    } catch (error) {
+      notify(
+        'error',
+        error instanceof Error
+          ? error.message
+          : tr('默认登录方式保存失败', 'Could not save the default browser.', '預設登入方式儲存失敗')
+      )
+    }
+  }
+
+  async function changePureBrowserMode(enabled: boolean): Promise<void> {
+    try {
+      await onSettingsChange({ pureBrowserMode: enabled })
+      notify(
+        'success',
+        enabled
+          ? tr(
+              '纯净浏览器模式已开启',
+              'Pure browser mode enabled.',
+              '純淨瀏覽器模式已開啟'
+            )
+          : tr(
+              '纯净浏览器模式已关闭',
+              'Pure browser mode disabled.',
+              '純淨瀏覽器模式已關閉'
+            )
+      )
+    } catch (error) {
+      notify(
+        'error',
+        error instanceof Error
+          ? error.message
+          : tr('浏览器模式保存失败', 'Could not save browser mode.', '瀏覽器模式儲存失敗')
+      )
+    }
+  }
+
   async function captureCopyShortcut(
     event: React.KeyboardEvent<HTMLInputElement>
   ): Promise<void> {
@@ -394,6 +447,8 @@ export function SettingsPage({
           accountCopyShortcut: DEFAULT_APP_SETTINGS.accountCopyShortcut,
           proxy: DEFAULT_APP_SETTINGS.proxy,
           recordingDraftDirectory: DEFAULT_APP_SETTINGS.recordingDraftDirectory,
+          defaultLoginBrowser: DEFAULT_APP_SETTINGS.defaultLoginBrowser,
+          pureBrowserMode: DEFAULT_APP_SETTINGS.pureBrowserMode,
           groupOrder: []
         },
         translate(
@@ -930,6 +985,36 @@ export function SettingsPage({
     }
   }
 
+  async function resetBrowserProfile(): Promise<void> {
+    if (resettingBrowserProfile) return
+    setResettingBrowserProfile(true)
+    try {
+      await window.autologin.app.resetBrowserProfile()
+      setResetBrowserProfileConfirm(false)
+      notify(
+        'success',
+        tr(
+          '共享浏览器配置已重置，下次登录会重新导入本机配置',
+          'Shared browser profile reset. The local profile will be imported on the next sign-in.',
+          '共用瀏覽器設定已重設，下次登入會重新匯入本機設定'
+        )
+      )
+    } catch (error) {
+      notify(
+        'error',
+        error instanceof Error
+          ? error.message
+          : tr(
+              '重置浏览器配置失败',
+              'Could not reset the browser profile.',
+              '重設瀏覽器設定失敗'
+            )
+      )
+    } finally {
+      setResettingBrowserProfile(false)
+    }
+  }
+
   async function restartApp(): Promise<void> {
     if (restartingApp) return
     setRestartingApp(true)
@@ -1053,6 +1138,76 @@ export function SettingsPage({
                   </button>
                 ))}
               </div>
+            </div>
+
+            <div className="settings-card">
+              <SettingsCardHeading
+                icon={<Monitor size={17} />}
+                title={tr('浏览器启动方式', 'Browser launch', '瀏覽器啟動方式')}
+                description={tr(
+                  '新建和导入账号默认继承这里的登录方式；纯净模式会屏蔽扩展与崩溃恢复气泡。',
+                  'New and imported accounts inherit this browser choice. Pure mode hides extensions and crash-restore prompts.',
+                  '新建和匯入帳號預設繼承這裡的登入方式；純淨模式會封鎖擴充功能與當機還原提示。'
+                )}
+              />
+              <div className="settings-control-row">
+                <span className="settings-control-row__label">
+                  {tr('默认登录方式', 'Default browser', '預設登入方式')}
+                </span>
+                <div
+                  className="segmented-control"
+                  role="group"
+                  aria-label={tr('默认登录方式', 'Default browser', '預設登入方式')}
+                >
+                  <button
+                    type="button"
+                    className={
+                      settings.defaultLoginBrowser === 'builtin' ? 'is-active' : ''
+                    }
+                    onClick={() => void changeDefaultLoginBrowser('builtin')}
+                  >
+                    {tr('内置浏览器', 'Built-in', '內建瀏覽器')}
+                  </button>
+                  <button
+                    type="button"
+                    className={
+                      settings.defaultLoginBrowser === 'standalone'
+                        ? 'is-active'
+                        : ''
+                    }
+                    onClick={() => void changeDefaultLoginBrowser('standalone')}
+                  >
+                    {tr('独立浏览器', 'Standalone', '獨立瀏覽器')}
+                  </button>
+                </div>
+              </div>
+              <label className="switch-row">
+                <span>
+                  <strong>{tr('纯净浏览器模式', 'Pure browser mode', '純淨瀏覽器模式')}</strong>
+                  <small>
+                    {tr(
+                      '关闭扩展、组件后台页、翻译弹层与崩溃恢复提示；每次启动前会清洗外部浏览器配置。',
+                      'Disable extensions, component background pages, translate prompts and crash-restore bubbles; the external profile is sanitized before launch.',
+                      '關閉擴充功能、元件背景頁、翻譯提示與當機還原提示；每次啟動前會清洗外部瀏覽器設定。'
+                    )}
+                  </small>
+                </span>
+                <input
+                  type="checkbox"
+                  checked={settings.pureBrowserMode}
+                  onChange={(event) =>
+                    void changePureBrowserMode(event.target.checked)
+                  }
+                />
+                <span className="switch" aria-hidden="true" />
+              </label>
+              <p className="settings-hint">
+                {tr(
+                  '若某些站点必须依赖扩展登录，可关闭纯净模式；配置清洗仍会清除崩溃恢复状态。',
+                  'Turn off pure mode if a site depends on extensions. Crash-state cleanup still runs.',
+                  '若某些站點必須依賴擴充功能登入，可關閉純淨模式；設定清洗仍會清除當機還原狀態。'
+                )}
+              </p>
             </div>
 
             <div className="settings-card">
@@ -1781,6 +1936,39 @@ export function SettingsPage({
               </div>
             </div>
 
+            <div className="settings-card">
+              <SettingsCardHeading
+                icon={<ShieldCheck size={17} />}
+                title={tr(
+                  '外部浏览器配置',
+                  'External browser profile',
+                  '外部瀏覽器設定'
+                )}
+                description={tr(
+                  '登录时会复用 AutoLogin 管理的独立配置并清除扩展、崩溃恢复等干扰项。若窗口仍出现异常，可重置后重新导入。',
+                  'Sign-in reuses an AutoLogin-managed profile and clears extensions and crash-restore state. Reset and re-import if the window still looks wrong.',
+                  '登入時會重用 AutoLogin 管理的獨立設定並清除擴充功能、當機還原等干擾項。若視窗仍異常，可重設後重新匯入。'
+                )}
+              />
+              <div className="settings-inline-actions">
+                <button
+                  type="button"
+                  className="button button--danger-ghost"
+                  onClick={() => setResetBrowserProfileConfirm(true)}
+                >
+                  <Trash2 size={14} />
+                  {tr('重置浏览器配置', 'Reset browser profile', '重設瀏覽器設定')}
+                </button>
+              </div>
+              <p className="settings-hint">
+                {tr(
+                  '重置会关闭当前外部浏览器，并清除共享配置中的 Cookie 和登录状态；账号密码与保险库不受影响。',
+                  'Reset closes the external browser and clears cookies and sign-in state in the shared profile. Accounts and the vault are unaffected.',
+                  '重設會關閉目前外部瀏覽器，並清除共用設定中的 Cookie 和登入狀態；帳號密碼與保險庫不受影響。'
+                )}
+              </p>
+            </div>
+
             <div className="settings-card backup-card">
               <div className="settings-card__heading">
                 <ArchiveRestore size={17} />
@@ -2229,6 +2417,28 @@ export function SettingsPage({
           onConfirm={() => void restoreDefaultLocation()}
           onClose={() => {
             if (!locationBusy) setRestoreLocationOpen(false)
+          }}
+        />
+      )}
+
+      {resetBrowserProfileConfirm && (
+        <ConfirmDialog
+          title={tr(
+            '重置共享浏览器配置？',
+            'Reset the shared browser profile?',
+            '重設共用瀏覽器設定？'
+          )}
+          description={tr(
+            '将关闭当前外部浏览器，并清除共享配置中的 Cookie 与登录状态。账号密码和保险库不会受影响，下次登录需要重新验证部分站点。',
+            'This closes the external browser and clears cookies and sign-in state from the shared profile. Accounts and the vault are unaffected, but some sites may require sign-in again.',
+            '將關閉目前外部瀏覽器，並清除共用設定中的 Cookie 與登入狀態。帳號密碼和保險庫不會受影響，下次登入需要重新驗證部分站點。'
+          )}
+          confirmLabel={tr('确认重置', 'Reset profile', '確認重設')}
+          danger
+          busy={resettingBrowserProfile}
+          onConfirm={() => void resetBrowserProfile()}
+          onClose={() => {
+            if (!resettingBrowserProfile) setResetBrowserProfileConfirm(false)
           }}
         />
       )}

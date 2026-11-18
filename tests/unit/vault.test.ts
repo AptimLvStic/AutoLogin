@@ -251,6 +251,8 @@ describe('VaultManager', () => {
       fontSizeScale: 125,
       accountCopyShortcutEnabled: false,
       accountCopyShortcut: 'Ctrl+C',
+      defaultLoginBrowser: 'builtin',
+      pureBrowserMode: true,
       customTheme: {
         background: '#EEF2F3',
         surface: '#F8FAFA',

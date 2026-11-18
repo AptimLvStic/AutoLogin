@@ -53,6 +53,8 @@ import {
   groupDeleteInputSchema,
   groupMoveInputSchema,
   groupRenameInputSchema,
+  importCommitInputSchema,
+  importPreviewCancelInputSchema,
   kdbxSelectionImportSchema,
   loginBatchStartSchema,
   loginFinishRecordingSchema,
@@ -117,8 +119,10 @@ import type {
   GroupMoveInput,
   GroupMoveResult,
   GroupRenameInput,
+  ImportPreview,
   KdbxSelection,
   LocalDatabaseFileSelection,
+  LocalDatabaseImportResult,
   LocalDatabaseKind,
   LocalDatabaseOpenSelection,
   LoginLogEntry,
@@ -160,6 +164,7 @@ import {
 } from './credential-history'
 import {
   CSV_TEMPLATE,
+  buildImportPreview,
   mergeAutologinSnapshot,
   mergeImportedLogins,
   parseBookmarksImport,
@@ -224,7 +229,7 @@ import { VaultManager } from './vault'
 app.setName('AutoLogin')
 app.setAppUserModelId('com.autologin.desktop')
 /** 每次发布前更新，用于在日志里识别 Tauri 后台构建版本。 */
-const BUILD_TAG = '2026-11-18.browser-layout-and-import-result'
+const BUILD_TAG = '2026-11-18.import-preview-browser-sanitize'
 const backendEntryPath = process.argv[1]
   ? resolve(process.argv[1])
   : 'unknown'
@@ -289,7 +294,46 @@ const pendingDatabaseSelections = new Map<
     expiresAt: number
   }
 >()
+const pendingImportPreviews = new Map<
+  string,
+  {
+    parsed: ParsedImport
+    source: 'csv' | 'kdbx' | 'bookmarks'
+    fileName: string
+    mode: 'current' | 'new'
+    currentTabId?: string
+    sourcePath?: string
+    expiresAt: number
+  }
+>()
 const pendingNewDatabaseTabIds = new Set<string>()
+const IMPORT_PREVIEW_TTL_MS = 10 * 60 * 1000
+
+function stageImportPreview(input: {
+  parsed: ParsedImport
+  source: 'csv' | 'kdbx' | 'bookmarks'
+  fileName: string
+  mode: 'current' | 'new'
+  currentTabId?: string
+  sourcePath?: string
+}): ImportPreview {
+  cleanExpiredImportPreviews()
+  const token = randomUUID()
+  pendingImportPreviews.set(token, {
+    ...input,
+    expiresAt: Date.now() + IMPORT_PREVIEW_TTL_MS
+  })
+  return buildImportPreview(input.parsed, input.source, input.fileName, token)
+}
+
+function cleanExpiredImportPreviews(): void {
+  const now = Date.now()
+  for (const [token, pending] of pendingImportPreviews) {
+    if (pending.expiresAt <= now) {
+      pendingImportPreviews.delete(token)
+    }
+  }
+}
 
 const REPOSITORY_URL =
   process.env.AUTOLOGIN_REPOSITORY_URL?.trim() ||
@@ -1919,7 +1963,7 @@ function registerIpc(): void {
     })
     return { canceled: false, fileName: basename(selection.filePath) }
   })
-  ipcMain.handle('data:import-csv', async (event, payload: unknown): Promise<DataImportResult | null> => {
+  ipcMain.handle('data:import-csv', async (event, payload: unknown): Promise<ImportPreview | null> => {
     assertTrustedSender(event)
     const parsedInput = csvImportInputSchema.safeParse(payload)
     if (!parsedInput.success) {
@@ -1938,18 +1982,17 @@ function registerIpc(): void {
     }
     try {
       const parsed = await parseCsvImport(path)
-      const result = applyDataImport(
+      return stageImportPreview({
         parsed,
-        'csv',
-        basename(path),
-        parsedInput.data.mode,
-        parsedInput.data.tabId,
-        parsedInput.data.mode === 'new'
-          ? { sourcePath: normalizeSelectedPath(path) }
-          : undefined
-      )
-      appendImportLog(result, basename(path))
-      return result
+        source: 'csv',
+        fileName: basename(path),
+        mode: parsedInput.data.mode,
+        currentTabId: parsedInput.data.tabId,
+        sourcePath:
+          parsedInput.data.mode === 'new'
+            ? normalizeSelectedPath(path)
+            : undefined
+      })
     } catch (error) {
       appendImportFailureLog('CSV 账号', basename(path), error)
       throw error
@@ -2018,7 +2061,7 @@ function registerIpc(): void {
   })
   ipcMain.handle(
     'data:import-database',
-    async (event, payload: unknown): Promise<DataImportResult> => {
+    async (event, payload: unknown): Promise<LocalDatabaseImportResult> => {
       assertTrustedSender(event)
       const parsed = autologinSelectionImportSchema.safeParse(payload)
       if (!parsed.success) {
@@ -2065,28 +2108,30 @@ function registerIpc(): void {
           }
         }
 
-        const result =
-          selection.kind === 'autologin'
-            ? applyAutologinImport(
-                await vault.readEncryptedSnapshot(
-                  databasePath,
-                  parsed.data.password
-                ),
-                {
-                  fileName: selection.fileName,
-                  sourcePath: databasePath,
-                  exactFileName: true
-                }
-              )
-            : applyDataImport(
-                await parseKdbxImport(databasePath, parsed.data.password),
-                'kdbx',
-                selection.fileName,
-                'new',
-                undefined,
-                { sourcePath: databasePath }
-              )
         pendingDatabaseSelections.delete(parsed.data.token)
+        if (selection.kind === 'kdbx') {
+          return stageImportPreview({
+            parsed: await parseKdbxImport(
+              databasePath,
+              parsed.data.password
+            ),
+            source: 'kdbx',
+            fileName: selection.fileName,
+            mode: 'new',
+            sourcePath: databasePath
+          })
+        }
+        const result = applyAutologinImport(
+          await vault.readEncryptedSnapshot(
+            databasePath,
+            parsed.data.password
+          ),
+          {
+            fileName: selection.fileName,
+            sourcePath: databasePath,
+            exactFileName: true
+          }
+        )
         appendImportLog(result, selection.fileName)
         return result
       } catch (error) {
@@ -2133,7 +2178,7 @@ function registerIpc(): void {
   })
   ipcMain.handle(
     'data:import-kdbx',
-    async (event, payload: unknown): Promise<DataImportResult> => {
+    async (event, payload: unknown): Promise<ImportPreview> => {
       assertTrustedSender(event)
       const parsed = kdbxSelectionImportSchema.safeParse(payload)
       if (!parsed.success) {
@@ -2154,17 +2199,14 @@ function registerIpc(): void {
           throw new Error('所选数据库文件已被移动或删除，请重新选择')
         }
         const imported = await parseKdbxImport(databasePath, parsed.data.password)
-        const result = applyDataImport(
-          imported,
-          'kdbx',
-          selection.fileName,
-          'new',
-          undefined,
-          { sourcePath: databasePath }
-        )
         pendingKdbxSelections.delete(parsed.data.token)
-        appendImportLog(result, selection.fileName)
-        return result
+        return stageImportPreview({
+          parsed: imported,
+          source: 'kdbx',
+          fileName: selection.fileName,
+          mode: 'new',
+          sourcePath: databasePath
+        })
       } catch (error) {
         appendImportFailureLog('KDBX 数据库', selection.fileName, error)
         throw error
@@ -2259,6 +2301,63 @@ function registerIpc(): void {
       throw error
     }
   })
+  ipcMain.handle(
+    'data:commit-import',
+    async (event, payload: unknown): Promise<DataImportResult> => {
+      assertTrustedSender(event)
+      const parsed = importCommitInputSchema.safeParse(payload)
+      if (!parsed.success) {
+        throw new Error(firstIssue(parsed.error))
+      }
+      cleanExpiredImportPreviews()
+      const pending = pendingImportPreviews.get(parsed.data.token)
+      if (!pending) {
+        throw new Error('导入预览已过期，请重新选择文件')
+      }
+      const selectedIndexes = new Set(parsed.data.selectedIndexes)
+      const candidates = pending.parsed.candidates.filter((_candidate, index) =>
+        selectedIndexes.has(index)
+      )
+      if (candidates.length === 0) {
+        throw new Error('请至少选择一条要导入的记录')
+      }
+      try {
+        const result = applyDataImport(
+          { ...pending.parsed, candidates },
+          pending.source,
+          pending.fileName,
+          pending.mode,
+          pending.currentTabId,
+          pending.sourcePath ? { sourcePath: pending.sourcePath } : undefined
+        )
+        pendingImportPreviews.delete(parsed.data.token)
+        appendImportLog(result, pending.fileName)
+        return result
+      } catch (error) {
+        appendImportFailureLog(
+          pending.source === 'kdbx'
+            ? 'KDBX 数据库'
+            : pending.source === 'csv'
+              ? 'CSV 账号'
+              : '浏览器书签',
+          pending.fileName,
+          error
+        )
+        throw error
+      }
+    }
+  )
+  ipcMain.handle(
+    'data:cancel-import-preview',
+    (event, payload: unknown): void => {
+      assertTrustedSender(event)
+      const parsed = importPreviewCancelInputSchema.safeParse(payload)
+      if (!parsed.success) {
+        throw new Error(firstIssue(parsed.error))
+      }
+      pendingImportPreviews.delete(parsed.data.token)
+    }
+  )
   ipcMain.handle('data:list-backups', (event): BackupRecord[] => {
     assertTrustedSender(event)
     return backupManager.list()
@@ -2396,6 +2495,23 @@ function registerIpc(): void {
     if (error) {
       throw new Error(`无法打开数据目录：${error}`)
     }
+  })
+  ipcMain.handle('app:reset-browser-profile', async (event) => {
+    assertTrustedSender(event)
+    await closeLoginManagers()
+    for (const name of ['personal', 'batch']) {
+      rmSync(join(dataDirectory, 'BrowserProfiles', name), {
+        recursive: true,
+        force: true,
+        maxRetries: 3,
+        retryDelay: 120
+      })
+    }
+    appendAppLog(dataDirectory, {
+      level: 'info',
+      category: 'settings',
+      message: '共享浏览器配置已重置'
+    })
   })
   ipcMain.handle('app:open-backup-location', async (event) => {
     assertTrustedSender(event)
@@ -3060,6 +3176,7 @@ function saveSite(input: SiteInput): Site {
     existing.autoSubmit = input.autoSubmit
     existing.group = input.group?.trim() || undefined
     existing.icon = input.icon
+    existing.needsReview = undefined
     existing.updatedAt = now
     if (previousName !== requestedName) {
       for (const account of data.accounts) {
@@ -3119,7 +3236,8 @@ function createAccount(input: {
     throw new Error('请输入密码')
   }
   const loginStrategy = input.loginStrategy ?? 'auto'
-  const loginBrowser = input.loginBrowser ?? 'standalone'
+  const loginBrowser =
+    input.loginBrowser ?? vault.getSettings().defaultLoginBrowser ?? 'builtin'
   const manualSelectors = normalizeManualSelectors(input.manualSelectors)
   const manualSteps = input.manualSteps?.length
     ? structuredClone(input.manualSteps)
@@ -3203,7 +3321,8 @@ async function testSelector(input: SelectorTestInput): Promise<SelectorTestResul
       profileDirectory: testDirectory,
       headless: true,
       proxy: vault.getSettings().proxy,
-      initialUrl: normalizeUrl(input.url?.trim() || site.startUrl)
+      initialUrl: normalizeUrl(input.url?.trim() || site.startUrl),
+      pureMode: vault.getSettings().pureBrowserMode
     })
     const page = await host.createPage({
       initialUrl: normalizeUrl(input.url?.trim() || site.startUrl),
@@ -3300,8 +3419,14 @@ function updateAccount(
     account.credentialUpdatedAt = now
   }
   if (patch.label !== undefined) account.label = patch.label.trim()
-  if (patch.username !== undefined) account.username = patch.username.trim()
-  if (patch.password !== undefined) account.password = patch.password
+  if (patch.username !== undefined) {
+    account.username = patch.username.trim()
+    account.needsUsername = false
+  }
+  if (patch.password !== undefined) {
+    account.password = patch.password
+    account.needsSecret = false
+  }
   if (patch.favorite !== undefined) account.favorite = patch.favorite
   if (patch.loginStrategy !== undefined) account.loginStrategy = patch.loginStrategy
   if (patch.loginBrowser !== undefined) account.loginBrowser = patch.loginBrowser
@@ -3380,7 +3505,10 @@ function setAccountStrategyBatch(
   const now = new Date().toISOString()
   for (const account of accounts) {
     account.loginStrategy = input.loginStrategy
-    account.loginBrowser = input.loginBrowser ?? 'standalone'
+    account.loginBrowser =
+      input.loginBrowser ??
+      vault.getSettings().defaultLoginBrowser ??
+      'builtin'
     if (input.loginStrategy === 'manual' && sharedSteps) {
       account.manualSelectors = undefined
       account.manualSteps = structuredClone(sharedSteps)
@@ -3699,6 +3827,8 @@ function toPublicAccount(
     siteId: account.siteId,
     label: account.label,
     username: account.username,
+    needsUsername: account.needsUsername,
+    needsSecret: account.needsSecret,
     favorite: account.favorite,
     loginStrategy: account.loginStrategy ?? 'auto',
     loginBrowser: account.loginBrowser ?? 'standalone',

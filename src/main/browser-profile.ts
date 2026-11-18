@@ -12,8 +12,6 @@ import type { DefaultBrowser } from './browser-discovery'
 
 const PROFILE_MARKER = '.autologin-profile.json'
 const PROFILE_FILES = [
-  'Preferences',
-  'Secure Preferences',
   'Login Data',
   'Login Data For Account',
   'Web Data',
@@ -61,17 +59,20 @@ export async function prepareUserBrowserProfile(
   await mkdir(join(destinationRoot, 'Default'), { recursive: true })
   const markerPath = join(destinationRoot, PROFILE_MARKER)
   if (await pathExists(markerPath)) {
+    await sanitizeProfilePreferences(destinationRoot)
     return { profileDirectory: destinationRoot, imported: false }
   }
 
   const sourceRoot = browserUserDataRoot(browser, localAppData)
   if (!sourceRoot || !(await pathExists(sourceRoot))) {
+    await sanitizeProfilePreferences(destinationRoot)
     return { profileDirectory: destinationRoot, imported: false }
   }
 
   const sourceProfile = await selectedProfileName(sourceRoot)
   const sourceProfileDirectory = join(sourceRoot, sourceProfile)
   if (!(await isDirectory(sourceProfileDirectory))) {
+    await sanitizeProfilePreferences(destinationRoot)
     return { profileDirectory: destinationRoot, imported: false }
   }
 
@@ -94,6 +95,7 @@ export async function prepareUserBrowserProfile(
       join(destinationProfile, name)
     )
   }
+  await sanitizeProfilePreferences(destinationRoot)
 
   const marker: BrowserProfileMarker = {
     version: 1,
@@ -105,6 +107,40 @@ export async function prepareUserBrowserProfile(
     mode: 0o600
   })
   return { profileDirectory: destinationRoot, imported: true }
+}
+
+export async function sanitizeProfilePreferences(
+  profileRoot: string
+): Promise<void> {
+  const target = join(profileRoot, 'Default', 'Preferences')
+  let current: Record<string, unknown> = {}
+  try {
+    const parsed: unknown = JSON.parse(await readFile(target, 'utf8'))
+    if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+      current = parsed as Record<string, unknown>
+    }
+  } catch {
+    // Missing or malformed preferences are replaced with safe defaults.
+  }
+  const profile = objectValue(current.profile)
+  profile.exit_type = 'Normal'
+  profile.exited_cleanly = true
+  const extensions = objectValue(current.extensions)
+  extensions.settings = {}
+  const session = objectValue(current.session)
+  session.restore_on_startup = 5
+  await mkdir(dirname(target), { recursive: true })
+  await writeFile(
+    target,
+    JSON.stringify({ ...current, profile, extensions, session }),
+    { encoding: 'utf8', mode: 0o600 }
+  )
+}
+
+function objectValue(value: unknown): Record<string, unknown> {
+  return value && typeof value === 'object' && !Array.isArray(value)
+    ? { ...(value as Record<string, unknown>) }
+    : {}
 }
 
 export function browserUserDataRoot(

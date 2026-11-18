@@ -19,7 +19,7 @@ import {
   serializeTabCsv
 } from '../../src/main/data-transfer'
 import { DEFAULT_APP_SETTINGS } from '../../src/shared/theme'
-import type { VaultData } from '../../src/shared/types'
+import type { ImportMissingField, VaultData } from '../../src/shared/types'
 
 const directories: string[] = []
 
@@ -74,22 +74,24 @@ describe('data transfer', () => {
     )
 
     const parsed = await parseCsvImport(path)
-    expect(parsed.candidates).toHaveLength(2)
-    expect(parsed.skipped).toBe(1)
-    expect(parsed.warnings[0]).toContain('第 4 行')
-    expect(parsed.warnings[0]).not.toContain('missing-password')
-    expect(parsed.skipDetails[0]).toMatchObject({
-      rowNumber: 4,
-      title: 'Broken',
-      reason: '密码为空'
+    expect(parsed.candidates).toHaveLength(3)
+    expect(parsed.skipped).toBe(0)
+    expect(parsed.candidates[2]).toMatchObject({
+      siteName: 'Broken',
+      username: 'missing-password',
+      password: '',
+      missingFields: ['password']
     })
 
-    const merged = mergeImportedLogins(emptyVault(), 'csv', parsed)
+    const merged = mergeImportedLogins(emptyVault(), 'csv', {
+      ...parsed,
+      candidates: parsed.candidates.slice(0, 2)
+    })
     expect(merged.result).toMatchObject({
       source: 'csv',
       sitesCreated: 1,
       accountsCreated: 2,
-      skipped: 1
+      skipped: 0
     })
     expect(merged.data.sites[0]).toMatchObject({
       name: 'Work portal',
@@ -129,6 +131,7 @@ describe('data transfer', () => {
           siteGroup: '大兴',
           username: 'user-a',
           password: 'secret-a',
+          missingFields: [],
           autoSubmit: true,
           favorite: false,
           rowNumber: 1
@@ -139,6 +142,7 @@ describe('data transfer', () => {
           siteGroup: '亦庄',
           username: 'user-b',
           password: 'secret-b',
+          missingFields: [],
           autoSubmit: true,
           favorite: false,
           rowNumber: 2
@@ -149,6 +153,7 @@ describe('data transfer', () => {
           siteGroup: '大兴',
           username: 'user-c',
           password: 'secret-c',
+          missingFields: [],
           autoSubmit: true,
           favorite: false,
           rowNumber: 3
@@ -307,7 +312,7 @@ describe('data transfer', () => {
     ])
   })
 
-  it('adds https to host-only import URLs and records missing fields in skip details', async () => {
+  it('adds https to host-only import URLs and keeps missing fields selectable', async () => {
     const directory = createDirectory()
     const path = join(directory, 'host-only.csv')
     writeFileSync(
@@ -325,11 +330,67 @@ describe('data transfer', () => {
       startUrl: 'https://nas.local/login',
       siteGroup: '工作'
     })
-    expect(parsed.skipped).toBe(1)
-    expect(parsed.skipDetails[0]).toMatchObject({
+    expect(parsed.skipped).toBe(0)
+    expect(parsed.candidates[1]).toMatchObject({
       rowNumber: 3,
-      title: '缺地址',
-      reason: '登录地址为空'
+      siteName: '缺地址',
+      startUrl: '',
+      missingFields: ['startUrl']
+    })
+
+    const merged = mergeImportedLogins(emptyVault(), 'csv', {
+      ...parsed,
+      candidates: [parsed.candidates[1]!]
+    })
+    expect(merged.data.sites[0]).toMatchObject({
+      name: '缺地址',
+      startUrl: '',
+      allowedOrigins: [],
+      needsReview: true
+    })
+    expect(merged.data.accounts[0]).toMatchObject({
+      username: 'user-b',
+      password: 'two',
+      needsSecret: false,
+      loginBrowser: 'builtin'
+    })
+  })
+
+  it('imports incomplete entries with review placeholders and the configured default browser', () => {
+    const vault = emptyVault()
+    vault.settings.defaultLoginBrowser = 'standalone'
+    const parsed = {
+      candidates: [
+        {
+          siteName: 'API Key',
+          startUrl: 'https://api.example.com/',
+          siteGroup: '开发',
+          username: '',
+          password: '',
+          missingFields: ['username', 'password'] as ImportMissingField[],
+          autoSubmit: true,
+          favorite: false,
+          rowNumber: 1
+        }
+      ],
+      warnings: [],
+      skipped: 0,
+      skipDetails: []
+    }
+
+    const merged = mergeImportedLogins(vault, 'kdbx', parsed)
+
+    expect(merged.data.accounts[0]).toMatchObject({
+      username: '-',
+      password: '',
+      needsUsername: true,
+      needsSecret: true,
+      loginBrowser: 'standalone'
+    })
+    expect(merged.data.sites[0]).toMatchObject({
+      startUrl: 'https://api.example.com/',
+      allowedOrigins: ['https://api.example.com'],
+      needsReview: undefined
     })
   })
 
@@ -461,16 +522,25 @@ describe('data transfer', () => {
 
     const parsed = await parseKdbxImport(path, 'correct horse battery staple')
     expect(parsed.candidates.map((candidate) => candidate.siteGroup)).toEqual([
+      '工作',
       '工作 / 邮件',
       '个人 / 邮件'
     ])
-    expect(parsed.skipDetails).toHaveLength(1)
-    expect(parsed.skipDetails[0]).toMatchObject({
-      title: '无地址条目',
-      reason: '登录地址为空'
+    expect(parsed.skipDetails).toHaveLength(0)
+    expect(
+      parsed.candidates.find((candidate) => candidate.siteName === '无地址条目')
+    ).toMatchObject({
+      siteName: '无地址条目',
+      startUrl: '',
+      missingFields: ['startUrl']
     })
 
-    const merged = mergeImportedLogins(emptyVault(), 'kdbx', parsed)
+    const merged = mergeImportedLogins(emptyVault(), 'kdbx', {
+      ...parsed,
+      candidates: parsed.candidates.filter(
+        (candidate) => candidate.missingFields.length === 0
+      )
+    })
     expect(merged.result).toMatchObject({
       groupsCreated: 4,
       maxDepth: 2,

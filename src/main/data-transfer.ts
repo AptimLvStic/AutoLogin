@@ -24,7 +24,10 @@ import type {
   AccountTabSource,
   DataImportResult,
   GroupDefinition,
+  ImportPreview,
+  ImportMissingField,
   ImportSkipDetail,
+  LoginBrowser,
   Site,
   StoredAccount,
   VaultData
@@ -74,6 +77,7 @@ export interface ImportedLoginCandidate {
   siteGroup?: string
   username: string
   password: string
+  missingFields: ImportMissingField[]
   autoSubmit: boolean
   favorite: boolean
   rowNumber: number
@@ -142,24 +146,30 @@ export async function parseCsvImport(path: string): Promise<ParsedImport> {
     if (!siteName && !rawUrl && !username && !password) {
       return
     }
-    const reason = validateCandidateFields(siteName, rawUrl, username, password)
-    if (reason) {
+    const fields = classifyCandidateFields(siteName, rawUrl, username, password)
+    if (fields.blockedReason) {
       skipped += 1
-      warnings.push(`第 ${rowNumber} 行已跳过：${reason}`)
+      warnings.push(`第 ${rowNumber} 行已跳过：${fields.blockedReason}`)
       skipDetails.push({
         rowNumber,
         title: siteName || `第 ${rowNumber} 行`,
-        reason
+        reason: fields.blockedReason
       })
       return
     }
 
+    const normalizedUrl = rawUrl ? normalizeImportUrl(rawUrl) : ''
+    const resolvedSiteName =
+      siteName ||
+      (normalizedUrl ? hostnameOf(normalizedUrl) : '') ||
+      `第 ${rowNumber} 行`
     candidates.push({
-      siteName,
-      startUrl: normalizeImportUrl(rawUrl),
+      siteName: resolvedSiteName,
+      startUrl: normalizedUrl,
       siteGroup: optionalGroup(record.siteGroup),
       username,
       password,
+      missingFields: fields.missingFields,
       autoSubmit: parseBoolean(record.autoSubmit, true),
       favorite: parseBoolean(record.favorite, false),
       rowNumber
@@ -227,7 +237,7 @@ export async function parseKdbxImport(
 
   if (candidates.length === 0) {
     throw new Error(
-      warnings[0] ?? 'KeePassXC 数据库中没有包含有效网址、用户名和密码的登录记录'
+      warnings[0] ?? 'KeePassXC 数据库中没有可导入的记录'
     )
   }
   return { candidates, warnings, skipped, skipDetails }
@@ -288,6 +298,7 @@ export async function parseBookmarksImport(path: string): Promise<ParsedImport> 
       siteGroup: siteGroup || undefined,
       username: '',
       password: '',
+      missingFields: [],
       autoSubmit: true,
       favorite: false,
       rowNumber
@@ -344,9 +355,12 @@ export function mergeImportedLogins(
         tabId,
         name: siteName,
         startUrl: candidate.startUrl,
-        allowedOrigins: [new URL(candidate.startUrl).origin],
+        allowedOrigins: candidate.startUrl
+          ? [new URL(candidate.startUrl).origin]
+          : [],
         autoSubmit: candidate.autoSubmit,
         group: candidate.siteGroup,
+        needsReview: candidate.missingFields.includes('startUrl') || undefined,
         createdAt: now,
         updatedAt: now
       }
@@ -363,7 +377,7 @@ export function mergeImportedLogins(
         account.tabId === tabId &&
         account.siteId === site.id &&
         account.username.trim().toLocaleLowerCase() ===
-          candidate.username.toLocaleLowerCase()
+          (candidate.username || '-').toLocaleLowerCase()
     )
     if (duplicate) {
       skipped += 1
@@ -382,12 +396,14 @@ export function mergeImportedLogins(
       tabId,
       siteId: site.id,
       label: site.name,
-      username: candidate.username,
+      username: candidate.username || '-',
+      needsUsername: candidate.missingFields.includes('username'),
+      needsSecret: candidate.missingFields.includes('password'),
       password: candidate.password,
       credentialUpdatedAt: now,
       favorite: candidate.favorite,
       loginStrategy: 'auto',
-      loginBrowser: 'standalone',
+      loginBrowser: defaultLoginBrowser(data),
       sortOrder: data.accounts.filter((entry) => entry.tabId === tabId).length,
       createdAt: now,
       updatedAt: now
@@ -413,6 +429,40 @@ export function mergeImportedLogins(
       skipDetails,
       warnings: warnings.slice(0, 30)
     }
+  }
+}
+
+export function buildImportPreview(
+  parsed: ParsedImport,
+  source: ImportPreview['source'],
+  fileName: string,
+  token: string
+): ImportPreview {
+  const candidates = parsed.candidates.map((candidate, index) => ({
+    index,
+    rowNumber: candidate.rowNumber,
+    siteName: candidate.siteName,
+    startUrl: candidate.startUrl,
+    username: candidate.username,
+    siteGroup: candidate.siteGroup,
+    missingFields: [...candidate.missingFields],
+    defaultSelected:
+      !candidate.missingFields.includes('startUrl') &&
+      !candidate.missingFields.includes('password')
+  }))
+  const readyCount = candidates.filter(
+    (candidate) => candidate.missingFields.length === 0
+  ).length
+  return {
+    token,
+    source,
+    fileName,
+    readyCount,
+    selectableCount: candidates.length - readyCount,
+    blockedCount: parsed.skipped,
+    candidates,
+    skipDetails: [...parsed.skipDetails],
+    warnings: [...parsed.warnings]
   }
 }
 
@@ -714,28 +764,50 @@ function kdbxEntryToCandidate(
   const rawUrl = fieldText(entry, 'URL').trim()
   const username = fieldText(entry, 'UserName').trim()
   const password = fieldText(entry, 'Password')
-  const reason = validateCandidateFields(title || hostnameOf(rawUrl), rawUrl, username, password)
-  if (reason) {
+  if (!title && !rawUrl && !username && !password) {
     return {
       kind: 'skip',
-      warning: `第 ${rowNumber} 条 KeePassXC 记录已跳过：${reason}`,
+      warning: `第 ${rowNumber} 条 KeePassXC 记录已跳过：空记录`,
       detail: {
         rowNumber,
         title: title || `第 ${rowNumber} 条记录`,
-        reason
+        reason: '空记录'
+      }
+    }
+  }
+  const fields = classifyCandidateFields(
+    title || hostnameOf(rawUrl),
+    rawUrl,
+    username,
+    password
+  )
+  if (fields.blockedReason) {
+    return {
+      kind: 'skip',
+      warning: `第 ${rowNumber} 条 KeePassXC 记录已跳过：${fields.blockedReason}`,
+      detail: {
+        rowNumber,
+        title: title || `第 ${rowNumber} 条记录`,
+        reason: fields.blockedReason
       }
     }
   }
 
   const groupName = kdbxGroupPath(group)
+  const normalizedUrl = rawUrl ? normalizeImportUrl(rawUrl) : ''
   return {
     kind: 'candidate',
     value: {
-      siteName: (title || hostnameOf(rawUrl)).slice(0, 80),
-      startUrl: normalizeImportUrl(rawUrl),
+      siteName: (
+        title ||
+        (normalizedUrl ? hostnameOf(normalizedUrl) : '') ||
+        `第 ${rowNumber} 条记录`
+      ).slice(0, 80),
+      startUrl: normalizedUrl,
       siteGroup: groupName,
       username,
       password,
+      missingFields: fields.missingFields,
       autoSubmit: true,
       favorite: false,
       rowNumber
@@ -763,21 +835,32 @@ function fieldText(entry: KdbxEntry, name: string): string {
   return typeof value === 'string' ? value : ''
 }
 
-function validateCandidateFields(
+function classifyCandidateFields(
   siteName: string,
   rawUrl: string,
   username: string,
   password: string
-): string | null {
-  if (!rawUrl) return '登录地址为空'
-  if (!isValidImportUrl(rawUrl)) return '登录地址不是有效的 http/https 地址'
-  if (!siteName) return '站点名称为空'
-  if (siteName.length > 80) return '站点名称超过 80 个字符'
-  if (!username) return '用户名为空'
-  if (username.length > 320) return '用户名超过 320 个字符'
-  if (!password) return '密码为空'
-  if (password.length > 2048) return '密码超过 2048 个字符'
-  return null
+): { missingFields: ImportMissingField[]; blockedReason: string | null } {
+  if (siteName.length > 80) {
+    return { missingFields: [], blockedReason: '站点名称超过 80 个字符' }
+  }
+  if (username.length > 320) {
+    return { missingFields: [], blockedReason: '用户名超过 320 个字符' }
+  }
+  if (password.length > 2048) {
+    return { missingFields: [], blockedReason: '密码超过 2048 个字符' }
+  }
+  if (rawUrl && !isValidImportUrl(rawUrl)) {
+    return {
+      missingFields: [],
+      blockedReason: '登录地址不是有效的 http/https 地址'
+    }
+  }
+  const missingFields: ImportMissingField[] = []
+  if (!rawUrl) missingFields.push('startUrl')
+  if (!username) missingFields.push('username')
+  if (!password) missingFields.push('password')
+  return { missingFields, blockedReason: null }
 }
 
 function isValidImportUrl(value: string): boolean {
@@ -813,6 +896,10 @@ function normalizeImportUrl(value: string): string {
 
 function normalizeSiteName(value: string): string {
   return value.trim().toLocaleLowerCase()
+}
+
+function defaultLoginBrowser(data: VaultData): LoginBrowser {
+  return data.settings.defaultLoginBrowser ?? 'builtin'
 }
 
 function importedSiteKey(name: string, url: string): string {

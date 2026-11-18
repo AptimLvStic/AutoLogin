@@ -52,6 +52,8 @@ export const DEFAULT_APP_SETTINGS: AppSettings = {
   accountCopyShortcut: 'Ctrl+C',
   proxy: DEFAULT_PROXY_SETTINGS,
   recordingDraftDirectory: '',
+  defaultLoginBrowser: 'builtin',
+  pureBrowserMode: true,
   groupOrder: [],
   groupOrders: {}
 }

@@ -90,6 +90,24 @@ describe('buildBrowserArguments · 其余参数保持不变', () => {
     expect(args).toContain('--no-first-run')
     expect(args).toContain('--disable-background-mode')
     expect(args).toContain('--user-data-dir=C:\\profile')
+    expect(args).toContain('--hide-crash-restore-bubble')
+    expect(args).toContain('--disable-session-crashed-bubble')
+    expect(args).toContain('--no-service-autorun')
+    expect(args).toContain('--disable-features=Translate,MediaRouter')
+  })
+
+  it('纯净模式默认禁用扩展，关闭后保留扩展能力', () => {
+    const pure = buildBrowserArguments(base, {})
+    expect(pure).toContain('--disable-extensions')
+    expect(pure).toContain(
+      '--disable-component-extensions-with-background-pages'
+    )
+
+    const compatible = buildBrowserArguments({ ...base, pureMode: false }, {})
+    expect(compatible).not.toContain('--disable-extensions')
+    expect(compatible).not.toContain(
+      '--disable-component-extensions-with-background-pages'
+    )
   })
 
   it('headless 开关与默认地址', () => {

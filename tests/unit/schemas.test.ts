@@ -15,6 +15,7 @@ import {
   masterPasswordSchema,
   recipeStepSchema,
   siteInputSchema,
+  siteSchema,
   storedAccountSchema
 } from '../../src/shared/schemas'
 import {
@@ -125,9 +126,35 @@ describe('shared input schemas', () => {
         testUrl: 'https://www.google.com/'
       },
       recordingDraftDirectory: '',
+      defaultLoginBrowser: 'builtin',
+      pureBrowserMode: true,
       groupOrder: [],
       groupOrders: {}
     })
+  })
+
+  it('accepts review placeholders without weakening site input validation', () => {
+    const now = new Date().toISOString()
+    expect(
+      siteSchema.safeParse({
+        id: 'site-review',
+        tabId: 'local',
+        name: 'Office 2021',
+        startUrl: '',
+        allowedOrigins: [],
+        autoSubmit: true,
+        needsReview: true,
+        createdAt: now,
+        updatedAt: now
+      }).success
+    ).toBe(true)
+    expect(
+      siteInputSchema.safeParse({
+        name: 'Office 2021',
+        startUrl: '',
+        autoSubmit: true
+      }).success
+    ).toBe(false)
   })
 
   it('accepts partial settings updates and rejects invalid scale values', () => {
@@ -137,6 +164,12 @@ describe('shared input schemas', () => {
       expect(appSettingsPatchSchema.safeParse({ fontSizeScale }).success).toBe(true)
     }
     expect(appSettingsPatchSchema.safeParse({ trashRetentionDays: 15 }).success).toBe(true)
+    expect(
+      appSettingsPatchSchema.safeParse({ defaultLoginBrowser: 'builtin' }).success
+    ).toBe(true)
+    expect(
+      appSettingsPatchSchema.safeParse({ pureBrowserMode: false }).success
+    ).toBe(true)
     expect(appSettingsPatchSchema.safeParse({ trashRetentionDays: 14 }).success).toBe(false)
     expect(
       appSettingsPatchSchema.safeParse({

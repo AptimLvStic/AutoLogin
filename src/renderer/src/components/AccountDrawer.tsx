@@ -68,6 +68,8 @@ interface AccountDrawerProps {
   mode: 'create' | 'edit'
   bookmarkMode?: boolean
   account?: AccountWithSite
+  defaultLoginBrowser?: LoginBrowser
+  focusField?: 'url' | 'password'
   sites: Site[]
   groups: GroupDefinition[]
   initialSiteId?: string
@@ -86,6 +88,8 @@ export function AccountDrawer({
   mode,
   bookmarkMode = false,
   account,
+  defaultLoginBrowser = 'builtin',
+  focusField,
   sites,
   groups,
   initialSiteId,
@@ -129,7 +133,7 @@ export function AccountDrawer({
     account?.loginStrategy ?? 'auto'
   )
   const [loginBrowser, setLoginBrowser] = useState<LoginBrowser>(
-    account?.loginBrowser ?? 'standalone'
+    account?.loginBrowser ?? defaultLoginBrowser
   )
   const [manualSteps, setManualSteps] = useState<RecipeStep[]>(() =>
     initialManualSteps(account)
@@ -167,6 +171,8 @@ export function AccountDrawer({
   const sitePickerRef = useRef<HTMLDivElement>(null)
   const groupPickerRef = useRef<HTMLDivElement>(null)
   const iconFileRef = useRef<HTMLInputElement>(null)
+  const startUrlRef = useRef<HTMLInputElement>(null)
+  const passwordRef = useRef<HTMLInputElement>(null)
   const recipeDetailsVersionRef = useRef(0)
   const latestRecipeDetailsRef = useRef<AccountRecipe | null>(null)
   const recipeSaveCountRef = useRef(0)
@@ -233,6 +239,15 @@ export function AccountDrawer({
       cancelled = true
     }
   }, [account?.id, isBookmark, mode])
+
+  useEffect(() => {
+    if (!focusField) return
+    const timer = window.setTimeout(() => {
+      if (focusField === 'url') startUrlRef.current?.focus()
+      else passwordRef.current?.focus()
+    }, 60)
+    return () => window.clearTimeout(timer)
+  }, [account?.id, focusField])
 
   useEffect(() => {
     if (!sitePickerOpen) return
@@ -1555,7 +1570,7 @@ export function AccountDrawer({
                     value={siteName}
                     onChange={(event) => setSiteName(event.target.value)}
                     placeholder={tr('例如：工作台', 'e.g. Workspace', '例如：工作台')}
-                    autoFocus={mode === 'edit'}
+                    autoFocus={mode === 'edit' && !focusField}
                   />
                 </span>
               </label>
@@ -1564,6 +1579,7 @@ export function AccountDrawer({
                 <span className="input-shell">
                   <span className="protocol-mark">URL</span>
                   <input
+                    ref={startUrlRef}
                     value={startUrl}
                     onChange={(event) => setStartUrl(event.target.value)}
                     onBlur={deriveSiteName}
@@ -1799,6 +1815,7 @@ export function AccountDrawer({
                     <span className="input-shell">
                       <KeyRound size={17} />
                       <input
+                        ref={passwordRef}
                         className="account-password-input"
                         type={
                           revealedPassword || (password && showPassword)

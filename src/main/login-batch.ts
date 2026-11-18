@@ -84,6 +84,12 @@ export class LoginBatchManager {
       if (!account || !site) {
         throw new Error('账号或站点不存在')
       }
+      if (!site.startUrl.trim()) {
+        throw new Error(`账号“${account.label}”缺少登录地址，请先补全`)
+      }
+      if (!account.password) {
+        throw new Error(`账号“${account.label}”缺少密码，请先补全`)
+      }
       return { account, site }
     })
 
@@ -91,9 +97,6 @@ export class LoginBatchManager {
     this.generation += 1
     const generation = this.generation
     this.disposed = false
-    if (accounts.some(({ account }) => account.loginBrowser !== 'builtin')) {
-      await this.ensureHost(accounts[0]?.site.startUrl)
-    }
     for (const accountId of uniqueIds) {
       await this.detachAccount(accountId)
     }
@@ -649,7 +652,8 @@ export class LoginBatchManager {
         profileDirectory: profile.profileDirectory,
         headless: this.headlessBrowser,
         proxy: this.vault.getSettings().proxy,
-        initialUrl
+        initialUrl,
+        pureMode: this.vault.getSettings().pureBrowserMode
       })
       this.host = host
       return host

@@ -25,6 +25,7 @@ export const DEFAULT_PROXY_TEST_URL = 'https://www.google.com/'
 export const GROUP_PATH_SEPARATOR = ' / '
 export const UNGROUPED_GROUP_KEY = '__autologin:ungrouped__'
 export const GROUP_NAME_MAX_LENGTH = 20
+export const GROUP_PATH_MAX_LENGTH = 120
 export const GROUP_MAX_DEPTH = 3
 export const TRASH_RETENTION_OPTIONS = [3, 7, 15, 30] as const
 export type TrashRetentionDays = (typeof TRASH_RETENTION_OPTIONS)[number]
@@ -723,6 +724,12 @@ export interface DataExportInput {
 
 export type DataExportFormat = 'autologin' | 'csv' | 'kdbx'
 
+export interface ImportSkipDetail {
+  rowNumber: number
+  title: string
+  reason: string
+}
+
 export interface DataImportResult {
   source: 'csv' | 'kdbx' | 'bookmarks' | 'autologin'
   tabId: string
@@ -730,6 +737,10 @@ export interface DataImportResult {
   sitesCreated: number
   accountsCreated: number
   skipped: number
+  groupsCreated: number
+  maxDepth: number
+  groupPaths: string[]
+  skipDetails: ImportSkipDetail[]
   warnings: string[]
 }
 

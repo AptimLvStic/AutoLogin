@@ -102,14 +102,6 @@ export function AccountTransferControls({
 
   function acceptImport(result: DataImportResult): void {
     onImported(result)
-    notify(
-      'success',
-      tr(
-        `已新增 ${result.sitesCreated} 个站点、${result.accountsCreated} 个账号`,
-        `${result.sitesCreated} sites and ${result.accountsCreated} accounts imported.`,
-        `已新增 ${result.sitesCreated} 個站點、${result.accountsCreated} 個帳號`
-      )
-    )
   }
 
   async function importCsv(mode: CsvImportMode): Promise<void> {
@@ -149,6 +141,10 @@ export function AccountTransferControls({
           sitesCreated: 0,
           accountsCreated: 0,
           skipped: 0,
+          groupsCreated: 0,
+          maxDepth: 0,
+          groupPaths: [],
+          skipDetails: [],
           warnings: []
         })
         notify(
@@ -828,6 +824,7 @@ export function AccountTransferControls({
           </form>
         </Modal>
       )}
+
     </>
   )
 }

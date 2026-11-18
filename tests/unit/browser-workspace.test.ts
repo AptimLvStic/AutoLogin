@@ -29,6 +29,16 @@ let container: HTMLDivElement
 let root: Root
 let newWindowListener: ((event: EmbeddedBrowserNewWindowEvent) => void) | null
 
+const secondTab: EmbeddedBrowserTab = {
+  ...tab,
+  label: 'embedded-second',
+  accountId: 'manual-embedded-second',
+  siteId: 'manual-embedded-second',
+  siteName: 'second.test',
+  url: 'https://second.test/',
+  title: 'second.test'
+}
+
 const openUrl = vi.fn(async () => tab)
 const back = vi.fn(async () => undefined)
 const reload = vi.fn(async () => undefined)
@@ -133,6 +143,58 @@ describe('BrowserWorkspace', () => {
     await flush()
 
     expect(back).toHaveBeenCalledWith(tab.label)
+  })
+
+  it('keeps the viewport free of horizontal menu padding', async () => {
+    act(() => {
+      root.render(
+        React.createElement(
+          I18nProvider,
+          {
+            language: 'zh-CN',
+            children: React.createElement(BrowserWorkspace, {
+              notify: () => undefined,
+              onOpenAccounts: () => undefined
+            })
+          }
+        )
+      )
+    })
+    await flush()
+
+    act(() => {
+      newWindowListener?.({ url: tab.url })
+    })
+    await flush()
+
+    expect(
+      container.querySelector('button[aria-label="查看全部页面"]')
+    ).toBeNull()
+    expect(
+      container.querySelectorAll(
+        '.browser-workspace__copy-actions .browser-workspace__icon-button'
+      )
+    ).toHaveLength(2)
+
+    openUrl.mockResolvedValueOnce(secondTab)
+    act(() => {
+      newWindowListener?.({ url: secondTab.url })
+    })
+    await flush()
+
+    const wrap = container.querySelector('.browser-workspace__viewport-wrap')
+    expect(wrap?.className).toBe('browser-workspace__viewport-wrap')
+
+    const allPages = container.querySelector<HTMLButtonElement>(
+      'button[aria-label="查看全部页面"]'
+    )
+    expect(allPages).not.toBeNull()
+    act(() => allPages?.click())
+    await flush()
+
+    expect(container.querySelector('.browser-workspace__tab-menu')).not.toBeNull()
+    expect(wrap?.className).toBe('browser-workspace__viewport-wrap')
+    expect(wrap?.getAttribute('style')).toContain('--menu-h')
   })
 })
 

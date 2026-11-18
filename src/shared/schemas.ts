@@ -11,6 +11,7 @@ import {
   DEFAULT_PROXY_TEST_URL,
   FONT_SIZE_SCALE_OPTIONS,
   GROUP_NAME_MAX_LENGTH,
+  GROUP_PATH_MAX_LENGTH,
   DEFAULT_TRASH_RETENTION_DAYS,
   INTERFACE_SCALE_MAX,
   INTERFACE_SCALE_MIN,
@@ -56,7 +57,7 @@ const groupNameSchema = z
   .max(GROUP_NAME_MAX_LENGTH, `分组名称不能超过 ${GROUP_NAME_MAX_LENGTH} 个字符`)
   .regex(/^[\p{L}\p{N} _-]+$/u, '分组名称不能包含特殊字符')
 
-const groupPathSchema = z.string().trim().min(1).max(80)
+const groupPathSchema = z.string().trim().min(1).max(GROUP_PATH_MAX_LENGTH)
 const tabIdSchema = idSchema.default(DEFAULT_ACCOUNT_TAB_ID)
 const tabNameSchema = z.string().trim().min(1, '标签页名称不能为空').max(40)
 const tabFileSafeNameSchema = tabNameSchema.refine(
@@ -360,7 +361,7 @@ export const vaultDataSchema = z.object({
       z.object({
         tabId: tabIdSchema,
         path: groupPathSchema,
-        name: z.string().trim().min(1).max(40),
+        name: z.string().trim().min(1).max(GROUP_PATH_MAX_LENGTH),
         createdAt: z.string(),
         updatedAt: z.string()
       })

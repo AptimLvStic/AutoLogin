@@ -78,6 +78,11 @@ describe('data transfer', () => {
     expect(parsed.skipped).toBe(1)
     expect(parsed.warnings[0]).toContain('第 4 行')
     expect(parsed.warnings[0]).not.toContain('missing-password')
+    expect(parsed.skipDetails[0]).toMatchObject({
+      rowNumber: 4,
+      title: 'Broken',
+      reason: '密码为空'
+    })
 
     const merged = mergeImportedLogins(emptyVault(), 'csv', parsed)
     expect(merged.result).toMatchObject({
@@ -150,7 +155,8 @@ describe('data transfer', () => {
         }
       ],
       warnings: [],
-      skipped: 0
+      skipped: 0,
+      skipDetails: []
     }
 
     const merged = mergeImportedLogins(emptyVault(), 'kdbx', parsed)
@@ -290,10 +296,41 @@ describe('data transfer', () => {
         .filter((group) => group.tabId === 'local')
         .map((group) => group.path)
     ).toEqual(['中联航', '中联航 / 亦庄', '中联航 / 大兴'])
+    expect(merged.result).toMatchObject({
+      groupsCreated: 3,
+      maxDepth: 2,
+      groupPaths: ['中联航 / 亦庄', '中联航 / 大兴']
+    })
     expect(merged.data.sites.map((site) => site.group)).toEqual([
       '中联航 / 亦庄',
       '中联航 / 大兴'
     ])
+  })
+
+  it('adds https to host-only import URLs and records missing fields in skip details', async () => {
+    const directory = createDirectory()
+    const path = join(directory, 'host-only.csv')
+    writeFileSync(
+      path,
+      [
+        '\uFEFF站点名称,登录地址,分组,用户名,密码,自动提交',
+        '内网站点,nas.local/login,工作,user-a,one,true',
+        '缺地址,,工作,user-b,two,true'
+      ].join('\r\n'),
+      'utf8'
+    )
+
+    const parsed = await parseCsvImport(path)
+    expect(parsed.candidates[0]).toMatchObject({
+      startUrl: 'https://nas.local/login',
+      siteGroup: '工作'
+    })
+    expect(parsed.skipped).toBe(1)
+    expect(parsed.skipDetails[0]).toMatchObject({
+      rowNumber: 3,
+      title: '缺地址',
+      reason: '登录地址为空'
+    })
   })
 
   it('exports and imports the localized CSV template without a favorite column', async () => {
@@ -416,6 +453,47 @@ describe('data transfer', () => {
       password: 'keepass-secret'
     })
   })
+
+  it('preserves full KeePassXC parent group paths from nested groups', async () => {
+    const directory = createDirectory()
+    const path = join(directory, 'nested-groups.kdbx')
+    await writeNestedKdbxFixture(path)
+
+    const parsed = await parseKdbxImport(path, 'correct horse battery staple')
+    expect(parsed.candidates.map((candidate) => candidate.siteGroup)).toEqual([
+      '工作 / 邮件',
+      '个人 / 邮件'
+    ])
+    expect(parsed.skipDetails).toHaveLength(1)
+    expect(parsed.skipDetails[0]).toMatchObject({
+      title: '无地址条目',
+      reason: '登录地址为空'
+    })
+
+    const merged = mergeImportedLogins(emptyVault(), 'kdbx', parsed)
+    expect(merged.result).toMatchObject({
+      groupsCreated: 4,
+      maxDepth: 2,
+      groupPaths: ['工作 / 邮件', '个人 / 邮件']
+    })
+    expect(
+      merged.data.groupDefinitions.map((group) => group.path)
+    ).toEqual(['工作', '工作 / 邮件', '个人', '个人 / 邮件'])
+  })
+
+  it('derives an untitled KeePassXC site name from a protocol-less URL', async () => {
+    const directory = createDirectory()
+    const path = join(directory, 'host-only.kdbx')
+    await writeHostOnlyKdbxFixture(path)
+
+    const parsed = await parseKdbxImport(path, 'correct horse battery staple')
+    expect(parsed.candidates).toHaveLength(1)
+    expect(parsed.candidates[0]).toMatchObject({
+      siteName: 'nas.local',
+      startUrl: 'https://nas.local/login',
+      siteGroup: '内网'
+    })
+  })
 })
 
 async function writeKdbxFixture(path: string, kdf: string): Promise<void> {
@@ -433,5 +511,57 @@ async function writeKdbxFixture(path: string, kdf: string): Promise<void> {
   entry.fields.set('URL', 'https://keepass.example/login')
   entry.fields.set('UserName', 'keeper@example.com')
   entry.fields.set('Password', ProtectedValue.fromString('keepass-secret'))
+  writeFileSync(path, Buffer.from(await database.save()))
+}
+
+async function writeNestedKdbxFixture(path: string): Promise<void> {
+  configureKdbxArgon2()
+  const credentials = new KdbxCredentials(
+    ProtectedValue.fromString('correct horse battery staple')
+  )
+  await credentials.ready
+  const database = Kdbx.create(credentials, 'AutoLogin Test')
+  database.setKdf(Consts.KdfId.Argon2id)
+  const root = database.getDefaultGroup()
+  const work = database.createGroup(root, '工作')
+  const workMail = database.createGroup(work, '邮件')
+  const personal = database.createGroup(root, '个人')
+  const personalMail = database.createGroup(personal, '邮件')
+
+  const workEntry = database.createEntry(workMail)
+  workEntry.fields.set('Title', '工作邮箱')
+  workEntry.fields.set('URL', 'https://mail.work.example/login')
+  workEntry.fields.set('UserName', 'work@example.com')
+  workEntry.fields.set('Password', ProtectedValue.fromString('work-secret'))
+
+  const personalEntry = database.createEntry(personalMail)
+  personalEntry.fields.set('Title', '个人邮箱')
+  personalEntry.fields.set('URL', 'mail.personal.example/login')
+  personalEntry.fields.set('UserName', 'personal@example.com')
+  personalEntry.fields.set('Password', ProtectedValue.fromString('personal-secret'))
+
+  const incomplete = database.createEntry(work)
+  incomplete.fields.set('Title', '无地址条目')
+  incomplete.fields.set('UserName', 'incomplete@example.com')
+  incomplete.fields.set('Password', ProtectedValue.fromString('incomplete-secret'))
+
+  writeFileSync(path, Buffer.from(await database.save()))
+}
+
+async function writeHostOnlyKdbxFixture(path: string): Promise<void> {
+  configureKdbxArgon2()
+  const credentials = new KdbxCredentials(
+    ProtectedValue.fromString('correct horse battery staple')
+  )
+  await credentials.ready
+  const database = Kdbx.create(credentials, 'AutoLogin Host Only')
+  database.setKdf(Consts.KdfId.Argon2id)
+  const root = database.getDefaultGroup()
+  const intranet = database.createGroup(root, '内网')
+  const entry = database.createEntry(intranet)
+  entry.fields.set('URL', 'nas.local/login')
+  entry.fields.set('UserName', 'nas-user')
+  entry.fields.set('Password', ProtectedValue.fromString('nas-secret'))
+
   writeFileSync(path, Buffer.from(await database.save()))
 }

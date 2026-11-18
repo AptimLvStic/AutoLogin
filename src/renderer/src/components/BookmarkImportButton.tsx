@@ -24,14 +24,6 @@ export function BookmarkImportButton({
       const result = await window.autologin.data.importBookmarks()
       if (!result) return
       onImported(result)
-      notify(
-        'success',
-        tr(
-          `已新增 ${result.sitesCreated} 个书签站点、${result.accountsCreated} 个书签账号`,
-          `${result.sitesCreated} bookmark sites and ${result.accountsCreated} bookmark accounts imported.`,
-          `已新增 ${result.sitesCreated} 個書籤站點、${result.accountsCreated} 個書籤帳號`
-        )
-      )
     } catch (error) {
       notify(
         'error',
@@ -177,14 +169,6 @@ export function BookmarkTransferControls({
       const result = await window.autologin.data.importBookmarks()
       if (!result) return
       onImported(result)
-      notify(
-        'success',
-        tr(
-          `已新增 ${result.sitesCreated} 个书签站点、${result.accountsCreated} 个书签账号`,
-          `${result.sitesCreated} bookmark sites and ${result.accountsCreated} bookmark accounts imported.`,
-          `已新增 ${result.sitesCreated} 個書籤站點、${result.accountsCreated} 個書籤帳號`
-        )
-      )
     } catch (error) {
       notify(
         'error',

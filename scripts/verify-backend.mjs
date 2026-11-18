@@ -15,7 +15,7 @@ const sourceRoots = [
   resolve(root, 'src/tauri')
 ]
 const requiredMarkers = [
-  '2026-11-17.recording-draft',
+  '2026-11-18.browser-layout-and-import-result',
   'openDraftSession',
   'appendDraftStep',
   'recoverDraftSession',

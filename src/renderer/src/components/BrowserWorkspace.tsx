@@ -2,8 +2,8 @@ import { FormEvent, useEffect, useRef, useState, WheelEvent } from 'react'
 import type { CSSProperties } from 'react'
 import {
   ArrowLeft,
+  Check,
   ChevronDown,
-  Copy,
   Globe2,
   KeyRound,
   LoaderCircle,
@@ -100,17 +100,20 @@ export function BrowserWorkspace({
   const [loadingTabs, setLoadingTabs] = useState(true)
   const [navigating, setNavigating] = useState(false)
   const [refreshing, setRefreshing] = useState(false)
-  const [copyMenuOpen, setCopyMenuOpen] = useState(false)
+  const [copiedField, setCopiedField] = useState<'username' | 'password' | null>(null)
   const [overflowOpen, setOverflowOpen] = useState(false)
   const [hasTabOverflow, setHasTabOverflow] = useState(false)
+  const [menuOffset, setMenuOffset] = useState(0)
   const [goingBack, setGoingBack] = useState(false)
   const [closeAllConfirmOpen, setCloseAllConfirmOpen] = useState(false)
   const [closingAll, setClosingAll] = useState(false)
   const tabsRef = useRef<HTMLDivElement>(null)
   const viewportRef = useRef<HTMLDivElement>(null)
+  const viewportWrapRef = useRef<HTMLDivElement>(null)
   const addressInputRef = useRef<HTMLInputElement>(null)
-  const copyMenuRef = useRef<HTMLDivElement>(null)
+  const tabMenuRef = useRef<HTMLDivElement>(null)
   const overflowRef = useRef<HTMLDivElement>(null)
+  const copyFeedbackTimerRef = useRef<number | null>(null)
   const newTabDraftRef = useRef(false)
   const activeBeforeDraftRef = useRef('')
   const active = tabs.find((tab) => tab.label === activeLabel) ?? null
@@ -263,18 +266,15 @@ export function BrowserWorkspace({
   }, [active?.label])
 
   useEffect(() => {
-    if (!copyMenuOpen && !overflowOpen) return
+    if (!overflowOpen) return
     const closeOnPointer = (event: PointerEvent): void => {
       if (event.target instanceof Node) {
-        if (copyMenuOpen && copyMenuRef.current?.contains(event.target)) return
-        if (overflowOpen && overflowRef.current?.contains(event.target)) return
+        if (overflowRef.current?.contains(event.target)) return
       }
-      setCopyMenuOpen(false)
       setOverflowOpen(false)
     }
     const closeOnEscape = (event: KeyboardEvent): void => {
       if (event.key !== 'Escape') return
-      setCopyMenuOpen(false)
       setOverflowOpen(false)
     }
     document.addEventListener('pointerdown', closeOnPointer)
@@ -283,7 +283,57 @@ export function BrowserWorkspace({
       document.removeEventListener('pointerdown', closeOnPointer)
       document.removeEventListener('keydown', closeOnEscape)
     }
-  }, [copyMenuOpen, overflowOpen])
+  }, [overflowOpen])
+
+  useEffect(() => {
+    if (tabs.length > 1) return
+    setOverflowOpen(false)
+  }, [tabs.length])
+
+  useEffect(() => {
+    if (!overflowOpen) {
+      setMenuOffset(0)
+      return
+    }
+    const menu = tabMenuRef.current
+    const wrap = viewportWrapRef.current
+    if (!menu || !wrap) return
+    let frame = 0
+    const measure = (): void => {
+      if (frame) window.cancelAnimationFrame(frame)
+      frame = window.requestAnimationFrame(() => {
+        frame = 0
+        const menuBounds = menu.getBoundingClientRect()
+        const wrapBounds = wrap.getBoundingClientRect()
+        const next = Math.max(0, Math.ceil(menuBounds.bottom - wrapBounds.top))
+        setMenuOffset((current) => (current === next ? current : next))
+      })
+    }
+    const observer = new ResizeObserver(measure)
+    observer.observe(menu)
+    measure()
+    return () => {
+      observer.disconnect()
+      if (frame) window.cancelAnimationFrame(frame)
+    }
+  }, [overflowOpen, tabs.length])
+
+  useEffect(() => {
+    setCopiedField(null)
+    if (copyFeedbackTimerRef.current !== null) {
+      window.clearTimeout(copyFeedbackTimerRef.current)
+      copyFeedbackTimerRef.current = null
+    }
+  }, [active?.label])
+
+  useEffect(
+    () => () => {
+      if (copyFeedbackTimerRef.current !== null) {
+        window.clearTimeout(copyFeedbackTimerRef.current)
+      }
+    },
+    []
+  )
 
   function setDraftOpen(open: boolean): void {
     newTabDraftRef.current = open
@@ -412,9 +462,9 @@ export function BrowserWorkspace({
 
   async function copyUsername(): Promise<void> {
     if (!active) return
-    setCopyMenuOpen(false)
     try {
       await window.autologin.accounts.copyUsername(active.accountId)
+      showCopyFeedback('username')
       notify('success', tr('用户名已复制', 'Username copied.', '使用者名稱已複製'))
     } catch (error) {
       notify(
@@ -428,9 +478,9 @@ export function BrowserWorkspace({
 
   async function copyPassword(): Promise<void> {
     if (!active) return
-    setCopyMenuOpen(false)
     try {
       await window.autologin.accounts.copy(active.accountId)
+      showCopyFeedback('password')
       notify('success', tr('密码已复制', 'Password copied.', '密碼已複製'))
     } catch (error) {
       notify(
@@ -448,7 +498,6 @@ export function BrowserWorkspace({
       setDraftOpen(true)
       setActiveLabel('')
       setAddress('')
-      setCopyMenuOpen(false)
       setOverflowOpen(false)
       void window.autologin.browser.hideAll()
     }
@@ -473,6 +522,17 @@ export function BrowserWorkspace({
     if (element.scrollWidth <= element.clientWidth) return
     if (Math.abs(event.deltaY) <= Math.abs(event.deltaX)) return
     element.scrollLeft += event.deltaY
+  }
+
+  function showCopyFeedback(field: 'username' | 'password'): void {
+    if (copyFeedbackTimerRef.current !== null) {
+      window.clearTimeout(copyFeedbackTimerRef.current)
+    }
+    setCopiedField(field)
+    copyFeedbackTimerRef.current = window.setTimeout(() => {
+      setCopiedField(null)
+      copyFeedbackTimerRef.current = null
+    }, 1200)
   }
 
   return (
@@ -598,22 +658,24 @@ export function BrowserWorkspace({
           >
             <Plus size={16} />
           </button>
-          <button
-            type="button"
-            className="browser-workspace__all-tabs"
-            aria-haspopup="menu"
-            aria-expanded={overflowOpen}
-            aria-label={tr('查看全部页面', 'View all pages', '檢視全部頁面')}
-            onClick={() => setOverflowOpen((current) => !current)}
-            disabled={tabs.length === 0}
-            title={tr('查看全部页面', 'View all pages', '檢視全部頁面')}
-          >
-            <span>{tr('全部', 'All', '全部')}</span>
-            <span className="browser-workspace__all-tabs-count">{tabs.length}</span>
-            <ChevronDown size={13} />
-          </button>
-          {overflowOpen && (
+          {tabs.length > 1 && (
+            <button
+              type="button"
+              className="browser-workspace__all-tabs"
+              aria-haspopup="menu"
+              aria-expanded={overflowOpen}
+              aria-label={tr('查看全部页面', 'View all pages', '檢視全部頁面')}
+              onClick={() => setOverflowOpen((current) => !current)}
+              title={tr('查看全部页面', 'View all pages', '檢視全部頁面')}
+            >
+              <span>{tr('全部', 'All', '全部')}</span>
+              <span className="browser-workspace__all-tabs-count">{tabs.length}</span>
+              <ChevronDown size={13} />
+            </button>
+          )}
+          {overflowOpen && tabs.length > 1 && (
             <div
+              ref={tabMenuRef}
               className="browser-workspace__tab-menu"
               role="menu"
               aria-label={tr('全部页面', 'All pages', '全部頁面')}
@@ -718,42 +780,53 @@ export function BrowserWorkspace({
           {navigating && <LoaderCircle size={14} className="spin" />}
         </form>
         {active && (
-          <div className="browser-workspace__copy" ref={copyMenuRef}>
+          <div className="browser-workspace__copy-actions">
             <button
               type="button"
-              className="button button--ghost button--small browser-workspace__copy-trigger"
-              aria-haspopup="menu"
-              aria-expanded={copyMenuOpen}
-              onClick={() => setCopyMenuOpen((current) => !current)}
+              className={`browser-workspace__icon-button${
+                copiedField === 'username' ? ' is-copied' : ''
+              }`}
+              onClick={() => void copyUsername()}
+              aria-label={
+                copiedField === 'username'
+                  ? tr('已复制用户名', 'Username copied', '已複製使用者名稱')
+                  : tr('复制用户名', 'Copy username', '複製使用者名稱')
+              }
+              title={
+                copiedField === 'username'
+                  ? tr('已复制用户名', 'Username copied', '已複製使用者名稱')
+                  : tr('复制用户名', 'Copy username', '複製使用者名稱')
+              }
             >
-              <Copy size={14} />
-              {tr('复制', 'Copy', '複製')}
-              <ChevronDown size={12} />
+              {copiedField === 'username' ? <Check size={15} /> : <UserRound size={15} />}
             </button>
-            {copyMenuOpen && (
-              <div
-                className="browser-workspace__copy-menu"
-                role="menu"
-                aria-label={tr('复制账号信息', 'Copy account details', '複製帳號資訊')}
-              >
-                <button type="button" role="menuitem" onClick={() => void copyUsername()}>
-                  <UserRound size={14} />
-                  {tr('复制用户名', 'Copy username', '複製使用者名稱')}
-                </button>
-                <button type="button" role="menuitem" onClick={() => void copyPassword()}>
-                  <KeyRound size={14} />
-                  {tr('复制密码', 'Copy password', '複製密碼')}
-                </button>
-              </div>
-            )}
+            <button
+              type="button"
+              className={`browser-workspace__icon-button${
+                copiedField === 'password' ? ' is-copied' : ''
+              }`}
+              onClick={() => void copyPassword()}
+              aria-label={
+                copiedField === 'password'
+                  ? tr('已复制密码', 'Password copied', '已複製密碼')
+                  : tr('复制密码', 'Copy password', '複製密碼')
+              }
+              title={
+                copiedField === 'password'
+                  ? tr('已复制密码', 'Password copied', '已複製密碼')
+                  : tr('复制密码', 'Copy password', '複製密碼')
+              }
+            >
+              {copiedField === 'password' ? <Check size={15} /> : <KeyRound size={15} />}
+            </button>
           </div>
         )}
       </div>
 
       <div
-        className={`browser-workspace__viewport-wrap${
-          overflowOpen ? ' is-tab-menu-open' : ''
-        }${copyMenuOpen ? ' is-copy-menu-open' : ''}`}
+        ref={viewportWrapRef}
+        className="browser-workspace__viewport-wrap"
+        style={{ '--menu-h': `${menuOffset}px` } as CSSProperties}
       >
         {loadingTabs ? (
           <div className="browser-workspace__empty browser-workspace__empty--loading" role="status">

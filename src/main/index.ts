@@ -224,7 +224,7 @@ import { VaultManager } from './vault'
 app.setName('AutoLogin')
 app.setAppUserModelId('com.autologin.desktop')
 /** 每次发布前更新，用于在日志里识别 Tauri 后台构建版本。 */
-const BUILD_TAG = '2026-11-17.recording-draft-tauri-deadlock-fix'
+const BUILD_TAG = '2026-11-18.browser-layout-and-import-result'
 const backendEntryPath = process.argv[1]
   ? resolve(process.argv[1])
   : 'unknown'
@@ -2057,6 +2057,10 @@ function registerIpc(): void {
             sitesCreated: 0,
             accountsCreated: 0,
             skipped: 0,
+            groupsCreated: 0,
+            maxDepth: 0,
+            groupPaths: [],
+            skipDetails: [],
             warnings: []
           }
         }

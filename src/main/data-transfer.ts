@@ -12,14 +12,19 @@ import {
   ProtectedValue
 } from 'kdbxweb'
 import { argon2d, argon2id } from 'hash-wasm'
-import { DEFAULT_ACCOUNT_TAB_ID, GROUP_PATH_SEPARATOR } from '@shared/types'
+import {
+  DEFAULT_ACCOUNT_TAB_ID,
+  GROUP_PATH_MAX_LENGTH,
+  GROUP_PATH_SEPARATOR
+} from '@shared/types'
 import { databaseFileNameFor } from '@shared/database-files'
-import { normalizeGroupPath } from '@shared/group-tree'
+import { groupLevel, normalizeGroupPath } from '@shared/group-tree'
 import type {
   AccountTab,
   AccountTabSource,
   DataImportResult,
   GroupDefinition,
+  ImportSkipDetail,
   Site,
   StoredAccount,
   VaultData
@@ -78,6 +83,7 @@ export interface ParsedImport {
   candidates: ImportedLoginCandidate[]
   warnings: string[]
   skipped: number
+  skipDetails: ImportSkipDetail[]
 }
 
 let argon2Configured = false
@@ -123,6 +129,7 @@ export async function parseCsvImport(path: string): Promise<ParsedImport> {
 
   const candidates: ImportedLoginCandidate[] = []
   const warnings: string[] = []
+  const skipDetails: ImportSkipDetail[] = []
   let skipped = 0
 
   records.forEach((record, index) => {
@@ -139,6 +146,11 @@ export async function parseCsvImport(path: string): Promise<ParsedImport> {
     if (reason) {
       skipped += 1
       warnings.push(`第 ${rowNumber} 行已跳过：${reason}`)
+      skipDetails.push({
+        rowNumber,
+        title: siteName || `第 ${rowNumber} 行`,
+        reason
+      })
       return
     }
 
@@ -157,7 +169,7 @@ export async function parseCsvImport(path: string): Promise<ParsedImport> {
   if (candidates.length === 0) {
     throw new Error(warnings[0] ?? 'CSV 中没有可导入的有效账号')
   }
-  return { candidates, warnings, skipped }
+  return { candidates, warnings, skipped, skipDetails }
 }
 
 export async function parseKdbxImport(
@@ -178,6 +190,7 @@ export async function parseKdbxImport(
 
   const candidates: ImportedLoginCandidate[] = []
   const warnings: string[] = []
+  const skipDetails: ImportSkipDetail[] = []
   let skipped = 0
   let rowNumber = 1
 
@@ -198,6 +211,7 @@ export async function parseKdbxImport(
       if (candidate.kind === 'skip') {
         skipped += 1
         warnings.push(candidate.warning)
+        skipDetails.push(candidate.detail)
       } else {
         candidates.push(candidate.value)
       }
@@ -216,7 +230,7 @@ export async function parseKdbxImport(
       warnings[0] ?? 'KeePassXC 数据库中没有包含有效网址、用户名和密码的登录记录'
     )
   }
-  return { candidates, warnings, skipped }
+  return { candidates, warnings, skipped, skipDetails }
 }
 
 export async function parseBookmarksImport(path: string): Promise<ParsedImport> {
@@ -228,6 +242,7 @@ export async function parseBookmarksImport(path: string): Promise<ParsedImport> 
 
   const candidates: ImportedLoginCandidate[] = []
   const warnings: string[] = []
+  const skipDetails: ImportSkipDetail[] = []
   const folders: string[] = []
   let skipped = 0
   let rowNumber = 0
@@ -250,12 +265,17 @@ export async function parseBookmarksImport(path: string): Promise<ParsedImport> 
       throw new Error(`单次最多导入 ${MAX_IMPORT_ROWS} 个浏览器书签`)
     }
     const rawUrl = match[2]?.trim() ?? ''
+    const title = sanitizeBookmarkText(match[3] ?? '').slice(0, 80)
     if (!isValidImportUrl(rawUrl)) {
       skipped += 1
       warnings.push(`第 ${rowNumber} 个书签已跳过：网址不是有效的 http/https 地址`)
+      skipDetails.push({
+        rowNumber,
+        title: title || `第 ${rowNumber} 个书签`,
+        reason: '网址不是有效的 http/https 地址'
+      })
       continue
     }
-    const title = sanitizeBookmarkText(match[3] ?? '').slice(0, 80)
     const siteName = (title || hostnameOf(rawUrl)).slice(0, 80)
     const siteGroup = folders
       .map((folder) => folder.slice(0, 20))
@@ -277,7 +297,7 @@ export async function parseBookmarksImport(path: string): Promise<ParsedImport> 
   if (candidates.length === 0) {
     throw new Error(warnings[0] ?? '浏览器书签文件中没有可导入的网站')
   }
-  return { candidates, warnings, skipped }
+  return { candidates, warnings, skipped, skipDetails }
 }
 
 export function mergeImportedLogins(
@@ -288,9 +308,11 @@ export function mergeImportedLogins(
 ): { data: VaultData; result: DataImportResult } {
   const data = structuredClone(vaultData)
   const warnings = [...parsed.warnings]
+  const skipDetails = [...parsed.skipDetails]
   let skipped = parsed.skipped
   let sitesCreated = 0
   let accountsCreated = 0
+  const groupPaths = new Set<string>()
   const now = new Date().toISOString()
 
   const tabSites = data.sites.filter((site) => site.tabId === tabId)
@@ -334,6 +356,7 @@ export function mergeImportedLogins(
       takenSiteNames.add(normalizeSiteName(siteName))
       sitesCreated += 1
     }
+    if (candidate.siteGroup) groupPaths.add(candidate.siteGroup)
 
     const duplicate = data.accounts.some(
       (account) =>
@@ -344,9 +367,13 @@ export function mergeImportedLogins(
     )
     if (duplicate) {
       skipped += 1
-      warnings.push(
-        `第 ${candidate.rowNumber} 条记录已跳过：站点“${site.name}”已存在相同用户名的账号`
-      )
+      const reason = `站点“${site.name}”已存在相同用户名的账号`
+      warnings.push(`第 ${candidate.rowNumber} 条记录已跳过：${reason}`)
+      skipDetails.push({
+        rowNumber: candidate.rowNumber,
+        title: candidate.siteName,
+        reason
+      })
       continue
     }
 
@@ -369,7 +396,7 @@ export function mergeImportedLogins(
     accountsCreated += 1
   }
 
-  ensureImportedGroups(data, tabId, now)
+  const groupStats = ensureImportedGroups(data, tabId, now)
 
   return {
     data,
@@ -380,6 +407,10 @@ export function mergeImportedLogins(
       sitesCreated,
       accountsCreated,
       skipped,
+      groupsCreated: groupStats.created,
+      maxDepth: groupStats.maxDepth,
+      groupPaths: [...groupPaths],
+      skipDetails,
       warnings: warnings.slice(0, 30)
     }
   }
@@ -525,6 +556,8 @@ export function mergeAutologinSnapshot(
   const takenNames = new Set(data.tabs.map((tab) => tab.name.toLocaleLowerCase()))
   let sitesCreated = 0
   let accountsCreated = 0
+  let groupsCreated = 0
+  const groupPaths = new Set<string>()
   let firstTab: AccountTab | null = null
 
   for (const sourceTab of importedTabs) {
@@ -567,6 +600,9 @@ export function mergeAutologinSnapshot(
         createdAt: site.createdAt || now,
         updatedAt: site.updatedAt || now
       })
+      if (!firstTab || targetTab.id === firstTab.id) {
+        if (site.group?.trim()) groupPaths.add(site.group.trim())
+      }
       sitesCreated += 1
     }
     for (const account of imported.accounts.filter(
@@ -594,9 +630,11 @@ export function mergeAutologinSnapshot(
         createdAt: group.createdAt || now,
         updatedAt: group.updatedAt || now
       })
+      groupsCreated += 1
     }
   }
 
+  const maxDepth = Math.max(0, ...[...groupPaths].map((path) => groupLevel(path)))
   return {
     data,
     result: {
@@ -606,12 +644,21 @@ export function mergeAutologinSnapshot(
       sitesCreated,
       accountsCreated,
       skipped: 0,
+      groupsCreated,
+      maxDepth,
+      groupPaths: [...groupPaths],
+      skipDetails: [],
       warnings: []
     }
   }
 }
 
-function ensureImportedGroups(data: VaultData, tabId: string, now: string): void {
+function ensureImportedGroups(
+  data: VaultData,
+  tabId: string,
+  now: string
+): { created: number; maxDepth: number } {
+  const before = data.groupDefinitions.length
   const existing = new Set(
     data.groupDefinitions
       .filter((group) => group.tabId === tabId)
@@ -650,6 +697,10 @@ function ensureImportedGroups(data: VaultData, tabId: string, now: string): void
   if (tabId === DEFAULT_ACCOUNT_TAB_ID) {
     data.settings.groupOrder = [...nextOrder]
   }
+  return {
+    created: data.groupDefinitions.length - before,
+    maxDepth: Math.max(0, ...[...needed].map((path) => groupLevel(path)))
+  }
 }
 
 function kdbxEntryToCandidate(
@@ -658,20 +709,25 @@ function kdbxEntryToCandidate(
   rowNumber: number
 ):
   | { kind: 'candidate'; value: ImportedLoginCandidate }
-  | { kind: 'skip'; warning: string } {
+  | { kind: 'skip'; warning: string; detail: ImportSkipDetail } {
   const title = fieldText(entry, 'Title').trim()
   const rawUrl = fieldText(entry, 'URL').trim()
   const username = fieldText(entry, 'UserName').trim()
   const password = fieldText(entry, 'Password')
   const reason = validateCandidateFields(title || hostnameOf(rawUrl), rawUrl, username, password)
   if (reason) {
-    return { kind: 'skip', warning: `第 ${rowNumber} 条 KeePassXC 记录已跳过：${reason}` }
+    return {
+      kind: 'skip',
+      warning: `第 ${rowNumber} 条 KeePassXC 记录已跳过：${reason}`,
+      detail: {
+        rowNumber,
+        title: title || `第 ${rowNumber} 条记录`,
+        reason
+      }
+    }
   }
 
-  const groupName =
-    group.parentGroup && group.name?.trim()
-      ? group.name.trim().slice(0, 40)
-      : undefined
+  const groupName = kdbxGroupPath(group)
   return {
     kind: 'candidate',
     value: {
@@ -685,6 +741,18 @@ function kdbxEntryToCandidate(
       rowNumber
     }
   }
+}
+
+function kdbxGroupPath(group: KdbxGroup): string | undefined {
+  const segments: string[] = []
+  let current: KdbxGroup | null = group
+  while (current?.parentGroup) {
+    const name = current.name?.trim()
+    if (name) segments.unshift(name.replace(/[\\/]/g, '-'))
+    current = current.parentGroup
+  }
+  const path = segments.join(GROUP_PATH_SEPARATOR).slice(0, GROUP_PATH_MAX_LENGTH)
+  return path || undefined
 }
 
 function fieldText(entry: KdbxEntry, name: string): string {
@@ -701,10 +769,10 @@ function validateCandidateFields(
   username: string,
   password: string
 ): string | null {
-  if (!siteName) return '站点名称为空'
-  if (siteName.length > 80) return '站点名称超过 80 个字符'
   if (!rawUrl) return '登录地址为空'
   if (!isValidImportUrl(rawUrl)) return '登录地址不是有效的 http/https 地址'
+  if (!siteName) return '站点名称为空'
+  if (siteName.length > 80) return '站点名称超过 80 个字符'
   if (!username) return '用户名为空'
   if (username.length > 320) return '用户名超过 320 个字符'
   if (!password) return '密码为空'
@@ -713,20 +781,34 @@ function validateCandidateFields(
 }
 
 function isValidImportUrl(value: string): boolean {
+  return normalizeUrlCandidate(value) !== null
+}
+
+function normalizeUrlCandidate(value: string): string | null {
+  const trimmed = value.trim()
+  if (!trimmed) return null
+  const hasScheme = /^[a-z][a-z\d+.-]*:\/\//i.test(trimmed)
+  const hasBareScheme = /^[a-z][a-z\d+.-]*:(?!\d)/i.test(trimmed)
+  const candidate =
+    hasScheme || hasBareScheme ? trimmed : `https://${trimmed}`
   try {
-    const url = new URL(value)
+    const url = new URL(candidate)
     return (
       (url.protocol === 'http:' || url.protocol === 'https:') &&
       !url.username &&
       !url.password
     )
+      ? url.toString()
+      : null
   } catch {
-    return false
+    return null
   }
 }
 
 function normalizeImportUrl(value: string): string {
-  return new URL(value).toString()
+  const normalized = normalizeUrlCandidate(value)
+  if (!normalized) throw new Error('登录地址不是有效的 http/https 地址')
+  return normalized
 }
 
 function normalizeSiteName(value: string): string {
@@ -762,7 +844,7 @@ function normalizeUrlForCompare(value: string): string {
 }
 
 function optionalGroup(value: string | undefined): string | undefined {
-  const group = normalizeGroupPath(clean(value)).slice(0, 40)
+  const group = normalizeGroupPath(clean(value)).slice(0, GROUP_PATH_MAX_LENGTH)
   return group || undefined
 }
 
@@ -795,8 +877,10 @@ function parseBoolean(value: string | undefined, fallback: boolean): boolean {
 }
 
 function hostnameOf(value: string): string {
+  const normalized = normalizeUrlCandidate(value)
+  if (!normalized) return ''
   try {
-    return new URL(value).hostname.replace(/^www\./, '')
+    return new URL(normalized).hostname.replace(/^www\./, '')
   } catch {
     return ''
   }

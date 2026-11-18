@@ -61,6 +61,7 @@ import {
   type AccountWithSite,
   type AppSettings,
   type AppUpdateState,
+  type DataImportResult,
   type DeletedAccountWithSite,
   type GroupDefinition,
   type LoginBatchState,
@@ -95,6 +96,7 @@ import {
   useCollectionSearch
 } from './CollectionSearchField'
 import { CollectionFilterSelect } from './CollectionFilterSelect'
+import { ImportResultDialog } from './ImportResultDialog'
 import { LoadingSpinner } from './LoadingSpinner'
 import {
   emptyLogDateRange,
@@ -445,6 +447,7 @@ export function LibraryScreen({
   const [bookmarkTabId, setBookmarkTabId] = useState(
     () => window.localStorage.getItem(BOOKMARK_ACTIVE_TAB_STORAGE_KEY)?.trim() || ''
   )
+  const [importResult, setImportResult] = useState<DataImportResult | null>(null)
   const [view, setView] = useState<LibraryView>('accounts')
   const activeTabId = view === 'bookmarks' ? bookmarkTabId : accountTabId
   const accountTabs = useMemo(
@@ -1521,7 +1524,19 @@ export function LibraryScreen({
     setDeletedAccounts(nextDeleted)
   }
 
-  async function handleDataImported(tabId: string): Promise<void> {
+  function handleDataImported(result: DataImportResult): void {
+    if (
+      result.accountsCreated > 0 ||
+      result.sitesCreated > 0 ||
+      result.skipped > 0
+    ) {
+      setImportResult(result)
+    }
+    void refreshImportedView(result)
+  }
+
+  async function refreshImportedView(result: DataImportResult): Promise<void> {
+    const tabId = result.tabId
     const [nextTabs] = await Promise.all([
       window.autologin.tabs.list(),
       onRefresh()
@@ -1539,6 +1554,10 @@ export function LibraryScreen({
       tabId,
       groups: (await window.autologin.groups.list(tabId)) ?? []
     })
+    setGroupFilter(result.groupPaths.find((path) => path.trim()) ?? null)
+    setSearch('')
+    setSearchExpanded(false)
+    setSelectedIds(new Set())
   }
 
   function switchView(next: LibraryView): void {
@@ -4924,9 +4943,7 @@ export function LibraryScreen({
                         tabId={activeTabId}
                         onCreateTab={() => createTab('local')}
                         creatingTab={tabBusy}
-                        onImported={(result) =>
-                          void handleDataImported(result.tabId)
-                        }
+                        onImported={(result) => void handleDataImported(result)}
                         notify={notify}
                       />
                     )}
@@ -4935,9 +4952,7 @@ export function LibraryScreen({
                         tabId={activeTabId}
                         creating={tabBusy}
                         onCreate={() => createTab('bookmarks')}
-                        onImported={(result) =>
-                          void handleDataImported(result.tabId)
-                        }
+                        onImported={(result) => void handleDataImported(result)}
                         notify={notify}
                       />
                     )}
@@ -4952,7 +4967,7 @@ export function LibraryScreen({
                 onCreate={() =>
                   createTab(view === 'bookmarks' ? 'bookmarks' : 'local')
                 }
-                onImported={(tabId) => void handleDataImported(tabId)}
+                onImported={(result) => void handleDataImported(result)}
                 notify={notify}
               />
             ) : (
@@ -5630,7 +5645,7 @@ export function LibraryScreen({
                         view === 'bookmarks' ? (
                           <BookmarkImportButton
                             showLabel
-                            onImported={(result) => void handleDataImported(result.tabId)}
+                            onImported={(result) => void handleDataImported(result)}
                             notify={notify}
                           />
                         ) : (
@@ -6347,6 +6362,13 @@ export function LibraryScreen({
             </button>
           </div>
         )}
+      {importResult && (
+        <ImportResultDialog
+          result={importResult}
+          onClose={() => setImportResult(null)}
+          onView={() => setImportResult(null)}
+        />
+      )}
     </div>
   )
 }
@@ -6837,7 +6859,7 @@ function DatabaseWorkspaceEmptyState({
   bookmarkMode?: boolean
   creating: boolean
   onCreate: () => Promise<void>
-  onImported: (tabId: string) => void
+  onImported: (result: DataImportResult) => void
   notify: (kind: 'success' | 'error' | 'info', message: string) => void
 }): React.JSX.Element {
   const { tr } = useI18n()
@@ -6910,7 +6932,7 @@ function DatabaseWorkspaceEmptyState({
           <BookmarkImportButton
             showLabel
             buttonClassName="button button--ghost"
-            onImported={(result) => onImported(result.tabId)}
+            onImported={onImported}
             notify={notify}
           />
         ) : (
@@ -6932,7 +6954,7 @@ function DatabaseWorkspaceEmptyState({
           openDatabaseRequest={openDatabaseRequest}
           onDatabaseBusyChange={setOpeningDatabase}
           onCreateTab={onCreate}
-          onImported={(result) => onImported(result.tabId)}
+          onImported={onImported}
           notify={notify}
         />
       )}

@@ -277,4 +277,13 @@ describe('shared input schemas', () => {
     ).toBe(false)
   })
 
+  it('accepts imported group paths up to 120 characters', () => {
+    const path = '云'.repeat(120)
+    expect(appSettingsPatchSchema.safeParse({ groupOrder: [path] }).success).toBe(true)
+    expect(groupMoveInputSchema.safeParse({ fromPath: path }).success).toBe(true)
+    expect(
+      appSettingsPatchSchema.safeParse({ groupOrder: ['云'.repeat(121)] }).success
+    ).toBe(false)
+  })
+
 })

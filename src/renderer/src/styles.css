@@ -18093,6 +18093,30 @@ body.is-dragging-account-column {
   white-space: nowrap;
 }
 
+.browser-workspace__tab-skeleton {
+  display: block;
+  width: 68px;
+  height: 9px;
+  border-radius: 4px;
+  background: linear-gradient(
+    90deg,
+    color-mix(in srgb, var(--muted) 16%, transparent),
+    color-mix(in srgb, var(--muted) 30%, transparent),
+    color-mix(in srgb, var(--muted) 16%, transparent)
+  );
+  background-size: 180% 100%;
+  animation: browser-tab-skeleton 1.15s ease-in-out infinite;
+}
+
+@keyframes browser-tab-skeleton {
+  0% {
+    background-position: 120% 0;
+  }
+  100% {
+    background-position: -80% 0;
+  }
+}
+
 .browser-workspace__tab.is-active .browser-workspace__tab-title {
   font-weight: 650;
 }
@@ -22145,6 +22169,11 @@ html.recording-hud-window #root {
   display: flex;
   flex-direction: column;
   gap: 14px;
+  padding: 14px 20px;
+}
+
+.import-preview-dialog .modal-header {
+  padding: 16px 20px 12px;
 }
 
 .import-preview-dialog__summary {
@@ -22211,13 +22240,13 @@ html.recording-hud-window #root {
   display: flex;
   flex-direction: column;
   gap: 10px;
-  max-height: min(46vh, 430px);
-  overflow: auto;
-  padding-right: 2px;
+  max-height: 240px;
+  overflow-y: auto;
+  padding-right: 6px;
+  scrollbar-width: thin;
 }
 
 .import-preview-group {
-  overflow: hidden;
   border: 1px solid var(--line);
   border-radius: 9px;
 }
@@ -22227,12 +22256,16 @@ html.recording-hud-window #root {
 }
 
 .import-preview-group__header {
+  position: sticky;
+  z-index: 1;
+  top: 0;
   display: flex;
   align-items: center;
   gap: 8px;
   padding: 9px 11px;
   background: var(--accent-pale);
   border-bottom: 1px solid var(--line);
+  border-radius: 8px 8px 0 0;
   cursor: pointer;
 }
 
@@ -22427,4 +22460,321 @@ html.recording-hud-window #root {
 .account-username strong.is-placeholder {
   color: var(--muted-light);
   font-weight: 500;
+}
+
+/* v1.0.3 account completion badges, status filter and aligned group controls. */
+.account-status-filter {
+  position: relative;
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+}
+
+.account-status-filter__button {
+  display: inline-flex;
+  height: 30px;
+  align-items: center;
+  gap: 5px;
+  padding: 0 8px 0 10px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background: var(--card);
+  color: var(--muted);
+  font-size: calc(11px * var(--font-scale, 1));
+  font-weight: 600;
+}
+
+.account-status-filter__button:hover {
+  border-color: var(--line-strong);
+  color: var(--ink);
+}
+
+.account-status-filter__button.is-attention {
+  border-color: color-mix(in srgb, var(--warning) 42%, var(--line));
+  background: var(--warning-soft);
+  color: var(--warning);
+}
+
+.account-status-filter__button.is-active {
+  border-color: var(--accent);
+  background: var(--accent);
+  color: var(--accent-contrast);
+}
+
+.account-status-filter__badge {
+  display: inline-grid;
+  min-width: 17px;
+  height: 17px;
+  place-items: center;
+  padding: 0 4px;
+  border-radius: 9px;
+  background: color-mix(in srgb, currentColor 10%, transparent);
+  font-size: 9.5px;
+  font-variant-numeric: tabular-nums;
+  font-weight: 700;
+}
+
+.account-status-filter__button.is-active .account-status-filter__badge {
+  background: rgba(255, 255, 255, 0.2);
+  color: #fff;
+}
+
+.account-status-filter__panel {
+  position: absolute;
+  z-index: 60;
+  top: calc(100% + 6px);
+  right: 0;
+  width: 238px;
+  padding: 8px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--surface);
+  box-shadow: var(--shadow-lg);
+}
+
+.account-status-filter__heading {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 2px 4px 7px;
+  color: var(--ink-soft);
+  font-size: 11px;
+  font-weight: 650;
+}
+
+.account-status-filter__heading small {
+  color: var(--muted-light);
+  font-size: 10px;
+  font-weight: 500;
+}
+
+.account-status-filter__options {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.account-status-filter__option {
+  display: grid;
+  min-height: 32px;
+  grid-template-columns: 13px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+  padding: 0 6px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--ink-soft);
+  font-size: 12px;
+  text-align: left;
+}
+
+.account-status-filter__option:hover,
+.account-status-filter__option:focus-visible {
+  background: color-mix(in srgb, var(--accent) 7%, transparent);
+}
+
+.account-status-filter__option.is-zero {
+  color: var(--muted-light);
+  opacity: 0.55;
+}
+
+.account-status-filter__option small {
+  color: var(--muted);
+  font-size: 10.5px;
+  font-variant-numeric: tabular-nums;
+}
+
+.account-status-filter__check {
+  display: grid;
+  width: 13px;
+  height: 13px;
+  place-items: center;
+  border: 1px solid var(--line-strong);
+  border-radius: 3px;
+  background: var(--card);
+  color: #fff;
+}
+
+.account-status-filter__option.is-checked .account-status-filter__check {
+  border-color: var(--accent);
+  background: var(--accent);
+}
+
+.account-status-filter__footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-top: 7px;
+  padding: 7px 4px 1px;
+  border-top: 1px solid var(--line);
+  color: var(--muted-light);
+  font-size: 10px;
+}
+
+.account-status-filter__footer button {
+  border: 0;
+  background: transparent;
+  color: var(--accent);
+  font-size: 10.5px;
+  font-weight: 650;
+}
+
+.account-status-filter__footer button:disabled {
+  color: var(--muted-light);
+  opacity: 0.6;
+}
+
+.account-status-filter-bar {
+  display: flex;
+  min-height: 32px;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 6px;
+  margin: 2px 0 4px;
+  padding: 0 2px;
+}
+
+.account-status-filter-bar__label {
+  color: var(--muted-light);
+  font-size: 10.5px;
+  font-weight: 650;
+  white-space: nowrap;
+}
+
+.account-status-filter-bar__chips {
+  display: flex;
+  min-width: 0;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.account-status-filter-bar__chip {
+  display: inline-flex;
+  height: 20px;
+  align-items: center;
+  gap: 4px;
+  padding: 0 7px;
+  border: 1px solid color-mix(in srgb, var(--accent) 24%, var(--line));
+  border-radius: 999px;
+  background: var(--accent-pale);
+  color: var(--accent-strong);
+  font-size: 10.5px;
+  font-weight: 650;
+  white-space: nowrap;
+}
+
+.account-status-filter-bar__chip:hover {
+  border-color: var(--accent);
+}
+
+.account-status-filter-bar__count {
+  color: var(--ink-soft);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  font-weight: 650;
+  white-space: nowrap;
+}
+
+.account-status-filter-bar__hint {
+  overflow: hidden;
+  color: var(--muted-light);
+  font-size: 10.5px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.account-status-filter-bar__clear {
+  margin-left: auto;
+  border: 0;
+  background: transparent;
+  color: var(--accent);
+  font-size: 10.5px;
+  font-weight: 650;
+  white-space: nowrap;
+}
+
+.library-database-empty-state__actions .button {
+  min-width: 146px;
+}
+
+.button.is-loading:disabled,
+.button[aria-busy='true']:disabled {
+  cursor: progress;
+  opacity: 1;
+  transform: none;
+}
+
+.account-workspace .account-subnav__all-row {
+  grid-template-columns: minmax(0, 1fr);
+  padding-right: 0;
+}
+
+.account-workspace .account-subnav__all-button {
+  padding-right: 10px;
+}
+
+.account-workspace .account-subnav__groups-heading {
+  padding-right: 0;
+}
+
+.settings-card__heading h4 {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.info-tip {
+  position: relative;
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+}
+
+.info-tip__trigger {
+  display: inline-grid;
+  width: 17px;
+  height: 17px;
+  place-items: center;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: transparent;
+  color: var(--muted-light);
+}
+
+.info-tip__trigger:hover,
+.info-tip__trigger:focus-visible,
+.info-tip__trigger[aria-expanded='true'] {
+  background: color-mix(in srgb, var(--accent) 9%, transparent);
+  color: var(--accent);
+}
+
+.info-tip__bubble {
+  position: absolute;
+  z-index: 80;
+  top: calc(100% + 6px);
+  left: 0;
+  width: 220px;
+  max-width: calc(100vw - 32px);
+  padding: 9px 11px;
+  border-radius: 8px;
+  background: #2b3242;
+  color: #f4f6fb;
+  box-shadow: 0 10px 26px rgba(17, 22, 32, 0.24);
+  font-size: 12px;
+  font-weight: 450;
+  line-height: 1.55;
+  white-space: normal;
+}
+
+.info-tip__bubble.is-align-right {
+  right: 0;
+  left: auto;
+}
+
+.settings-hint--danger {
+  color: var(--danger);
 }

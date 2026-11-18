@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useMemo, useState } from 'react'
 import { CircleAlert, Import, LoaderCircle } from 'lucide-react'
 import type {
   ImportMissingField,
@@ -28,15 +28,6 @@ export function ImportPreviewDialog({
           .map((candidate) => candidate.index)
       )
   )
-  const readyGroupRef = useRef<HTMLInputElement>(null)
-  const selectableGroupRef = useRef<HTMLInputElement>(null)
-  const readyCandidates = useMemo(
-    () =>
-      preview.candidates.filter(
-        (candidate) => candidate.missingFields.length === 0
-      ),
-    [preview.candidates]
-  )
   const selectableCandidates = useMemo(
     () =>
       preview.candidates.filter(
@@ -44,9 +35,6 @@ export function ImportPreviewDialog({
       ),
     [preview.candidates]
   )
-  const readySelectedCount = readyCandidates.filter((candidate) =>
-    selected.has(candidate.index)
-  ).length
   const selectableSelectedCount = selectableCandidates.filter((candidate) =>
     selected.has(candidate.index)
   ).length
@@ -57,30 +45,11 @@ export function ImportPreviewDialog({
         (field) => field === 'startUrl' || field === 'password'
       )
   )
-  const allReadySelected =
-    readyCandidates.length > 0 && readySelectedCount === readyCandidates.length
   const allSelectableSelected =
     selectableCandidates.length > 0 &&
     selectableSelectedCount === selectableCandidates.length
 
-  useEffect(() => {
-    if (readyGroupRef.current) {
-      readyGroupRef.current.indeterminate =
-        readySelectedCount > 0 && !allReadySelected
-    }
-  }, [allReadySelected, readySelectedCount])
-
-  useEffect(() => {
-    if (selectableGroupRef.current) {
-      selectableGroupRef.current.indeterminate =
-        selectableSelectedCount > 0 && !allSelectableSelected
-    }
-  }, [allSelectableSelected, selectableSelectedCount])
-
   function toggleCandidate(index: number, checked: boolean): void {
-    if (!checked && readyCandidates.some((candidate) => candidate.index === index)) {
-      return
-    }
     setSelected((current) => {
       const next = new Set(current)
       if (checked) next.add(index)
@@ -146,47 +115,18 @@ export function ImportPreviewDialog({
         </div>
 
         <div className="import-preview-dialog__scroll">
-          {readyCandidates.length > 0 && (
-            <section className="import-preview-group">
-              <label className="import-preview-group__header">
-                <input
-                  ref={readyGroupRef}
-                  type="checkbox"
-                  checked={allReadySelected}
-                  disabled
-                />
-                <strong>{tr('可直接导入', 'Ready to import', '可直接匯入')}</strong>
-                <span>
-                  {tr(
-                    `${readySelectedCount}/${readyCandidates.length} 已选`,
-                    `${readySelectedCount}/${readyCandidates.length} selected`,
-                    `${readySelectedCount}/${readyCandidates.length} 已選`
-                  )}
-                </span>
-              </label>
-              <div className="import-preview-group__rows">
-                {readyCandidates.map((candidate) => (
-                  <CandidateRow
-                    key={candidate.index}
-                    candidate={candidate}
-                    checked={selected.has(candidate.index)}
-                    locked
-                    onChange={(checked) =>
-                      toggleCandidate(candidate.index, checked)
-                    }
-                  />
-                ))}
-              </div>
-            </section>
-          )}
-
           {selectableCandidates.length > 0 && (
             <section className="import-preview-group is-selectable">
               <label className="import-preview-group__header">
                 <input
-                  ref={selectableGroupRef}
                   type="checkbox"
                   checked={allSelectableSelected}
+                  ref={(element) => {
+                    if (element) {
+                      element.indeterminate =
+                        selectableSelectedCount > 0 && !allSelectableSelected
+                    }
+                  }}
                   onChange={(event) =>
                     toggleGroup(selectableCandidates, event.target.checked)
                   }
@@ -288,12 +228,10 @@ export function ImportPreviewDialog({
 function CandidateRow({
   candidate,
   checked,
-  locked = false,
   onChange
 }: {
   candidate: ImportPreviewCandidate
   checked: boolean
-  locked?: boolean
   onChange: (checked: boolean) => void
 }): React.JSX.Element {
   const { tr } = useI18n()
@@ -302,7 +240,6 @@ function CandidateRow({
       <input
         type="checkbox"
         checked={checked}
-        disabled={locked}
         onChange={(event) => onChange(event.target.checked)}
       />
       <span className="import-preview-row__number">

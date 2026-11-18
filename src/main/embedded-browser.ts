@@ -71,6 +71,7 @@ export class EmbeddedBrowserController implements EmbeddedBrowserProvider {
       accountLabel: input.accountLabel,
       groupName: input.groupName,
       url: input.initialUrl,
+      pageUrl: input.initialUrl,
       title: input.siteName,
       isLoading: true,
       createdAt: new Date().toISOString()
@@ -102,6 +103,7 @@ export class EmbeddedBrowserController implements EmbeddedBrowserProvider {
       accountLabel: '手动打开',
       groupName: '浏览',
       url,
+      pageUrl: url,
       title: siteName,
       isLoading: true,
       createdAt: new Date().toISOString()
@@ -133,6 +135,8 @@ export class EmbeddedBrowserController implements EmbeddedBrowserProvider {
       const snapshot = page.getSnapshot()
       this.update(result.label, {
         url: snapshot.url || url,
+        pageUrl: snapshot.url || url,
+        pageTitle: snapshot.title || '',
         title: snapshot.title || siteName,
         isLoading: snapshot.loading
       })
@@ -198,11 +202,15 @@ export class EmbeddedBrowserController implements EmbeddedBrowserProvider {
       ...tab,
       ...(patch.url !== undefined ? { url: patch.url } : {}),
       ...(patch.title !== undefined ? { title: patch.title } : {}),
+      ...(patch.pageTitle !== undefined ? { pageTitle: patch.pageTitle } : {}),
+      ...(patch.pageUrl !== undefined ? { pageUrl: patch.pageUrl } : {}),
       ...(patch.isLoading !== undefined ? { isLoading: patch.isLoading } : {})
     }
     if (
       next.url === tab.url &&
       next.title === tab.title &&
+      next.pageTitle === tab.pageTitle &&
+      next.pageUrl === tab.pageUrl &&
       next.isLoading === tab.isLoading
     ) {
       return
@@ -225,7 +233,7 @@ export class EmbeddedBrowserController implements EmbeddedBrowserProvider {
       { label, action: 'navigate', url },
       15_000
     )
-    this.update(label, { url, isLoading: true })
+    this.update(label, { url, pageUrl: url, pageTitle: '', isLoading: true })
     return { ...this.tabs.get(label)! }
   }
 
@@ -236,7 +244,7 @@ export class EmbeddedBrowserController implements EmbeddedBrowserProvider {
       { label, action: 'back' },
       15_000
     )
-    this.update(label, { isLoading: true })
+    this.update(label, { pageTitle: '', isLoading: true })
   }
 
   async reload(label: string): Promise<void> {
@@ -246,7 +254,7 @@ export class EmbeddedBrowserController implements EmbeddedBrowserProvider {
       { label, action: 'reload' },
       15_000
     )
-    this.update(label, { isLoading: true })
+    this.update(label, { pageTitle: '', isLoading: true })
   }
 
   closeAll(): void {
@@ -268,12 +276,19 @@ export class EmbeddedBrowserController implements EmbeddedBrowserProvider {
   private handleManualEvent(label: string, event: ExternalBrowserEvent): void {
     if (!this.tabs.has(label)) return
     if (event.type === 'navigation') {
-      this.update(label, { url: event.url, isLoading: true })
+      this.update(label, {
+        url: event.url,
+        pageUrl: event.url,
+        pageTitle: '',
+        isLoading: true
+      })
       return
     }
     if (event.type === 'loaded' || event.type === 'page') {
       this.update(label, {
         url: event.url,
+        pageUrl: event.url,
+        pageTitle: event.title,
         title: event.title,
         isLoading: event.type === 'page' ? event.loading : false
       })

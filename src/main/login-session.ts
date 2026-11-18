@@ -1153,6 +1153,8 @@ export class LoginSessionManager {
       if (this.embeddedLabel && this.embeddedProvider) {
         this.embeddedProvider.update(this.embeddedLabel, {
           url: event.url,
+          pageUrl: event.url,
+          pageTitle: '',
           isLoading: true
         })
       }
@@ -1196,6 +1198,8 @@ export class LoginSessionManager {
       if (this.embeddedLabel && this.embeddedProvider) {
         this.embeddedProvider.update(this.embeddedLabel, {
           url: event.url,
+          pageUrl: event.url,
+          pageTitle: event.title,
           title: event.title || this.site?.name || this.state.pageTitle,
           isLoading: event.type === 'page' ? event.loading : false
         })
@@ -1959,7 +1963,9 @@ export class LoginSessionManager {
     this.state = { ...this.state, ...patch }
     if (this.embeddedLabel && this.embeddedProvider) {
       this.embeddedProvider.update(this.embeddedLabel, {
-        ...(patch.pageTitle !== undefined ? { title: patch.pageTitle } : {}),
+        ...(patch.pageTitle !== undefined
+          ? { title: patch.pageTitle, pageTitle: patch.pageTitle }
+          : {}),
         ...(patch.isLoading !== undefined ? { isLoading: patch.isLoading } : {})
       })
     }

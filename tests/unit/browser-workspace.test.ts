@@ -101,6 +101,53 @@ afterEach(() => {
 })
 
 describe('BrowserWorkspace', () => {
+  it('labels tabs with the loaded page title instead of the site name', async () => {
+    act(() => {
+      root.render(
+        React.createElement(
+          I18nProvider,
+          {
+            language: 'zh-CN',
+            children: React.createElement(BrowserWorkspace, {
+              notify: () => undefined,
+              onOpenAccounts: () => undefined
+            })
+          }
+        )
+      )
+    })
+    await flush()
+
+    openUrl.mockResolvedValueOnce({
+      ...tab,
+      siteName: 'baidu.com',
+      pageTitle: '百度一下，你就知道',
+      url: 'https://www.baidu.com/',
+      pageUrl: 'https://www.baidu.com/'
+    })
+    act(() => {
+      newWindowListener?.({ url: 'https://www.baidu.com/' })
+    })
+    await flush()
+
+    openUrl.mockResolvedValueOnce({
+      ...secondTab,
+      siteName: 'baidu.com',
+      pageTitle: '深圳时间_百度搜索',
+      url: 'https://www.baidu.com/s?wd=深圳时间',
+      pageUrl: 'https://www.baidu.com/s?wd=深圳时间'
+    })
+    act(() => {
+      newWindowListener?.({
+        url: 'https://www.baidu.com/s?wd=深圳时间'
+      })
+    })
+    await flush()
+
+    expect(container.textContent).toContain('百度一下，你就知道')
+    expect(container.textContent).toContain('深圳时间_百度搜索')
+  })
+
   it('opens page-requested windows in a new tab and supports going back', async () => {
     act(() => {
       root.render(

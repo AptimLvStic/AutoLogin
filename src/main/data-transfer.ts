@@ -19,6 +19,7 @@ import {
 } from '@shared/types'
 import { databaseFileNameFor } from '@shared/database-files'
 import { groupLevel, normalizeGroupPath } from '@shared/group-tree'
+import { accountTagsFromValues } from '@shared/tags'
 import type {
   AccountTab,
   AccountTabSource,
@@ -856,11 +857,25 @@ function classifyCandidateFields(
       blockedReason: '登录地址不是有效的 http/https 地址'
     }
   }
-  const missingFields: ImportMissingField[] = []
-  if (!rawUrl) missingFields.push('startUrl')
-  if (!username) missingFields.push('username')
-  if (!password) missingFields.push('password')
+  const missingFields = accountTagsFromValues({
+    startUrl: rawUrl,
+    username,
+    password
+  }).map(importMissingFieldForTag)
   return { missingFields, blockedReason: null }
+}
+
+function importMissingFieldForTag(
+  tag: ReturnType<typeof accountTagsFromValues>[number]
+): ImportMissingField {
+  switch (tag) {
+    case 'needs-url':
+      return 'startUrl'
+    case 'needs-username':
+      return 'username'
+    case 'needs-password':
+      return 'password'
+  }
 }
 
 function isValidImportUrl(value: string): boolean {

@@ -69,7 +69,7 @@ interface AccountDrawerProps {
   bookmarkMode?: boolean
   account?: AccountWithSite
   defaultLoginBrowser?: LoginBrowser
-  focusField?: 'url' | 'password'
+  focusField?: 'url' | 'username' | 'password'
   sites: Site[]
   groups: GroupDefinition[]
   initialSiteId?: string
@@ -120,7 +120,9 @@ export function AccountDrawer({
   )
   const [autoSubmit, setAutoSubmit] = useState(initialSite?.autoSubmit ?? true)
   const [siteGroup, setSiteGroup] = useState(initialSite?.group ?? '')
-  const [username, setUsername] = useState(account?.username ?? '')
+  const [username, setUsername] = useState(
+    account?.needsUsername ? '' : account?.username ?? ''
+  )
   const [password, setPassword] = useState('')
   const [showPassword, setShowPassword] = useState(false)
   const [revealedPassword, setRevealedPassword] = useState('')
@@ -172,6 +174,7 @@ export function AccountDrawer({
   const groupPickerRef = useRef<HTMLDivElement>(null)
   const iconFileRef = useRef<HTMLInputElement>(null)
   const startUrlRef = useRef<HTMLInputElement>(null)
+  const usernameRef = useRef<HTMLInputElement>(null)
   const passwordRef = useRef<HTMLInputElement>(null)
   const recipeDetailsVersionRef = useRef(0)
   const latestRecipeDetailsRef = useRef<AccountRecipe | null>(null)
@@ -244,6 +247,7 @@ export function AccountDrawer({
     if (!focusField) return
     const timer = window.setTimeout(() => {
       if (focusField === 'url') startUrlRef.current?.focus()
+      else if (focusField === 'username') usernameRef.current?.focus()
       else passwordRef.current?.focus()
     }, 60)
     return () => window.clearTimeout(timer)
@@ -447,24 +451,22 @@ export function AccountDrawer({
   async function submit(event: React.FormEvent): Promise<void> {
     event.preventDefault()
     setError('')
-    if (!siteName.trim() || (!isBookmark && !username.trim())) {
+    const normalizedStartUrl = normalizeOptionalStartUrl(startUrl)
+    if (!siteName.trim()) {
+      setError(tr('请填写站点名称', 'Enter a site name.', '請填寫站點名稱'))
+      return
+    }
+    if (
+      normalizedStartUrl &&
+      !isValidHttpUrl(normalizedStartUrl)
+    ) {
       setError(
-        isBookmark
-          ? tr('请填写站点名称', 'Enter a site name.', '請填寫站點名稱')
-          : tr(
-              '请填写站点名称和用户名',
-              'Enter a site name and username.',
-              '請填寫站點名稱和使用者名稱'
-            )
+        tr(
+          '登录地址需要是有效的 http 或 https 地址',
+          'The sign-in URL must be a valid http or https address.',
+          '登入網址需要是有效的 http 或 https 位址'
+        )
       )
-      return
-    }
-    if (!isBookmark && mode === 'create' && !password) {
-      setError(tr('请填写登录密码', 'Enter the login password.', '請填寫登入密碼'))
-      return
-    }
-    if (!siteName.trim() || !isValidHttpUrl(startUrl)) {
-      setError(tr('请填写有效的站点名称和登录地址', 'Enter a valid site name and sign-in URL.', '請填寫有效的站點名稱和登入網址'))
       return
     }
     if (siteMode === 'existing' && !selectedSite) {
@@ -500,7 +502,7 @@ export function AccountDrawer({
           window.autologin.sites.save({
             tabId,
             name: siteName.trim(),
-            startUrl: startUrl.trim(),
+            startUrl: normalizedStartUrl,
             autoSubmit,
             group: siteGroup.trim() || undefined,
             ...(siteIcon ? { icon: siteIcon } : {})
@@ -517,7 +519,7 @@ export function AccountDrawer({
         const groupChanged = (selectedSite.group ?? '') !== siteGroup.trim()
         const siteChanged =
           selectedSite.name !== siteName.trim() ||
-          selectedSite.startUrl !== startUrl.trim() ||
+          selectedSite.startUrl !== normalizedStartUrl ||
           selectedSite.autoSubmit !== autoSubmit ||
           (selectedSite.icon ?? '') !== siteIcon ||
           groupChanged
@@ -531,7 +533,7 @@ export function AccountDrawer({
                     id: selectedSite.id,
                     tabId: selectedSite.tabId,
                     name: siteName.trim(),
-                    startUrl: startUrl.trim(),
+                    startUrl: normalizedStartUrl,
                     allowedOrigins: selectedSite.allowedOrigins,
                     autoSubmit,
                     group: siteGroup.trim() || undefined,
@@ -1575,7 +1577,16 @@ export function AccountDrawer({
                 </span>
               </label>
               <label className="field">
-                <span className="field__label">{tr('登录地址', 'Sign-in URL', '登入網址')}</span>
+                <span className="field__label">
+                  {tr('登录地址', 'Sign-in URL', '登入網址')}
+                  <small>
+                    {tr(
+                      '可留空，保存后会标记为待补全',
+                      'Optional; saved as needs review when empty',
+                      '可留空，儲存後會標記為待補全'
+                    )}
+                  </small>
+                </span>
                 <span className="input-shell">
                   <span className="protocol-mark">URL</span>
                   <input
@@ -1783,10 +1794,20 @@ export function AccountDrawer({
               {!isBookmark && (
                 <>
                   <label className="field">
-                    <span className="field__label">{tr('用户名', 'Username', '使用者名稱')}</span>
+                    <span className="field__label">
+                      {tr('用户名', 'Username', '使用者名稱')}
+                      <small>
+                        {tr(
+                          '可留空，保存后会标记为待补全',
+                          'Optional; saved as needs review when empty',
+                          '可留空，儲存後會標記為待補全'
+                        )}
+                      </small>
+                    </span>
                     <span className="input-shell">
                       <UserRound size={17} />
                       <input
+                        ref={usernameRef}
                         value={username}
                         onChange={(event) => setUsername(event.target.value)}
                         placeholder={tr('邮箱或账号', 'Email or username', '電子郵件或帳號')}
@@ -1808,8 +1829,16 @@ export function AccountDrawer({
                   <label className="field">
                     <span className="field__label">
                       {tr('登录密码', 'Login password', '登入密碼')}
-                      {mode === 'edit' && (
+                      {mode === 'edit' ? (
                         <small>{tr('留空则保持不变', 'Leave blank to keep current', '留空則保持不變')}</small>
+                      ) : (
+                        <small>
+                          {tr(
+                            '可留空，保存后会标记为待补全',
+                            'Optional; saved as needs review when empty',
+                            '可留空，儲存後會標記為待補全'
+                          )}
+                        </small>
                       )}
                     </span>
                     <span className="input-shell">
@@ -2793,6 +2822,11 @@ function isRecordingSaveStage(message: string): boolean {
     message.startsWith('录制流程已保存') ||
     message.startsWith('保存录制流程失败')
   )
+}
+
+function normalizeOptionalStartUrl(value: string): string {
+  const trimmed = value.trim()
+  return trimmed === 'https://' || trimmed === 'http://' ? '' : trimmed
 }
 
 function describeOperationFailure(

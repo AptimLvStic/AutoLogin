@@ -546,6 +546,8 @@ export interface EmbeddedBrowserTab {
   accountId: string
   siteId: string
   siteName: string
+  pageTitle?: string
+  pageUrl?: string
   accountLabel: string
   groupName: string
   url: string
@@ -557,6 +559,8 @@ export interface EmbeddedBrowserTab {
 export interface EmbeddedBrowserTabPatch {
   url?: string
   title?: string
+  pageTitle?: string
+  pageUrl?: string
   isLoading?: boolean
 }
 

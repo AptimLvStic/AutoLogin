@@ -133,7 +133,7 @@ describe('shared input schemas', () => {
     })
   })
 
-  it('accepts review placeholders without weakening site input validation', () => {
+  it('accepts review placeholders while rejecting invalid site URLs', () => {
     const now = new Date().toISOString()
     expect(
       siteSchema.safeParse({
@@ -152,6 +152,13 @@ describe('shared input schemas', () => {
       siteInputSchema.safeParse({
         name: 'Office 2021',
         startUrl: '',
+        autoSubmit: true
+      }).success
+    ).toBe(true)
+    expect(
+      siteInputSchema.safeParse({
+        name: 'Office 2021',
+        startUrl: 'ftp://example.test/login',
         autoSubmit: true
       }).success
     ).toBe(false)

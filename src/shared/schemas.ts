@@ -396,7 +396,7 @@ export const siteInputSchema = z.object({
   id: idSchema.optional(),
   tabId: tabIdSchema.optional(),
   name: z.string().trim().min(1, '请输入站点名称').max(80),
-  startUrl: httpUrl,
+  startUrl: httpUrl.or(z.literal('')),
   allowedOrigins: z.array(originSchema).optional(),
   autoSubmit: z.boolean(),
   group: groupPathSchema.optional(),
@@ -428,8 +428,7 @@ export const groupMoveInputSchema = z
 export const accountCreateInputSchema = z.object({
   siteId: idSchema,
   label: z.string().trim().min(1, '请输入账号名称').max(80),
-  // Bookmarks intentionally store no credentials. The main process checks
-  // non-empty credentials when the target tab is a regular account tab.
+  // Credentials are optional so entries can be created now and completed later.
   username: z.string().trim().max(320),
   password: z.string().max(2048),
   favorite: z.boolean().optional(),
@@ -441,8 +440,8 @@ export const accountCreateInputSchema = z.object({
 
 export const accountUpdateInputSchema = z.object({
   label: z.string().trim().min(1).max(80).optional(),
-  username: z.string().trim().min(1).max(320).optional(),
-  password: z.string().min(1).max(2048).optional(),
+  username: z.string().trim().max(320).optional(),
+  password: z.string().max(2048).optional(),
   favorite: z.boolean().optional(),
   activeRecipeId: idSchema.optional(),
   loginStrategy: z.enum(LOGIN_STRATEGIES).optional(),

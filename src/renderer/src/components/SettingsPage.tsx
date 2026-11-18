@@ -57,6 +57,7 @@ import {
 } from '@shared/shortcuts'
 import { translate, useI18n } from '../i18n'
 import { ConfirmDialog, Modal } from './Modal'
+import { InfoTip } from './InfoTip'
 import { PasswordStrength } from './PasswordStrength'
 import { UpdateProgress } from './UpdateDialog'
 import { LoadingSpinner } from './LoadingSpinner'
@@ -1764,7 +1765,7 @@ export function SettingsPage({
               <SettingsCardHeading
                 icon={<FolderOpen size={17} />}
                 title={tr('数据保存位置', 'Data location', '資料儲存位置')}
-                description={tr(
+                tip={tr(
                   '保险库、账号配置、登录日志和浏览器会话都保存在此目录；自动备份可单独设置。',
                   'The vault, accounts, logs and browser sessions are stored here; automatic backups can use a separate folder.',
                   '保險庫、帳號設定、登入日誌和瀏覽器工作階段都儲存在此目錄；自動備份可單獨設定。'
@@ -1870,7 +1871,7 @@ export function SettingsPage({
                   'Recording draft location',
                   '錄製副本儲存位置'
                 )}
-                description={tr(
+                tip={tr(
                   '录制流程在保存完成前会先写入一份副本，保存异常时可在重启后自动补回。留空时使用数据目录下的 pending-recipes 文件夹。',
                   'A draft copy is written before saving completes, so it can be recovered after a restart if saving fails. Leave empty to use the pending-recipes folder in the data directory.',
                   '錄製流程在儲存完成前會先寫入一份副本，儲存異常時可在重新啟動後自動補回。留空時使用資料目錄下的 pending-recipes 資料夾。'
@@ -1944,7 +1945,7 @@ export function SettingsPage({
                   'External browser profile',
                   '外部瀏覽器設定'
                 )}
-                description={tr(
+                tip={tr(
                   '登录时会复用 AutoLogin 管理的独立配置并清除扩展、崩溃恢复等干扰项。若窗口仍出现异常，可重置后重新导入。',
                   'Sign-in reuses an AutoLogin-managed profile and clears extensions and crash-restore state. Reset and re-import if the window still looks wrong.',
                   '登入時會重用 AutoLogin 管理的獨立設定並清除擴充功能、當機還原等干擾項。若視窗仍異常，可重設後重新匯入。'
@@ -1960,7 +1961,7 @@ export function SettingsPage({
                   {tr('重置浏览器配置', 'Reset browser profile', '重設瀏覽器設定')}
                 </button>
               </div>
-              <p className="settings-hint">
+              <p className="settings-hint settings-hint--danger">
                 {tr(
                   '重置会关闭当前外部浏览器，并清除共享配置中的 Cookie 和登录状态；账号密码与保险库不受影响。',
                   'Reset closes the external browser and clears cookies and sign-in state in the shared profile. Accounts and the vault are unaffected.',
@@ -1970,27 +1971,25 @@ export function SettingsPage({
             </div>
 
             <div className="settings-card backup-card">
-              <div className="settings-card__heading">
-                <ArchiveRestore size={17} />
-                <div>
-                  <h4>{tr('自动备份', 'Automatic backups', '自動備份')}</h4>
-                  <p>
-                    {tr(
-                      '每次启动软件时静默备份当前加密保险库，滚动保留最新 3 份。可单独选择保存位置，已有备份不会随目录切换移动。',
-                      'The encrypted vault is backed up silently on every app launch, keeping the latest three copies. You can choose a separate location; existing backups stay in the previous folder.',
-                      '每次啟動軟體時靜默備份目前加密保險庫，滾動保留最新 3 份。可單獨選擇儲存位置，既有備份不會隨目錄切換移動。'
-                    )}
-                  </p>
-                </div>
-                <button
-                  className="icon-button icon-button--small backup-refresh"
-                  onClick={() => void loadBackups()}
-                  disabled={backupsLoading}
-                  aria-label={tr('刷新备份列表', 'Refresh backups', '重新整理備份')}
-                >
-                  <RefreshCw size={14} className={backupsLoading ? 'spin' : ''} />
-                </button>
-              </div>
+              <SettingsCardHeading
+                icon={<ArchiveRestore size={17} />}
+                title={tr('自动备份', 'Automatic backups', '自動備份')}
+                tip={tr(
+                  '每次启动软件时静默备份当前加密保险库，滚动保留最新 3 份。可单独选择保存位置，已有备份不会随目录切换移动。',
+                  'The encrypted vault is backed up silently on every app launch, keeping the latest three copies. You can choose a separate location; existing backups stay in the previous folder.',
+                  '每次啟動軟體時靜默備份目前加密保險庫，滾動保留最新 3 份。可單獨選擇儲存位置，既有備份不會隨目錄切換移動。'
+                )}
+                action={
+                  <button
+                    className="icon-button icon-button--small backup-refresh"
+                    onClick={() => void loadBackups()}
+                    disabled={backupsLoading}
+                    aria-label={tr('刷新备份列表', 'Refresh backups', '重新整理備份')}
+                  >
+                    <RefreshCw size={14} className={backupsLoading ? 'spin' : ''} />
+                  </button>
+                }
+              />
               <div className="settings-location">
                 <code>
                   {backupLocationLoading
@@ -2465,19 +2464,27 @@ function SettingsPanel({
 function SettingsCardHeading({
   icon,
   title,
-  description
+  description,
+  tip,
+  action
 }: {
   icon: React.ReactNode
   title: string
-  description: string
+  description?: string
+  tip?: React.ReactNode
+  action?: React.ReactNode
 }): React.JSX.Element {
   return (
     <div className="settings-card__heading">
       {icon}
       <div>
-        <h4>{title}</h4>
-        <p>{description}</p>
+        <h4>
+          {title}
+          {tip ? <InfoTip>{tip}</InfoTip> : null}
+        </h4>
+        {description ? <p>{description}</p> : null}
       </div>
+      {action}
     </div>
   )
 }

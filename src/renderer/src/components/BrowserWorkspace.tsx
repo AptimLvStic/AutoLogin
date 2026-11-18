@@ -57,16 +57,27 @@ function tabSubtitle(siteName: string, accountLabel: string): string {
   return label && label !== siteName.trim() ? label : ''
 }
 
+function tabDisplayTitle(tab: EmbeddedBrowserTab): string {
+  const pageTitle = tab.pageTitle?.trim()
+  if (pageTitle) return pageTitle
+  const siteName = tab.siteName.trim()
+  if (siteName) return siteName
+  const url = tab.pageUrl || tab.url
+  try {
+    return new URL(url).hostname.replace(/^www\./i, '') || url
+  } catch {
+    return url || '—'
+  }
+}
+
 function splitTabTitle(value: string): { prefix: string; suffix: string } {
   const title = value.trim()
-  const separated = title.match(/^(.*\S)\s+([A-Za-z0-9]{1,3})$/)
-  if (separated?.[1] && separated[2]) {
-    return { prefix: separated[1], suffix: separated[2] }
+  const characters = [...title]
+  if (characters.length <= 18) return { prefix: title, suffix: '' }
+  return {
+    prefix: `${characters.slice(0, 12).join('')}…`,
+    suffix: characters.slice(-6).join('')
   }
-  const appended = title.match(/^(.*[\u3400-\u9fff])([AB])$/)
-  return appended?.[1] && appended[2]
-    ? { prefix: appended[1], suffix: appended[2] }
-    : { prefix: title, suffix: '' }
 }
 
 function tabGroupColor(groupName: string): string {
@@ -551,8 +562,9 @@ export function BrowserWorkspace({
             onWheel={scrollTabStrip}
           >
             {tabs.map((tab) => {
-              const title = splitTabTitle(tab.siteName)
-              const subtitle = tabSubtitle(tab.siteName, tab.accountLabel)
+              const displayTitle = tabDisplayTitle(tab)
+              const title = splitTabTitle(displayTitle)
+              const subtitle = tabSubtitle(tab.siteName || displayTitle, tab.accountLabel)
               return (
                 <div
                   className={`browser-workspace__tab${
@@ -571,17 +583,27 @@ export function BrowserWorkspace({
                     type="button"
                     className="browser-workspace__tab-label"
                     onClick={() => void selectTab(tab.label)}
-                    title={[tab.siteName, subtitle].filter(Boolean).join(' · ')}
+                    title={[displayTitle, subtitle].filter(Boolean).join(' · ')}
+                    aria-label={displayTitle}
                   >
                     <span className="browser-workspace__tab-copy">
                       <strong className="browser-workspace__tab-title">
-                        <span className="browser-workspace__tab-title-prefix">
-                          {title.prefix}
-                        </span>
-                        {title.suffix && (
-                          <span className="browser-workspace__tab-title-suffix">
-                            &nbsp;{title.suffix}
-                          </span>
+                        {tab.isLoading ? (
+                          <span
+                            className="browser-workspace__tab-skeleton"
+                            aria-hidden="true"
+                          />
+                        ) : (
+                          <>
+                            <span className="browser-workspace__tab-title-prefix">
+                              {title.prefix}
+                            </span>
+                            {title.suffix && (
+                              <span className="browser-workspace__tab-title-suffix">
+                                {title.suffix}
+                              </span>
+                            )}
+                          </>
                         )}
                       </strong>
                       {subtitle && <small>{tab.accountLabel}</small>}
@@ -592,9 +614,9 @@ export function BrowserWorkspace({
                     className="browser-workspace__tab-close"
                     onClick={() => void closeTab(tab.label)}
                     aria-label={tr(
-                      `关闭 ${tab.siteName}`,
-                      `Close ${tab.siteName}`,
-                      `關閉 ${tab.siteName}`
+                      `关闭 ${displayTitle}`,
+                      `Close ${displayTitle}`,
+                      `關閉 ${displayTitle}`
                     )}
                     title={tr('关闭页面', 'Close page', '關閉頁面')}
                   >
@@ -706,8 +728,11 @@ export function BrowserWorkspace({
                       aria-hidden="true"
                     />
                     <span>
-                      <strong>{tab.siteName}</strong>
-                      {tabSubtitle(tab.siteName, tab.accountLabel) && (
+                      <strong>{tabDisplayTitle(tab)}</strong>
+                      {tabSubtitle(
+                        tab.siteName || tabDisplayTitle(tab),
+                        tab.accountLabel
+                      ) && (
                         <small>{tab.accountLabel}</small>
                       )}
                     </span>

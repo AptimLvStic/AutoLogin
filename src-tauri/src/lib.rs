@@ -484,14 +484,16 @@ fn handle_backend_control(
                 .and_then(Value::as_str)
             {
                 let mut command = Command::new(path);
-                command.arg("/S");
+                command.arg("/S").arg("/R");
                 #[cfg(windows)]
                 {
                     use std::os::windows::process::CommandExt;
                     const CREATE_NO_WINDOW: u32 = 0x0800_0000;
                     command.creation_flags(CREATE_NO_WINDOW);
                 }
-                let _ = command.spawn();
+                if let Err(error) = command.spawn() {
+                    eprintln!("无法启动更新安装程序：{error}");
+                }
             }
             app.exit(0);
         }
@@ -541,10 +543,12 @@ fn open_embedded_browser(app: &tauri::AppHandle, payload: &Value) -> Result<Valu
         .map_err(|error| format!("无法创建页面配置目录：{error}"))?;
     let debug_port = available_debug_port()?;
     let browser_args = format!(
-        "--disable-features=msWebOOUI,msPdfOOUI,msSmartScreenProtection \
+        "--user-data-dir={} \
+         --disable-features=msWebOOUI,msPdfOOUI,msSmartScreenProtection \
          --disable-background-timer-throttling \
          --remote-debugging-port={debug_port} \
-         --remote-allow-origins=*"
+         --remote-allow-origins=*",
+        profile_directory.display()
     );
     let window = app
         .get_window("main")

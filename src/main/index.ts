@@ -229,7 +229,7 @@ import { VaultManager } from './vault'
 app.setName('AutoLogin')
 app.setAppUserModelId('com.autologin.desktop')
 /** 每次发布前更新，用于在日志里识别 Tauri 后台构建版本。 */
-const BUILD_TAG = '2026-11-18.import-preview-browser-sanitize'
+const BUILD_TAG = '2026-11-18.v1.0.3-ui-status-fixes'
 const backendEntryPath = process.argv[1]
   ? resolve(process.argv[1])
   : 'unknown'
@@ -3139,8 +3139,9 @@ function purgeDeletedAccounts(accountIds: string[]): number {
 function saveSite(input: SiteInput): Site {
   const data = vault.requireData()
   const now = new Date().toISOString()
-  const startUrl = normalizeUrl(input.startUrl)
-  const startOrigin = new URL(startUrl).origin
+  const requestedUrl = input.startUrl.trim()
+  const startUrl = requestedUrl ? normalizeUrl(requestedUrl) : ''
+  const startOrigin = startUrl ? new URL(startUrl).origin : ''
   const requestedName = input.name.trim()
   const normalizedName = normalizeSiteName(requestedName)
   const tabId = input.tabId ?? DEFAULT_ACCOUNT_TAB_ID
@@ -3153,13 +3154,15 @@ function saveSite(input: SiteInput): Site {
   if (duplicate) {
     throw new Error('站点名称已存在，请使用其他名称')
   }
-  const allowedOrigins = [
-    ...new Set(
-      [startOrigin, ...(input.allowedOrigins ?? [])]
-        .map(normalizeOrigin)
-        .filter((origin): origin is string => Boolean(origin))
-    )
-  ]
+  const allowedOrigins = startUrl
+    ? [
+        ...new Set(
+          [startOrigin, ...(input.allowedOrigins ?? [])]
+            .map(normalizeOrigin)
+            .filter((origin): origin is string => Boolean(origin))
+        )
+      ]
+    : []
 
   if (input.id) {
     const existing = data.sites.find((site) => site.id === input.id)
@@ -3176,7 +3179,7 @@ function saveSite(input: SiteInput): Site {
     existing.autoSubmit = input.autoSubmit
     existing.group = input.group?.trim() || undefined
     existing.icon = input.icon
-    existing.needsReview = undefined
+    existing.needsReview = startUrl ? undefined : true
     existing.updatedAt = now
     if (previousName !== requestedName) {
       for (const account of data.accounts) {
@@ -3199,6 +3202,7 @@ function saveSite(input: SiteInput): Site {
     autoSubmit: input.autoSubmit,
     group: input.group?.trim() || undefined,
     icon: input.icon,
+    needsReview: startUrl ? undefined : true,
     createdAt: now,
     updatedAt: now
   }
@@ -3229,12 +3233,8 @@ function createAccount(input: {
   }
   const tab = data.tabs.find((entry) => entry.id === (site.tabId ?? DEFAULT_ACCOUNT_TAB_ID))
   const isBookmark = tab?.source === 'bookmarks'
-  if (!isBookmark && !input.username.trim()) {
-    throw new Error('请输入用户名')
-  }
-  if (!isBookmark && !input.password) {
-    throw new Error('请输入密码')
-  }
+  const username = isBookmark ? '' : input.username.trim()
+  const password = isBookmark ? '' : input.password
   const loginStrategy = input.loginStrategy ?? 'auto'
   const loginBrowser =
     input.loginBrowser ?? vault.getSettings().defaultLoginBrowser ?? 'builtin'
@@ -3249,8 +3249,10 @@ function createAccount(input: {
     tabId: site.tabId,
     siteId: site.id,
     label: site.name,
-    username: input.username.trim(),
-    password: input.password,
+    username,
+    needsUsername: !isBookmark && !username ? true : undefined,
+    needsSecret: !isBookmark && !password ? true : undefined,
+    password,
     credentialUpdatedAt: now,
     favorite: input.favorite ?? false,
     loginStrategy,
@@ -3421,11 +3423,11 @@ function updateAccount(
   if (patch.label !== undefined) account.label = patch.label.trim()
   if (patch.username !== undefined) {
     account.username = patch.username.trim()
-    account.needsUsername = false
+    account.needsUsername = !account.username
   }
   if (patch.password !== undefined) {
     account.password = patch.password
-    account.needsSecret = false
+    account.needsSecret = !account.password
   }
   if (patch.favorite !== undefined) account.favorite = patch.favorite
   if (patch.loginStrategy !== undefined) account.loginStrategy = patch.loginStrategy

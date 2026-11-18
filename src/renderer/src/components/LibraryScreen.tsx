@@ -80,6 +80,11 @@ import {
   groupParentPath,
   type GroupSummary
 } from '@shared/group-tree'
+import {
+  ACCOUNT_TAG_KEYS,
+  accountTags,
+  type AccountTagKey
+} from '@shared/tags'
 import { useI18n } from '../i18n'
 import { AccountDrawer } from './AccountDrawer'
 import { AccountTabs } from './AccountTabs'
@@ -132,7 +137,11 @@ type GroupDropPosition = 'before' | 'after' | 'inside'
 type ColumnDropPosition = 'before' | 'after'
 type DrawerState =
   | { mode: 'create'; siteId?: string }
-  | { mode: 'edit'; accountId: string; focusField?: 'url' | 'password' }
+  | {
+      mode: 'edit'
+      accountId: string
+      focusField?: 'url' | 'username' | 'password'
+    }
 type AccountMenuState =
   {
     kind: 'account'
@@ -495,6 +504,10 @@ export function LibraryScreen({
   const [rowEntryEnabled, setRowEntryEnabled] = useState(true)
   const [search, setSearch] = useState('')
   const [searchExpanded, setSearchExpanded] = useState(false)
+  const [statusFilter, setStatusFilter] = useState<Set<AccountTagKey>>(
+    () => new Set()
+  )
+  const [statusFilterOpen, setStatusFilterOpen] = useState(false)
   const [visibleAccountColumns, setVisibleAccountColumns] = useState<
     Set<AccountColumnKey>
   >(() => {
@@ -703,6 +716,8 @@ export function LibraryScreen({
   const [deleteSelectedBusy, setDeleteSelectedBusy] = useState(false)
   const searchRef = useRef<HTMLInputElement>(null)
   const searchContainerRef = useRef<HTMLDivElement>(null)
+  const statusFilterButtonRef = useRef<HTMLButtonElement>(null)
+  const statusFilterPanelRef = useRef<HTMLDivElement>(null)
   const selectAllRef = useRef<HTMLInputElement>(null)
   const selectionAnchorRef = useRef<string | null>(null)
   const trashSelectAllRef = useRef<HTMLInputElement>(null)
@@ -891,7 +906,7 @@ export function LibraryScreen({
       path: segments.slice(0, index + 1).join(GROUP_PATH_SEPARATOR)
     }))
   }, [currentGroup, tr, view])
-  const filteredAccounts = useMemo(() => {
+  const baseFilteredAccounts = useMemo(() => {
     const query = search.trim().toLocaleLowerCase(language)
     return accounts
       .filter((account) => {
@@ -910,6 +925,45 @@ export function LibraryScreen({
       })
       .sort(compareAccounts)
   }, [accounts, groupFilter, language, search])
+  const accountStatusTags = useMemo(() => {
+    const tagsByAccount = new Map<string, AccountTagKey[]>()
+    if (view !== 'accounts') return tagsByAccount
+    for (const account of baseFilteredAccounts) {
+      tagsByAccount.set(account.id, accountTags(account.site, account))
+    }
+    return tagsByAccount
+  }, [baseFilteredAccounts, view])
+  const statusFilterCounts = useMemo(() => {
+    const counts: Record<AccountTagKey, number> = {
+      'needs-url': 0,
+      'needs-username': 0,
+      'needs-password': 0
+    }
+    for (const tags of accountStatusTags.values()) {
+      for (const tag of tags) counts[tag] += 1
+    }
+    return counts
+  }, [accountStatusTags])
+  const incompleteAccountCount = useMemo(
+    () =>
+      [...accountStatusTags.values()].filter((tags) => tags.length > 0).length,
+    [accountStatusTags]
+  )
+  const statusFilterVisible =
+    view === 'accounts' &&
+    (incompleteAccountCount > 0 || statusFilter.size > 0)
+  const statusFilterBadgeCount =
+    statusFilter.size > 0 ? statusFilter.size : incompleteAccountCount
+  const filteredAccounts = useMemo(() => {
+    if (view !== 'accounts' || statusFilter.size === 0) {
+      return baseFilteredAccounts
+    }
+    return baseFilteredAccounts.filter((account) =>
+      (accountStatusTags.get(account.id) ?? []).some((tag) =>
+        statusFilter.has(tag)
+      )
+    )
+  }, [accountStatusTags, baseFilteredAccounts, statusFilter, view])
   const recordedAccountCount = useMemo(
     () => filteredAccounts.filter((account) => workflowStepCount(account) > 0).length,
     [filteredAccounts]
@@ -1308,6 +1362,70 @@ export function LibraryScreen({
     document.addEventListener('pointerdown', closeOnOutsidePointer)
     return () => document.removeEventListener('pointerdown', closeOnOutsidePointer)
   }, [search, searchExpanded])
+
+  useEffect(() => {
+    if (view !== 'accounts' && statusFilter.size > 0) {
+      setStatusFilter(new Set())
+    }
+  }, [statusFilter.size, view])
+
+  useEffect(() => {
+    if (!statusFilterVisible) setStatusFilterOpen(false)
+  }, [statusFilterVisible])
+
+  useEffect(() => {
+    if (!statusFilterOpen) return
+    const closeOnPointer = (event: PointerEvent): void => {
+      if (
+        event.target instanceof Node &&
+        (statusFilterButtonRef.current?.contains(event.target) ||
+          statusFilterPanelRef.current?.contains(event.target))
+      ) {
+        return
+      }
+      setStatusFilterOpen(false)
+    }
+    const closeOnEscape = (event: KeyboardEvent): void => {
+      if (event.key !== 'Escape') return
+      setStatusFilterOpen(false)
+      statusFilterButtonRef.current?.focus()
+    }
+    const closeOnBlur = (): void => setStatusFilterOpen(false)
+    document.addEventListener('pointerdown', closeOnPointer)
+    document.addEventListener('keydown', closeOnEscape)
+    window.addEventListener('blur', closeOnBlur)
+    return () => {
+      document.removeEventListener('pointerdown', closeOnPointer)
+      document.removeEventListener('keydown', closeOnEscape)
+      window.removeEventListener('blur', closeOnBlur)
+    }
+  }, [statusFilterOpen])
+
+  useEffect(() => {
+    const openFromKeyboard = (event: KeyboardEvent): void => {
+      if (
+        !statusFilterVisible ||
+        !(event.ctrlKey || event.metaKey) ||
+        !event.shiftKey ||
+        event.key.toLocaleLowerCase() !== 'f'
+      ) {
+        return
+      }
+      event.preventDefault()
+      setStatusFilterOpen(true)
+    }
+    document.addEventListener('keydown', openFromKeyboard)
+    return () => document.removeEventListener('keydown', openFromKeyboard)
+  }, [statusFilterVisible])
+
+  useEffect(() => {
+    if (!statusFilterOpen) return
+    window.requestAnimationFrame(() => {
+      statusFilterPanelRef.current
+        ?.querySelector<HTMLButtonElement>('[role="checkbox"]')
+        ?.focus()
+    })
+  }, [statusFilterOpen])
 
   useEffect(() => {
     if (!accountMenu) return
@@ -3647,6 +3765,43 @@ export function LibraryScreen({
     }
   }
 
+  function toggleStatusFilterOption(tag: AccountTagKey): void {
+    setStatusFilter((current) => {
+      const next = new Set(current)
+      if (next.has(tag)) next.delete(tag)
+      else next.add(tag)
+      return next
+    })
+    setAccountPage(1)
+  }
+
+  function clearStatusFilters(): void {
+    setStatusFilter(new Set())
+    setAccountPage(1)
+  }
+
+  function handleStatusFilterKeyDown(
+    event: React.KeyboardEvent<HTMLDivElement>
+  ): void {
+    if (event.key !== 'ArrowDown' && event.key !== 'ArrowUp') return
+    const options = [
+      ...(statusFilterPanelRef.current?.querySelectorAll<HTMLButtonElement>(
+        '[role="checkbox"]'
+      ) ?? [])
+    ]
+    if (options.length === 0) return
+    event.preventDefault()
+    const currentIndex = options.indexOf(
+      event.target as HTMLButtonElement
+    )
+    const offset = event.key === 'ArrowDown' ? 1 : -1
+    const nextIndex =
+      currentIndex < 0
+        ? 0
+        : (currentIndex + offset + options.length) % options.length
+    options[nextIndex]?.focus()
+  }
+
   async function openAccount(account: AccountWithSite): Promise<void> {
     if (view === 'bookmarks') {
       setDrawer(null)
@@ -3678,34 +3833,51 @@ export function LibraryScreen({
       }
       return
     }
-    if (!account.site.startUrl.trim()) {
+    const tags = accountTags(account.site, account)
+    if (tags.includes('needs-url')) {
       setDrawer({
         mode: 'edit',
         accountId: account.id,
         focusField: 'url'
       })
       notify(
-        'error',
+        'info',
         tr(
-          `“${account.site.name}”缺少登录地址，请先补全`,
-          `“${account.site.name}” has no sign-in URL. Complete it first.`,
-          `「${account.site.name}」缺少登入位址，請先補全`
+          `“${account.site.name}”需要先补全登录地址，补全后即可登录`,
+          `Add a sign-in URL for “${account.site.name}” to continue.`,
+          `「${account.site.name}」需要先補全登入位址，補全後即可登入`
         )
       )
       return
     }
-    if (account.needsSecret) {
+    if (tags.includes('needs-username')) {
+      setDrawer({
+        mode: 'edit',
+        accountId: account.id,
+        focusField: 'username'
+      })
+      notify(
+        'info',
+        tr(
+          `“${account.site.name}”需要先补全用户名，补全后即可登录`,
+          `Add a username for “${account.site.name}” to continue.`,
+          `「${account.site.name}」需要先補全使用者名稱，補全後即可登入`
+        )
+      )
+      return
+    }
+    if (tags.includes('needs-password')) {
       setDrawer({
         mode: 'edit',
         accountId: account.id,
         focusField: 'password'
       })
       notify(
-        'error',
+        'info',
         tr(
-          `“${account.site.name}”缺少密码，请先补全`,
-          `“${account.site.name}” has no password. Complete it first.`,
-          `「${account.site.name}」缺少密碼，請先補全`
+          `“${account.site.name}”需要先补全密码，补全后即可登录`,
+          `Add a password for “${account.site.name}” to continue.`,
+          `「${account.site.name}」需要先補全密碼，補全後即可登入`
         )
       )
       return
@@ -5385,6 +5557,113 @@ export function LibraryScreen({
                   </span>
                 </div>
                 <div className="library-header__actions">
+                  {view === 'accounts' && statusFilterVisible && (
+                    <div className="account-status-filter">
+                      <button
+                        ref={statusFilterButtonRef}
+                        type="button"
+                        className={`account-status-filter__button${
+                          statusFilter.size > 0
+                            ? ' is-active'
+                            : incompleteAccountCount > 0
+                              ? ' is-attention'
+                              : ''
+                        }`}
+                        aria-expanded={statusFilterOpen}
+                        aria-controls="account-status-filter-panel"
+                        onClick={() =>
+                          setStatusFilterOpen((current) => !current)
+                        }
+                        title={tr(
+                          '按补全状态筛选（Ctrl+Shift+F）',
+                          'Filter by completion status (Ctrl+Shift+F)',
+                          '依補全狀態篩選（Ctrl+Shift+F）'
+                        )}
+                      >
+                        <SlidersHorizontal size={14} />
+                        <span>{tr('筛选', 'Filter', '篩選')}</span>
+                        <span className="account-status-filter__badge">
+                          {statusFilterBadgeCount > 99
+                            ? '99+'
+                            : statusFilterBadgeCount}
+                        </span>
+                      </button>
+                      {statusFilterOpen && (
+                        <div
+                          ref={statusFilterPanelRef}
+                          id="account-status-filter-panel"
+                          className="account-status-filter__panel"
+                          role="group"
+                          aria-label={tr(
+                            '按补全状态筛选',
+                            'Filter by completion status',
+                            '依補全狀態篩選'
+                          )}
+                          onKeyDown={handleStatusFilterKeyDown}
+                        >
+                          <div className="account-status-filter__heading">
+                            <span>
+                              {tr(
+                                '按状态筛选',
+                                'Filter by status',
+                                '依狀態篩選'
+                              )}
+                            </span>
+                            <small>
+                              {tr(
+                                `当前 ${baseFilteredAccounts.length} 个`,
+                                `${baseFilteredAccounts.length} here`,
+                                `目前 ${baseFilteredAccounts.length} 個`
+                              )}
+                            </small>
+                          </div>
+                          <div className="account-status-filter__options">
+                            {ACCOUNT_TAG_KEYS.map((tag) => {
+                              const checked = statusFilter.has(tag)
+                              const count = statusFilterCounts[tag]
+                              return (
+                                <button
+                                  type="button"
+                                  role="checkbox"
+                                  aria-checked={checked}
+                                  className={`account-status-filter__option${
+                                    checked ? ' is-checked' : ''
+                                  }${count === 0 ? ' is-zero' : ''}`}
+                                  key={tag}
+                                  onClick={() => toggleStatusFilterOption(tag)}
+                                >
+                                  <span
+                                    className="account-status-filter__check"
+                                    aria-hidden="true"
+                                  >
+                                    {checked && <Check size={11} />}
+                                  </span>
+                                  <span>{statusTagLabel(tag, tr)}</span>
+                                  <small>{count}</small>
+                                </button>
+                              )
+                            })}
+                          </div>
+                          <div className="account-status-filter__footer">
+                            <span>
+                              {tr(
+                                '多选取并集',
+                                'Multiple selections use OR',
+                                '多選取聯集'
+                              )}
+                            </span>
+                            <button
+                              type="button"
+                              onClick={clearStatusFilters}
+                              disabled={statusFilter.size === 0}
+                            >
+                              {tr('清空', 'Clear', '清空')}
+                            </button>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  )}
                   <button
                     type="button"
                     className="library-header__refresh"
@@ -5402,6 +5681,59 @@ export function LibraryScreen({
                   </button>
                 </div>
               </header>
+
+              {view === 'accounts' && statusFilter.size > 0 && (
+                <div
+                  className="account-status-filter-bar"
+                  role="status"
+                  aria-live="polite"
+                >
+                  <span className="account-status-filter-bar__label">
+                    {tr('已筛选', 'Filtered', '已篩選')}
+                  </span>
+                  <div className="account-status-filter-bar__chips">
+                    {ACCOUNT_TAG_KEYS.filter((tag) => statusFilter.has(tag)).map(
+                      (tag) => (
+                        <button
+                          type="button"
+                          key={tag}
+                          className="account-status-filter-bar__chip"
+                          onClick={() => toggleStatusFilterOption(tag)}
+                          title={tr(
+                            `移除“${statusTagLabel(tag, tr)}”筛选`,
+                            `Remove “${statusTagLabel(tag, tr)}” filter`,
+                            `移除「${statusTagLabel(tag, tr)}」篩選`
+                          )}
+                        >
+                          {statusTagLabel(tag, tr)}
+                          <X size={11} />
+                        </button>
+                      )
+                    )}
+                  </div>
+                  <span className="account-status-filter-bar__count">
+                    {tr(
+                      `${filteredAccounts.length} / ${accounts.length} 条`,
+                      `${filteredAccounts.length} / ${accounts.length} shown`,
+                      `${filteredAccounts.length} / ${accounts.length} 筆`
+                    )}
+                  </span>
+                  <span className="account-status-filter-bar__hint">
+                    {tr(
+                      '按状态过滤，不影响左侧分组',
+                      'Status filters do not change the group tree',
+                      '依狀態篩選，不影響左側分組'
+                    )}
+                  </span>
+                  <button
+                    type="button"
+                    className="account-status-filter-bar__clear"
+                    onClick={clearStatusFilters}
+                  >
+                    {tr('清空', 'Clear', '清空')}
+                  </button>
+                </div>
+              )}
 
               <div
                 ref={accountTableScrollRef}
@@ -5649,6 +5981,9 @@ export function LibraryScreen({
                       onContextMenu={(event) => openAccountMenu(event, account)}
                       onMore={(event) => openAccountMenu(event, account)}
                       onLogin={() => void openAccount(account)}
+                      showCompleteAction={
+                        view === 'accounts' && statusFilter.size > 0
+                      }
                     />
                   ))}
 
@@ -5719,9 +6054,15 @@ export function LibraryScreen({
                           : tr('没有匹配的账号', 'No matching accounts', '沒有符合的帳號')
                       }
                       description={tr(
-                        '尝试更换关键词或切换左侧分组。',
-                        'Try another search or group.',
-                        '嘗試更換關鍵字或切換左側分組。'
+                        statusFilter.size > 0
+                          ? '没有符合当前筛选的账号，清空筛选或调整关键词后再试。'
+                          : '尝试更换关键词或切换左侧分组。',
+                        statusFilter.size > 0
+                          ? 'No accounts match the current filters. Clear them or adjust your search.'
+                          : 'Try another search or group.',
+                        statusFilter.size > 0
+                          ? '沒有符合目前篩選的帳號，清空篩選或調整關鍵字後再試。'
+                          : '嘗試更換關鍵字或切換左側分組。'
                       )}
                       action={
                         <button
@@ -5731,13 +6072,16 @@ export function LibraryScreen({
                             setSearch('')
                             setSearchExpanded(false)
                             setGroupFilter(null)
+                            setStatusFilter(new Set())
                             setAccountPage(1)
                           }}
                         >
                           <RotateCcw size={16} />
-                          {view === 'bookmarks'
-                            ? tr('查看全部书签', 'View all bookmarks', '查看全部書籤')
-                            : tr('查看全部账号', 'View all accounts', '查看全部帳號')}
+                          {statusFilter.size > 0
+                            ? tr('清空筛选', 'Clear filters', '清空篩選')
+                            : view === 'bookmarks'
+                              ? tr('查看全部书签', 'View all bookmarks', '查看全部書籤')
+                              : tr('查看全部账号', 'View all accounts', '查看全部帳號')}
                         </button>
                       }
                     />
@@ -6659,7 +7003,8 @@ function AccountListRow({
   onEdit,
   onContextMenu,
   onMore,
-  onLogin
+  onLogin,
+  showCompleteAction = false
 }: {
   account: AccountWithSite
   bookmark: boolean
@@ -6675,10 +7020,13 @@ function AccountListRow({
   onContextMenu: (event: React.MouseEvent<HTMLElement>) => void
   onMore: (event: React.MouseEvent<HTMLButtonElement>) => void
   onLogin: () => void
+  showCompleteAction?: boolean
 }): React.JSX.Element {
   const actionLabel = bookmark
     ? tr('访问', 'Visit', '造訪')
-    : tr('登录', 'Sign in', '登入')
+    : showCompleteAction
+      ? tr('补全', 'Complete', '補全')
+      : tr('登录', 'Sign in', '登入')
   const rowClickHandledRef = useRef(false)
 
   return (
@@ -6740,6 +7088,11 @@ function AccountListRow({
             {account.site.needsReview && (
               <span className="account-needs-badge">
                 {tr('待补全', 'Needs review', '待補全')}
+              </span>
+            )}
+            {account.needsUsername && (
+              <span className="account-needs-badge">
+                {tr('缺用户名', 'No username', '缺使用者名稱')}
               </span>
             )}
             {account.needsSecret && (
@@ -6809,7 +7162,13 @@ function AccountListRow({
           aria-label={actionLabel}
           title={actionLabel}
         >
-          {bookmark ? <Globe2 size={14} /> : <LogIn size={14} />}
+          {bookmark ? (
+            <Globe2 size={14} />
+          ) : showCompleteAction ? (
+            <Pencil size={14} />
+          ) : (
+            <LogIn size={14} />
+          )}
           <span>{actionLabel}</span>
           <ArrowUpRight size={13} />
         </button>
@@ -6971,14 +7330,21 @@ function DatabaseWorkspaceEmptyState({
       <div className="library-database-empty-state__actions">
         <button
           type="button"
-          className="button button--primary"
+          className={`button button--primary${creating ? ' is-loading' : ''}`}
           onClick={() => void onCreate()}
           disabled={busy}
+          aria-busy={creating}
         >
-          <Plus size={17} />
-          {bookmarkMode
-            ? tr('新建书签标签页', 'New bookmark tab', '新增書籤標籤頁')
-            : tr('新建数据库', 'New database', '新增資料庫')}
+          {creating ? (
+            <LoaderCircle size={17} className="spin" />
+          ) : (
+            <Plus size={17} />
+          )}
+          {creating
+            ? tr('正在创建…', 'Creating…', '正在建立…')
+            : bookmarkMode
+              ? tr('新建书签标签页', 'New bookmark tab', '新增書籤標籤頁')
+              : tr('新建数据库', 'New database', '新增資料庫')}
         </button>
         {bookmarkMode ? (
           <BookmarkImportButton
@@ -7053,6 +7419,17 @@ function compareAccounts(left: AccountWithSite, right: AccountWithSite): number 
 
 function groupKeyFor(account: AccountWithSite): string {
   return account.site.group?.trim() || UNGROUPED_KEY
+}
+
+function statusTagLabel(tag: AccountTagKey, tr: Translate): string {
+  switch (tag) {
+    case 'needs-url':
+      return tr('待补全', 'Needs review', '待補全')
+    case 'needs-username':
+      return tr('缺用户名', 'No username', '缺使用者名稱')
+    case 'needs-password':
+      return tr('缺密码', 'No password', '缺密碼')
+  }
 }
 
 function displayGroup(account: AccountWithSite, tr: Translate): string {

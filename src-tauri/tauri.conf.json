@@ -43,6 +43,13 @@
       "icons/icon.icns",
       "icons/icon.ico"
     ],
+    "fileAssociations": [
+      {
+        "ext": ["autologin"],
+        "name": "AutoLoginVault",
+        "description": "AutoLogin 保险库文件"
+      }
+    ],
     "resources": {
       "../dist-backend/backend.cjs": "backend/backend.cjs",
       "../PRIVACY.md": "PRIVACY.md",

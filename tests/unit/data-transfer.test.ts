@@ -128,7 +128,7 @@ describe('data transfer', () => {
         {
           siteName: 'VPN',
           startUrl: 'https://vpn-a.example/login',
-          siteGroup: '大兴',
+          siteGroup: '示例子组二',
           username: 'user-a',
           password: 'secret-a',
           missingFields: [],
@@ -139,7 +139,7 @@ describe('data transfer', () => {
         {
           siteName: 'VPN',
           startUrl: 'https://vpn-b.example/login',
-          siteGroup: '亦庄',
+          siteGroup: '示例子组',
           username: 'user-b',
           password: 'secret-b',
           missingFields: [],
@@ -150,7 +150,7 @@ describe('data transfer', () => {
         {
           siteName: 'VPN',
           startUrl: 'https://vpn-a.example/login',
-          siteGroup: '大兴',
+          siteGroup: '示例子组二',
           username: 'user-c',
           password: 'secret-c',
           missingFields: [],
@@ -283,16 +283,16 @@ describe('data transfer', () => {
       path,
       [
         '\uFEFF站点名称,登录地址,分组,用户名,密码,自动提交',
-        '站点 A,https://a.example/login,中联航/亦庄,user-a,one,true',
-        '站点 B,https://b.example/login,中联航 / 大兴,user-b,two,true'
+        '站点 A,https://a.example/login,示例父组/示例子组,user-a,one,true',
+        '站点 B,https://b.example/login,示例父组 / 示例子组二,user-b,two,true'
       ].join('\r\n'),
       'utf8'
     )
 
     const parsed = await parseCsvImport(path)
     expect(parsed.candidates.map((candidate) => candidate.siteGroup)).toEqual([
-      '中联航 / 亦庄',
-      '中联航 / 大兴'
+      '示例父组 / 示例子组',
+      '示例父组 / 示例子组二'
     ])
 
     const merged = mergeImportedLogins(emptyVault(), 'csv', parsed)
@@ -300,15 +300,15 @@ describe('data transfer', () => {
       merged.data.groupDefinitions
         .filter((group) => group.tabId === 'local')
         .map((group) => group.path)
-    ).toEqual(['中联航', '中联航 / 亦庄', '中联航 / 大兴'])
+    ).toEqual(['示例父组', '示例父组 / 示例子组', '示例父组 / 示例子组二'])
     expect(merged.result).toMatchObject({
       groupsCreated: 3,
       maxDepth: 2,
-      groupPaths: ['中联航 / 亦庄', '中联航 / 大兴']
+      groupPaths: ['示例父组 / 示例子组', '示例父组 / 示例子组二']
     })
     expect(merged.data.sites.map((site) => site.group)).toEqual([
-      '中联航 / 亦庄',
-      '中联航 / 大兴'
+      '示例父组 / 示例子组',
+      '示例父组 / 示例子组二'
     ])
   })
 
@@ -398,9 +398,12 @@ describe('data transfer', () => {
     expect(CSV_TEMPLATE.split(/\r?\n/)[4]).toBe(
       '站点名称,登录地址,分组,用户名,密码,自动提交'
     )
-    expect(CSV_TEMPLATE).toContain('父分组 / 子分组')
-    expect(CSV_TEMPLATE).toContain('中联航/亦庄')
-    expect(CSV_TEMPLATE.split(/\r?\n/)[5]).toContain('"中联航 / 亦庄"')
+    // 分组格式只说明写法，不再给出具体公司的示例，避免把真实分组名带进模板。
+    expect(CSV_TEMPLATE.split(/\r?\n/)[2]).toBe(
+      '# 分组格式：父分组 / 子分组；斜杠两侧空格可省略'
+    )
+    expect(CSV_TEMPLATE).not.toContain('例如')
+    expect(CSV_TEMPLATE.split(/\r?\n/)[5]).toContain('"示例父组 / 示例子组"')
     expect(CSV_TEMPLATE).not.toContain('favorite')
 
     const directory = createDirectory()

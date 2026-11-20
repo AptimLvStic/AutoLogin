@@ -49,10 +49,10 @@ export const CSV_TEMPLATE_HEADERS = [
 export const CSV_TEMPLATE = [
   '# AutoLogin CSV 导入模板',
   '# 必填列：站点名称、登录地址（http/https）、用户名、密码',
-  '# 分组格式：父分组 / 子分组；斜杠两侧空格可省略，例如：中联航/亦庄',
+  '# 分组格式：父分组 / 子分组；斜杠两侧空格可省略',
   '# 每一行代表一个账号；以 # 开头的行会被忽略。',
   CSV_TEMPLATE_HEADERS.join(','),
-  '"示例站点","https://example.com/login","中联航 / 亦庄","name@example.com","replace-me","true"'
+  '"示例站点","https://example.com/login","示例父组 / 示例子组","name@example.com","replace-me","true"'
 ].join('\r\n')
 
 const CSV_HEADER_ALIASES: Record<string, string> = {

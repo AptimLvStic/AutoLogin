@@ -229,7 +229,7 @@ import { VaultManager } from './vault'
 app.setName('AutoLogin')
 app.setAppUserModelId('com.autologin.desktop')
 /** 每次发布前更新，用于在日志里识别 Tauri 后台构建版本。 */
-const BUILD_TAG = '2026-11-20.v1.0.4'
+const BUILD_TAG = '2026-11-20.v1.0.4-r2'
 const backendEntryPath = process.argv[1]
   ? resolve(process.argv[1])
   : 'unknown'

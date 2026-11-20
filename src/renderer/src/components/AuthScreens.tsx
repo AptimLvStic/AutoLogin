@@ -1,7 +1,6 @@
 import { useState } from 'react'
 import {
   ArrowRight,
-  Check,
   Eye,
   EyeOff,
   KeyRound,
@@ -26,9 +25,12 @@ function AuthShell({
         <div className="auth-story__content">
           <span className="eyebrow">LOCAL-FIRST LOGIN WORKSPACE</span>
           <h1>
-            {tr('记住一次登录，', 'Remember a sign-in once.', '記住一次登入，')}
-            <br />
-            {tr('以后点一下就好。', 'Then it is one click.', '以後點一下就好。')}
+            <span className="auth-story__line">
+              {tr('记住一次登录，', 'Remember a sign-in once.', '記住一次登入，')}
+            </span>
+            <span className="auth-story__line">
+              {tr('以后点一下就好。', 'Then it is one click.', '以後點一下就好。')}
+            </span>
           </h1>
           <p>
             {tr(
@@ -38,15 +40,37 @@ function AuthShell({
             )}
           </p>
         </div>
-        <div className="auth-orbit" aria-hidden="true">
-          <span className="auth-orbit__ring auth-orbit__ring--one" />
-          <span className="auth-orbit__ring auth-orbit__ring--two" />
-          <span className="auth-orbit__ring auth-orbit__ring--three" />
-          <span className="auth-orbit__core">
-            <LockKeyhole size={24} strokeWidth={1.5} />
-          </span>
-          <span className="auth-orbit__dot auth-orbit__dot--one" />
-          <span className="auth-orbit__dot auth-orbit__dot--two" />
+        <div className="auth-story__orbit" aria-hidden="true">
+          <div className="auth-orbit">
+            <span className="auth-orbit__ring auth-orbit__ring--one">
+              <svg className="auth-orbit__arc" viewBox="0 0 100 100" aria-hidden="true">
+                <circle cx="50" cy="50" r="49" />
+              </svg>
+            </span>
+            <span className="auth-orbit__ring auth-orbit__ring--two">
+              <svg className="auth-orbit__arc" viewBox="0 0 100 100" aria-hidden="true">
+                <circle cx="50" cy="50" r="49" />
+              </svg>
+            </span>
+            <span className="auth-orbit__ring auth-orbit__ring--three">
+              <svg className="auth-orbit__arc" viewBox="0 0 100 100" aria-hidden="true">
+                <circle cx="50" cy="50" r="49" />
+              </svg>
+            </span>
+            <span className="auth-orbit__halo" />
+            <span className="auth-orbit__core">
+              <LockKeyhole size={24} strokeWidth={1.5} />
+            </span>
+            <span className="auth-orbit__dot-spin auth-orbit__dot-spin--one">
+              <span className="auth-orbit__dot auth-orbit__dot--one" />
+            </span>
+            <span className="auth-orbit__dot-spin auth-orbit__dot-spin--two">
+              <span className="auth-orbit__dot auth-orbit__dot--two" />
+            </span>
+            <span className="auth-orbit__dot-spin auth-orbit__dot-spin--three">
+              <span className="auth-orbit__dot auth-orbit__dot--three" />
+            </span>
+          </div>
         </div>
         <div className="auth-trust-row">
           <span>{tr('仅保存在本机', 'Stored locally', '僅保存在本機')}</span>
@@ -176,17 +200,7 @@ export function SetupScreen({
           </span>
         </button>
       </form>
-      <div className="auth-assurance">
-        <span>
-          <Check size={14} /> {tr('无云端账号', 'No cloud account', '無雲端帳號')}
-        </span>
-        <span>
-          <Check size={14} /> {tr('无遥测追踪', 'No telemetry', '無遙測追蹤')}
-        </span>
-        <span>
-          <Check size={14} /> {tr('仅保存在本机', 'Stored locally', '僅保存在本機')}
-        </span>
-      </div>
+      {/* 信任标签统一放在左栏底部（.auth-trust-row），右栏不再重复一遍。 */}
     </AuthShell>
   )
 }
@@ -203,10 +217,24 @@ export function UnlockScreen({
   const [showPassword, setShowPassword] = useState(false)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
+  const [shaking, setShaking] = useState(false)
+
+  function reject(message: string): void {
+    setError(message)
+    // 抖动只播一次：先移除再在下一帧加回，保证重复触发也会重新播放。
+    setShaking(false)
+    window.requestAnimationFrame(() => setShaking(true))
+    window.setTimeout(() => setShaking(false), 380)
+  }
 
   async function submit(event: React.FormEvent): Promise<void> {
     event.preventDefault()
     setError('')
+    if (!password) {
+      reject(tr('请输入主密码', 'Enter your master password', '請輸入主密碼'))
+      return
+    }
+    setShaking(false)
     setBusy(true)
     try {
       await onUnlock(password)
@@ -217,6 +245,7 @@ export function UnlockScreen({
           : tr('无法解锁保险库', 'Could not unlock the vault.', '無法解鎖保險庫')
       )
       setPassword('')
+      reject(error || '')
     } finally {
       setBusy(false)
     }
@@ -235,7 +264,12 @@ export function UnlockScreen({
           )}
         </p>
       </div>
-      <form className="auth-form auth-form--unlock" onSubmit={submit}>
+      <form
+        className={`auth-form auth-form--unlock${error ? ' is-error' : ''}${
+          shaking ? ' is-shaking' : ''
+        }`}
+        onSubmit={submit}
+      >
         <label className="field">
           <span className="field__label">{tr('主密码', 'Master password', '主密碼')}</span>
           <span className="input-shell input-shell--large">
@@ -268,7 +302,7 @@ export function UnlockScreen({
             busy ? ' is-loading' : ''
           }`}
           type="submit"
-          disabled={busy || password.length === 0}
+          disabled={busy}
           aria-busy={busy}
         >
           {busy && <LoaderCircle size={15} className="spin" />}

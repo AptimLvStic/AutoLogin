@@ -229,7 +229,7 @@ import { VaultManager } from './vault'
 app.setName('AutoLogin')
 app.setAppUserModelId('com.autologin.desktop')
 /** 每次发布前更新，用于在日志里识别 Tauri 后台构建版本。 */
-const BUILD_TAG = '2026-11-18.v1.0.3-ui-status-fixes'
+const BUILD_TAG = '2026-11-20.v1.0.4'
 const backendEntryPath = process.argv[1]
   ? resolve(process.argv[1])
   : 'unknown'
@@ -5177,7 +5177,7 @@ async function installUpdate(): Promise<void> {
   }
   await closeLoginManagers()
   vault?.lock()
-  setTimeout(() => autoUpdater.quitAndInstall(false, true), 100)
+  await autoUpdater.quitAndInstall(false, true)
 }
 
 function getUpdateState(): AppUpdateState {

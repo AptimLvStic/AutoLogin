@@ -220,6 +220,17 @@ function withSessionClearTimeout<T>(promise: Promise<T>): Promise<T> {
   })
 }
 
+/** 录制状态是"有/没有"的互斥状态，只用于筛选；行内标签只给已录制的账号挂。 */
+type RecordingFilterTag = 'recorded' | 'unrecorded'
+type AccountFilterTag = AccountTagKey | RecordingFilterTag
+
+const RECORDING_FILTER_TAGS: RecordingFilterTag[] = ['recorded', 'unrecorded']
+const ALL_FILTER_TAGS: AccountFilterTag[] = [...ACCOUNT_TAG_KEYS, ...RECORDING_FILTER_TAGS]
+
+function isRecordingFilterTag(tag: AccountFilterTag): tag is RecordingFilterTag {
+  return tag === 'recorded' || tag === 'unrecorded'
+}
+
 function workflowStepCount(account: AccountWithSite): number {
   const activeRecipe = account.activeRecipeId
     ? account.recipes?.find((recipe) => recipe.id === account.activeRecipeId)?.recipe
@@ -504,10 +515,11 @@ export function LibraryScreen({
   const [rowEntryEnabled, setRowEntryEnabled] = useState(true)
   const [search, setSearch] = useState('')
   const [searchExpanded, setSearchExpanded] = useState(false)
-  const [statusFilter, setStatusFilter] = useState<Set<AccountTagKey>>(
+  const [statusFilter, setStatusFilter] = useState<Set<AccountFilterTag>>(
     () => new Set()
   )
   const [statusFilterOpen, setStatusFilterOpen] = useState(false)
+  const [statusFilterAnchor, setStatusFilterAnchor] = useState({ left: 0, top: 0 })
   const [visibleAccountColumns, setVisibleAccountColumns] = useState<
     Set<AccountColumnKey>
   >(() => {
@@ -926,18 +938,23 @@ export function LibraryScreen({
       .sort(compareAccounts)
   }, [accounts, groupFilter, language, search])
   const accountStatusTags = useMemo(() => {
-    const tagsByAccount = new Map<string, AccountTagKey[]>()
+    const tagsByAccount = new Map<string, AccountFilterTag[]>()
     if (view !== 'accounts') return tagsByAccount
     for (const account of baseFilteredAccounts) {
-      tagsByAccount.set(account.id, accountTags(account.site, account))
+      tagsByAccount.set(account.id, [
+        ...accountTags(account.site, account),
+        workflowStepCount(account) > 0 ? 'recorded' : 'unrecorded'
+      ])
     }
     return tagsByAccount
   }, [baseFilteredAccounts, view])
   const statusFilterCounts = useMemo(() => {
-    const counts: Record<AccountTagKey, number> = {
+    const counts: Record<AccountFilterTag, number> = {
       'needs-url': 0,
       'needs-username': 0,
-      'needs-password': 0
+      'needs-password': 0,
+      recorded: 0,
+      unrecorded: 0
     }
     for (const tags of accountStatusTags.values()) {
       for (const tag of tags) counts[tag] += 1
@@ -946,12 +963,12 @@ export function LibraryScreen({
   }, [accountStatusTags])
   const incompleteAccountCount = useMemo(
     () =>
-      [...accountStatusTags.values()].filter((tags) => tags.length > 0).length,
+      [...accountStatusTags.values()].filter((tags) =>
+        tags.some((tag) => !isRecordingFilterTag(tag))
+      ).length,
     [accountStatusTags]
   )
-  const statusFilterVisible =
-    view === 'accounts' &&
-    (incompleteAccountCount > 0 || statusFilter.size > 0)
+  const statusFilterVisible = view === 'accounts'
   const statusFilterBadgeCount =
     statusFilter.size > 0 ? statusFilter.size : incompleteAccountCount
   const filteredAccounts = useMemo(() => {
@@ -1425,6 +1442,20 @@ export function LibraryScreen({
         ?.querySelector<HTMLButtonElement>('[role="checkbox"]')
         ?.focus()
     })
+  }, [statusFilterOpen])
+
+  // 面板走 portal 渲染到 body：既不会被表格的行盖住（穿模），也不会被滚动容器裁掉。
+  // 打开的那一次点击就先把位置算好，避免面板闪一帧在左上角再跳过去。
+  useEffect(() => {
+    if (!statusFilterOpen) return
+    placeStatusFilterPanel()
+    const updateAnchor = (): void => placeStatusFilterPanel()
+    window.addEventListener('resize', updateAnchor)
+    window.addEventListener('scroll', updateAnchor, true)
+    return () => {
+      window.removeEventListener('resize', updateAnchor)
+      window.removeEventListener('scroll', updateAnchor, true)
+    }
   }, [statusFilterOpen])
 
   useEffect(() => {
@@ -3765,7 +3796,7 @@ export function LibraryScreen({
     }
   }
 
-  function toggleStatusFilterOption(tag: AccountTagKey): void {
+  function toggleStatusFilterOption(tag: AccountFilterTag): void {
     setStatusFilter((current) => {
       const next = new Set(current)
       if (next.has(tag)) next.delete(tag)
@@ -3773,6 +3804,48 @@ export function LibraryScreen({
       return next
     })
     setAccountPage(1)
+  }
+
+  function renderStatusFilterOption(tag: AccountFilterTag): React.JSX.Element {
+    const checked = statusFilter.has(tag)
+    const count = statusFilterCounts[tag]
+    return (
+      <button
+        type="button"
+        role="checkbox"
+        aria-checked={checked}
+        className={`account-status-filter__option${checked ? ' is-checked' : ''}${
+          count === 0 ? ' is-zero' : ''
+        }${isRecordingFilterTag(tag) ? ' is-recording' : ''}`}
+        key={tag}
+        onClick={() => toggleStatusFilterOption(tag)}
+      >
+        <span className="account-status-filter__check" aria-hidden="true">
+          {checked && <Check size={11} />}
+        </span>
+        <span>{statusTagLabel(tag, tr)}</span>
+        <small>{count}</small>
+      </button>
+    )
+  }
+
+  function placeStatusFilterPanel(): void {
+    const button = statusFilterButtonRef.current
+    if (!button) return
+    const rect = button.getBoundingClientRect()
+    const width = 252
+    setStatusFilterAnchor((current) => {
+      const next = {
+        left: Math.max(
+          12,
+          Math.min(rect.right - width, window.innerWidth - width - 12)
+        ),
+        top: rect.bottom + 6
+      }
+      return current.left === next.left && current.top === next.top
+        ? current
+        : next
+    })
   }
 
   function clearStatusFilters(): void {
@@ -5571,97 +5644,89 @@ export function LibraryScreen({
                         }`}
                         aria-expanded={statusFilterOpen}
                         aria-controls="account-status-filter-panel"
-                        onClick={() =>
+                        onClick={() => {
+                          if (!statusFilterOpen) placeStatusFilterPanel()
                           setStatusFilterOpen((current) => !current)
-                        }
-                        title={tr(
-                          '按补全状态筛选（Ctrl+Shift+F）',
-                          'Filter by completion status (Ctrl+Shift+F)',
-                          '依補全狀態篩選（Ctrl+Shift+F）'
+                        }}
+                        aria-label={tr(
+                          '按补全状态和录制状态筛选',
+                          'Filter by completion and recording status',
+                          '依補全狀態與錄製狀態篩選'
                         )}
                       >
                         <SlidersHorizontal size={14} />
                         <span>{tr('筛选', 'Filter', '篩選')}</span>
-                        <span className="account-status-filter__badge">
-                          {statusFilterBadgeCount > 99
-                            ? '99+'
-                            : statusFilterBadgeCount}
-                        </span>
+                        {statusFilterBadgeCount > 0 && (
+                          <span className="account-status-filter__badge">
+                            {statusFilterBadgeCount > 99
+                              ? '99+'
+                              : statusFilterBadgeCount}
+                          </span>
+                        )}
                       </button>
-                      {statusFilterOpen && (
-                        <div
-                          ref={statusFilterPanelRef}
-                          id="account-status-filter-panel"
-                          className="account-status-filter__panel"
-                          role="group"
-                          aria-label={tr(
-                            '按补全状态筛选',
-                            'Filter by completion status',
-                            '依補全狀態篩選'
-                          )}
-                          onKeyDown={handleStatusFilterKeyDown}
-                        >
-                          <div className="account-status-filter__heading">
-                            <span>
-                              {tr(
-                                '按状态筛选',
-                                'Filter by status',
-                                '依狀態篩選'
-                              )}
+                      {statusFilterOpen &&
+                        createPortal(
+                          <div
+                            ref={statusFilterPanelRef}
+                            id="account-status-filter-panel"
+                            className="account-status-filter__panel"
+                            role="group"
+                            aria-label={tr(
+                              '按状态筛选',
+                              'Filter by status',
+                              '依狀態篩選'
+                            )}
+                            style={{
+                              left: statusFilterAnchor.left,
+                              top: statusFilterAnchor.top
+                            }}
+                            onKeyDown={handleStatusFilterKeyDown}
+                          >
+                            <div className="account-status-filter__heading">
+                              <span>{tr('按状态筛选', 'Filter by status', '依狀態篩選')}</span>
+                              <small>
+                                {tr(
+                                  `当前 ${baseFilteredAccounts.length} 个`,
+                                  `${baseFilteredAccounts.length} here`,
+                                  `目前 ${baseFilteredAccounts.length} 個`
+                                )}
+                              </small>
+                            </div>
+                            <span className="account-status-filter__group">
+                              {tr('补全状态', 'Completion', '補全狀態')}
                             </span>
-                            <small>
-                              {tr(
-                                `当前 ${baseFilteredAccounts.length} 个`,
-                                `${baseFilteredAccounts.length} here`,
-                                `目前 ${baseFilteredAccounts.length} 個`
+                            <div className="account-status-filter__options">
+                              {ACCOUNT_TAG_KEYS.map((tag) =>
+                                renderStatusFilterOption(tag)
                               )}
-                            </small>
-                          </div>
-                          <div className="account-status-filter__options">
-                            {ACCOUNT_TAG_KEYS.map((tag) => {
-                              const checked = statusFilter.has(tag)
-                              const count = statusFilterCounts[tag]
-                              return (
-                                <button
-                                  type="button"
-                                  role="checkbox"
-                                  aria-checked={checked}
-                                  className={`account-status-filter__option${
-                                    checked ? ' is-checked' : ''
-                                  }${count === 0 ? ' is-zero' : ''}`}
-                                  key={tag}
-                                  onClick={() => toggleStatusFilterOption(tag)}
-                                >
-                                  <span
-                                    className="account-status-filter__check"
-                                    aria-hidden="true"
-                                  >
-                                    {checked && <Check size={11} />}
-                                  </span>
-                                  <span>{statusTagLabel(tag, tr)}</span>
-                                  <small>{count}</small>
-                                </button>
-                              )
-                            })}
-                          </div>
-                          <div className="account-status-filter__footer">
-                            <span>
-                              {tr(
-                                '多选取并集',
-                                'Multiple selections use OR',
-                                '多選取聯集'
-                              )}
+                            </div>
+                            <span className="account-status-filter__group">
+                              {tr('录制状态', 'Recording', '錄製狀態')}
                             </span>
-                            <button
-                              type="button"
-                              onClick={clearStatusFilters}
-                              disabled={statusFilter.size === 0}
-                            >
-                              {tr('清空', 'Clear', '清空')}
-                            </button>
-                          </div>
-                        </div>
-                      )}
+                            <div className="account-status-filter__options">
+                              {RECORDING_FILTER_TAGS.map((tag) =>
+                                renderStatusFilterOption(tag)
+                              )}
+                            </div>
+                            <div className="account-status-filter__footer">
+                              <span>
+                                {tr(
+                                  '多选取并集 · Ctrl+Shift+F',
+                                  'Multiple selections use OR · Ctrl+Shift+F',
+                                  '多選取聯集 · Ctrl+Shift+F'
+                                )}
+                              </span>
+                              <button
+                                type="button"
+                                onClick={clearStatusFilters}
+                                disabled={statusFilter.size === 0}
+                              >
+                                {tr('清空', 'Clear', '清空')}
+                              </button>
+                            </div>
+                          </div>,
+                          document.body
+                        )}
                     </div>
                   )}
                   <button
@@ -5692,12 +5757,14 @@ export function LibraryScreen({
                     {tr('已筛选', 'Filtered', '已篩選')}
                   </span>
                   <div className="account-status-filter-bar__chips">
-                    {ACCOUNT_TAG_KEYS.filter((tag) => statusFilter.has(tag)).map(
+                    {ALL_FILTER_TAGS.filter((tag) => statusFilter.has(tag)).map(
                       (tag) => (
                         <button
                           type="button"
                           key={tag}
-                          className="account-status-filter-bar__chip"
+                          className={`account-status-filter-bar__chip${
+                            isRecordingFilterTag(tag) ? ' is-recording' : ''
+                          }`}
                           onClick={() => toggleStatusFilterOption(tag)}
                           title={tr(
                             `移除“${statusTagLabel(tag, tr)}”筛选`,
@@ -5981,8 +6048,12 @@ export function LibraryScreen({
                       onContextMenu={(event) => openAccountMenu(event, account)}
                       onMore={(event) => openAccountMenu(event, account)}
                       onLogin={() => void openAccount(account)}
+                      recorded={workflowStepCount(account) > 0}
                       showCompleteAction={
-                        view === 'accounts' && statusFilter.size > 0
+                        view === 'accounts' &&
+                        [...statusFilter].some(
+                          (tag) => !isRecordingFilterTag(tag)
+                        )
                       }
                     />
                   ))}
@@ -7004,6 +7075,7 @@ function AccountListRow({
   onContextMenu,
   onMore,
   onLogin,
+  recorded = false,
   showCompleteAction = false
 }: {
   account: AccountWithSite
@@ -7020,6 +7092,7 @@ function AccountListRow({
   onContextMenu: (event: React.MouseEvent<HTMLElement>) => void
   onMore: (event: React.MouseEvent<HTMLButtonElement>) => void
   onLogin: () => void
+  recorded?: boolean
   showCompleteAction?: boolean
 }): React.JSX.Element {
   const actionLabel = bookmark
@@ -7098,6 +7171,19 @@ function AccountListRow({
             {account.needsSecret && (
               <span className="account-needs-badge is-secret">
                 {tr('缺密码', 'No password', '缺密碼')}
+              </span>
+            )}
+            {recorded && (
+              <span
+                className="account-needs-badge is-recorded"
+                title={tr(
+                  '已保存录制流程，登录时优先回放',
+                  'A recorded flow is saved and replayed on sign-in',
+                  '已儲存錄製流程，登入時優先回放'
+                )}
+              >
+                <Check size={10} aria-hidden="true" />
+                {tr('已录制', 'Recorded', '已錄製')}
               </span>
             )}
           </div>
@@ -7332,13 +7418,15 @@ function DatabaseWorkspaceEmptyState({
           type="button"
           className={`button button--primary${creating ? ' is-loading' : ''}`}
           onClick={() => void onCreate()}
-          disabled={busy}
+          // 打开本地文件时不禁用主按钮：系统文件对话框本身是模态的，
+          // 禁用只会让两个空状态页的主按钮看起来不是同一种按钮。
+          disabled={creating}
           aria-busy={creating}
         >
           {creating ? (
-            <LoaderCircle size={17} className="spin" />
+            <LoaderCircle size={16} className="spin" />
           ) : (
-            <Plus size={17} />
+            <Plus size={16} />
           )}
           {creating
             ? tr('正在创建…', 'Creating…', '正在建立…')
@@ -7359,9 +7447,16 @@ function DatabaseWorkspaceEmptyState({
             className="button button--ghost"
             onClick={() => setOpenDatabaseRequest((value) => value + 1)}
             disabled={busy}
+            aria-busy={openingDatabase}
           >
-            <FolderOpen size={17} />
-            {tr('打开本地数据库', 'Open local database', '開啟本機資料庫')}
+            {openingDatabase ? (
+              <LoaderCircle size={16} className="spin" />
+            ) : (
+              <FolderOpen size={16} />
+            )}
+            {openingDatabase
+              ? tr('正在打开…', 'Opening…', '正在開啟…')
+              : tr('打开本地数据库', 'Open local database', '開啟本機資料庫')}
           </button>
         )}
       </div>
@@ -7421,7 +7516,7 @@ function groupKeyFor(account: AccountWithSite): string {
   return account.site.group?.trim() || UNGROUPED_KEY
 }
 
-function statusTagLabel(tag: AccountTagKey, tr: Translate): string {
+function statusTagLabel(tag: AccountFilterTag, tr: Translate): string {
   switch (tag) {
     case 'needs-url':
       return tr('待补全', 'Needs review', '待補全')
@@ -7429,6 +7524,10 @@ function statusTagLabel(tag: AccountTagKey, tr: Translate): string {
       return tr('缺用户名', 'No username', '缺使用者名稱')
     case 'needs-password':
       return tr('缺密码', 'No password', '缺密碼')
+    case 'recorded':
+      return tr('已录制', 'Recorded', '已錄製')
+    case 'unrecorded':
+      return tr('未录制', 'Not recorded', '未錄製')
   }
 }
 

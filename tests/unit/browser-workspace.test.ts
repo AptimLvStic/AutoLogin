@@ -239,9 +239,11 @@ describe('BrowserWorkspace', () => {
     act(() => allPages?.click())
     await flush()
 
-    expect(container.querySelector('.browser-workspace__tab-menu')).not.toBeNull()
-    expect(wrap?.className).toBe('browser-workspace__viewport-wrap')
-    expect(wrap?.getAttribute('style')).toContain('--menu-h')
+    expect(container.querySelector('.browser-workspace__overview')).not.toBeNull()
+    expect(container.querySelector('.browser-workspace__tab-menu')).toBeNull()
+    // 不再用 --menu-h 把页面顶下去：页面总览接管视图区，原生视图先收起。
+    expect(wrap?.getAttribute('style')).toBeNull()
+    expect(hideAll).toHaveBeenCalled()
   })
 })
 

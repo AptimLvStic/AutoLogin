@@ -14,8 +14,14 @@ const sourceRoots = [
   resolve(root, 'src/shared'),
   resolve(root, 'src/tauri')
 ]
+const buildTagSource = readFileSync(resolve(root, 'src/main/index.ts'), 'utf8')
+const buildTag = buildTagSource.match(/const BUILD_TAG = '([^']+)'/)?.[1]
+if (!buildTag) {
+  throw new Error('无法从 src/main/index.ts 读取 BUILD_TAG')
+}
 const requiredMarkers = [
-  '2026-11-18.v1.0.3-ui-status-fixes',
+  // 构建标记随版本更新，直接从源码读取，避免每次发版都要手改这里。
+  buildTag,
   'openDraftSession',
   'appendDraftStep',
   'recoverDraftSession',

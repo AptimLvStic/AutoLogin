@@ -114,7 +114,6 @@ export function BrowserWorkspace({
   const [copiedField, setCopiedField] = useState<'username' | 'password' | null>(null)
   const [overflowOpen, setOverflowOpen] = useState(false)
   const [hasTabOverflow, setHasTabOverflow] = useState(false)
-  const [menuOffset, setMenuOffset] = useState(0)
   const [goingBack, setGoingBack] = useState(false)
   const [closeAllConfirmOpen, setCloseAllConfirmOpen] = useState(false)
   const [closingAll, setClosingAll] = useState(false)
@@ -122,13 +121,15 @@ export function BrowserWorkspace({
   const viewportRef = useRef<HTMLDivElement>(null)
   const viewportWrapRef = useRef<HTMLDivElement>(null)
   const addressInputRef = useRef<HTMLInputElement>(null)
-  const tabMenuRef = useRef<HTMLDivElement>(null)
   const overflowRef = useRef<HTMLDivElement>(null)
+  const overviewRef = useRef<HTMLDivElement>(null)
   const copyFeedbackTimerRef = useRef<number | null>(null)
   const newTabDraftRef = useRef(false)
   const activeBeforeDraftRef = useRef('')
   const active = tabs.find((tab) => tab.label === activeLabel) ?? null
   const density = tabDensity(tabs.length)
+  // 没有任何标签时不要留一条空标签栏，把「新建标签页」并进工具栏。
+  const showTabsBar = tabs.length > 0 || newTabDraft || loadingTabs
 
   useEffect(() => {
     let cancelled = false
@@ -243,6 +244,12 @@ export function BrowserWorkspace({
   }, [tabs, newTabDraft])
 
   useEffect(() => {
+    // 总览打开时先收起原生视图：DOM 弹层永远盖不住原生窗口，
+    // 收起来既不会把页面往下挤，也不会出现"点击被页面吞掉、弹层关不掉"。
+    if (overflowOpen) {
+      void window.autologin.browser.hideAll()
+      return
+    }
     if (!active) return
     let frame = 0
     const updateBounds = (activate: boolean): void => {
@@ -274,13 +281,14 @@ export function BrowserWorkspace({
       window.removeEventListener('resize', onWindowResize)
       if (frame) window.cancelAnimationFrame(frame)
     }
-  }, [active?.label])
+  }, [active?.label, overflowOpen])
 
   useEffect(() => {
     if (!overflowOpen) return
     const closeOnPointer = (event: PointerEvent): void => {
       if (event.target instanceof Node) {
         if (overflowRef.current?.contains(event.target)) return
+        if (overviewRef.current?.contains(event.target)) return
       }
       setOverflowOpen(false)
     }
@@ -300,34 +308,6 @@ export function BrowserWorkspace({
     if (tabs.length > 1) return
     setOverflowOpen(false)
   }, [tabs.length])
-
-  useEffect(() => {
-    if (!overflowOpen) {
-      setMenuOffset(0)
-      return
-    }
-    const menu = tabMenuRef.current
-    const wrap = viewportWrapRef.current
-    if (!menu || !wrap) return
-    let frame = 0
-    const measure = (): void => {
-      if (frame) window.cancelAnimationFrame(frame)
-      frame = window.requestAnimationFrame(() => {
-        frame = 0
-        const menuBounds = menu.getBoundingClientRect()
-        const wrapBounds = wrap.getBoundingClientRect()
-        const next = Math.max(0, Math.ceil(menuBounds.bottom - wrapBounds.top))
-        setMenuOffset((current) => (current === next ? current : next))
-      })
-    }
-    const observer = new ResizeObserver(measure)
-    observer.observe(menu)
-    measure()
-    return () => {
-      observer.disconnect()
-      if (frame) window.cancelAnimationFrame(frame)
-    }
-  }, [overflowOpen, tabs.length])
 
   useEffect(() => {
     setCopiedField(null)
@@ -451,24 +431,21 @@ export function BrowserWorkspace({
     }
   }
 
-  async function closeAllTabs(): Promise<void> {
+  function closeAllTabs(): void {
     if (closingAll || tabs.length === 0) return
     setClosingAll(true)
-    try {
-      await Promise.allSettled(
-        tabs.map((tab) => window.autologin.browser.close(tab.label))
-      )
-      setTabs([])
-      setActiveLabel('')
-      setDraftOpen(false)
-      setCloseAllConfirmOpen(false)
-      notify(
-        'info',
-        tr('已关闭全部页面', 'All pages closed.', '已關閉全部頁面')
-      )
-    } finally {
-      setClosingAll(false)
-    }
+    const labels = tabs.map((tab) => tab.label)
+    // 先把界面状态清干净，再让原生窗口在后台收尾：
+    // 任何一个窗口关闭卡住，都不会把界面留在"白屏且关不掉"的状态。
+    setTabs([])
+    setActiveLabel('')
+    setDraftOpen(false)
+    setOverflowOpen(false)
+    setCloseAllConfirmOpen(false)
+    notify('info', tr('已关闭全部页面', 'All pages closed.', '已關閉全部頁面'))
+    void Promise.allSettled(
+      labels.map((label) => window.autologin.browser.close(label))
+    ).finally(() => setClosingAll(false))
   }
 
   async function copyUsername(): Promise<void> {
@@ -552,7 +529,9 @@ export function BrowserWorkspace({
       aria-label={tr('内置浏览器', 'Built-in browser', '內建瀏覽器')}
       data-density={density}
     >
-      <header className="browser-workspace__tabs-bar">
+      <header
+        className={`browser-workspace__tabs-bar${showTabsBar ? '' : ' is-hidden'}`}
+      >
         <div className="browser-workspace__tabs-shell">
           <div
             ref={tabsRef}
@@ -683,7 +662,9 @@ export function BrowserWorkspace({
           {tabs.length > 1 && (
             <button
               type="button"
-              className="browser-workspace__all-tabs"
+              className={`browser-workspace__all-tabs${
+                overflowOpen ? ' is-active' : ''
+              }`}
               aria-haspopup="menu"
               aria-expanded={overflowOpen}
               aria-label={tr('查看全部页面', 'View all pages', '檢視全部頁面')}
@@ -694,66 +675,6 @@ export function BrowserWorkspace({
               <span className="browser-workspace__all-tabs-count">{tabs.length}</span>
               <ChevronDown size={13} />
             </button>
-          )}
-          {overflowOpen && tabs.length > 1 && (
-            <div
-              ref={tabMenuRef}
-              className="browser-workspace__tab-menu"
-              role="menu"
-              aria-label={tr('全部页面', 'All pages', '全部頁面')}
-            >
-              <div className="browser-workspace__tab-menu-header">
-                <strong>{tr('全部页面', 'All pages', '全部頁面')}</strong>
-                <span>{tabs.length}</span>
-              </div>
-              <div className="browser-workspace__tab-menu-list">
-                {tabs.map((tab) => (
-                  <button
-                    type="button"
-                    role="menuitem"
-                    key={tab.label}
-                    className={tab.label === active?.label ? 'is-active' : ''}
-                    onClick={() => {
-                      setOverflowOpen(false)
-                      void selectTab(tab.label)
-                    }}
-                  >
-                    <span
-                      className="browser-workspace__tab-menu-mark"
-                      style={
-                        {
-                          '--browser-tab-color': tabGroupColor(tab.groupName)
-                        } as CSSProperties
-                      }
-                      aria-hidden="true"
-                    />
-                    <span>
-                      <strong>{tabDisplayTitle(tab)}</strong>
-                      {tabSubtitle(
-                        tab.siteName || tabDisplayTitle(tab),
-                        tab.accountLabel
-                      ) && (
-                        <small>{tab.accountLabel}</small>
-                      )}
-                    </span>
-                  </button>
-                ))}
-              </div>
-              <div className="browser-workspace__tab-menu-footer">
-                <button
-                  type="button"
-                  role="menuitem"
-                  className="is-danger"
-                  onClick={() => {
-                    setOverflowOpen(false)
-                    setCloseAllConfirmOpen(true)
-                  }}
-                >
-                  <X size={14} />
-                  {tr('关闭全部页面', 'Close all pages', '關閉全部頁面')}
-                </button>
-              </div>
-            </div>
           )}
         </div>
       </header>
@@ -804,6 +725,17 @@ export function BrowserWorkspace({
           />
           {navigating && <LoaderCircle size={14} className="spin" />}
         </form>
+        {!showTabsBar && (
+          <button
+            type="button"
+            className="browser-workspace__new-tab"
+            onClick={startNewTab}
+            aria-label={tr('新建标签页', 'New tab', '新增分頁')}
+            title={tr('新建标签页', 'New tab', '新增分頁')}
+          >
+            <Plus size={16} />
+          </button>
+        )}
         {active && (
           <div className="browser-workspace__copy-actions">
             <button
@@ -848,12 +780,117 @@ export function BrowserWorkspace({
         )}
       </div>
 
-      <div
-        ref={viewportWrapRef}
-        className="browser-workspace__viewport-wrap"
-        style={{ '--menu-h': `${menuOffset}px` } as CSSProperties}
-      >
-        {loadingTabs ? (
+      <div ref={viewportWrapRef} className="browser-workspace__viewport-wrap">
+        {overflowOpen && tabs.length > 1 ? (
+          <div
+            ref={overviewRef}
+            className="browser-workspace__overview"
+            role="dialog"
+            aria-label={tr('全部页面', 'All pages', '全部頁面')}
+          >
+            <div className="browser-workspace__overview-panel">
+              <header className="browser-workspace__overview-head">
+                <div className="browser-workspace__overview-title">
+                  <span className="eyebrow">{tr('全部页面', 'All pages', '全部頁面')}</span>
+                  <h2>
+                    {tabs.length}
+                    <small>
+                      {tr('个页面已打开', 'pages open', '個頁面已開啟')}
+                    </small>
+                  </h2>
+                </div>
+                <button
+                  type="button"
+                  className="browser-workspace__icon-button"
+                  onClick={() => setOverflowOpen(false)}
+                  aria-label={tr('返回当前页面', 'Back to page', '返回目前頁面')}
+                  title={tr('返回当前页面（Esc）', 'Back to page (Esc)', '返回目前頁面（Esc）')}
+                >
+                  <X size={16} />
+                </button>
+              </header>
+              <div className="browser-workspace__overview-grid">
+                {tabs.map((tab) => {
+                  const displayTitle = tabDisplayTitle(tab)
+                  const subtitle = tabSubtitle(
+                    tab.siteName || displayTitle,
+                    tab.accountLabel
+                  )
+                  const isActive = tab.label === active?.label
+                  return (
+                    <div
+                      className={`browser-workspace__overview-card${
+                        isActive ? ' is-active' : ''
+                      }`}
+                      key={tab.label}
+                      style={
+                        {
+                          '--browser-tab-color': tabGroupColor(tab.groupName)
+                        } as CSSProperties
+                      }
+                    >
+                      <button
+                        type="button"
+                        className="browser-workspace__overview-card-main"
+                        onClick={() => {
+                          setOverflowOpen(false)
+                          void selectTab(tab.label)
+                        }}
+                        title={[displayTitle, subtitle].filter(Boolean).join(' · ')}
+                      >
+                        <span
+                          className="browser-workspace__overview-mark"
+                          aria-hidden="true"
+                        />
+                        <span className="browser-workspace__overview-text">
+                          <strong>{displayTitle}</strong>
+                          <small>
+                            {subtitle || tr('手动打开', 'Manual', '手動開啟')}
+                          </small>
+                        </span>
+                        {isActive && (
+                          <span className="browser-workspace__overview-current">
+                            {tr('当前', 'Current', '目前')}
+                          </span>
+                        )}
+                      </button>
+                      <button
+                        type="button"
+                        className="browser-workspace__overview-card-close"
+                        onClick={() => void closeTab(tab.label)}
+                        aria-label={tr(
+                          `关闭 ${displayTitle}`,
+                          `Close ${displayTitle}`,
+                          `關閉 ${displayTitle}`
+                        )}
+                        title={tr('关闭页面', 'Close page', '關閉頁面')}
+                      >
+                        <X size={12} />
+                      </button>
+                    </div>
+                  )
+                })}
+              </div>
+              <footer className="browser-workspace__overview-foot">
+                <span>
+                  {tr(
+                    '点击卡片切换页面，Esc 返回',
+                    'Pick a card to switch, Esc to go back',
+                    '點擊卡片切換頁面，Esc 返回'
+                  )}
+                </span>
+                <button
+                  type="button"
+                  className="browser-workspace__overview-danger"
+                  onClick={() => setCloseAllConfirmOpen(true)}
+                >
+                  <X size={13} />
+                  {tr('关闭全部页面', 'Close all pages', '關閉全部頁面')}
+                </button>
+              </footer>
+            </div>
+          </div>
+        ) : loadingTabs ? (
           <div className="browser-workspace__empty browser-workspace__empty--loading" role="status">
             <LoaderCircle size={24} className="spin" />
             <span>{tr('正在读取页面', 'Loading pages', '正在讀取頁面')}</span>

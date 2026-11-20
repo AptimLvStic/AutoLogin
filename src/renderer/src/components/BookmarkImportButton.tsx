@@ -50,7 +50,11 @@ export function BookmarkImportButton({
       title={tr('导入浏览器书签', 'Import browser bookmarks', '匯入瀏覽器書籤')}
       aria-busy={busy}
     >
-      {busy ? <LoaderCircle size={15} className="spin" /> : <Bookmark size={15} />}
+      {busy ? (
+        <LoaderCircle size={showLabel ? 16 : 15} className="spin" />
+      ) : (
+        <Bookmark size={showLabel ? 16 : 15} />
+      )}
       {showLabel && (
         <span>
           {busy

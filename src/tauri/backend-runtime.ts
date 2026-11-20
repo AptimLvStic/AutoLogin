@@ -998,11 +998,12 @@ class BackendAutoUpdater extends EventEmitter {
     } satisfies UpdateInfo)
   }
 
-  quitAndInstall(_isSilent?: boolean, _isForceRunAfter?: boolean): void {
+  async quitAndInstall(_isSilent?: boolean, _isForceRunAfter?: boolean): Promise<void> {
     if (!this.installerPath || !existsSync(this.installerPath)) {
       throw new Error('更新安装包不存在')
     }
-    emitControl('install-update', { path: this.installerPath })
+    // 走 requestId 通道：安装器启动失败时把原因抛回主进程，再由界面提示用户手动安装。
+    await requestNative('install-update', { path: this.installerPath }, 15_000)
   }
 
   on(event: 'download-progress', listener: (progress: UpdateProgress) => void): this

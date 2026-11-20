@@ -56,7 +56,36 @@ fn is_private_network_url(value: &str) -> bool {
 
 #[cfg(all(test, windows))]
 mod tests {
-    use super::is_private_network_url;
+    use super::{installer_path_from_payload, is_private_network_url};
+    use serde_json::json;
+
+    #[test]
+    fn update_installer_path_is_validated_before_spawning() {
+        assert!(
+            installer_path_from_payload(None)
+                .unwrap_err()
+                .contains("缺少更新安装包路径")
+        );
+
+        let missing = json!({ "path": "Z:\\definitely-missing\\AutoLogin-setup.exe" });
+        assert!(
+            installer_path_from_payload(Some(&missing))
+                .unwrap_err()
+                .contains("更新安装包不存在")
+        );
+
+        // 仓库目录带 Low 完整性标签，低完整性进程写不进用户 %TEMP%，因此用 crate 内的 target 目录。
+        let existing = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("target")
+            .join("autologin-installer-path-test.exe");
+        std::fs::write(&existing, b"stub").expect("create temporary installer stand-in");
+        let payload = json!({ "path": existing.to_string_lossy() });
+        assert_eq!(
+            installer_path_from_payload(Some(&payload)).expect("existing installer path"),
+            existing.to_string_lossy()
+        );
+        let _ = std::fs::remove_file(&existing);
+    }
 
     #[test]
     fn private_network_certificate_errors_are_limited_to_intranet_hosts() {
@@ -437,6 +466,7 @@ fn handle_backend_control(
                     .ok_or_else(|| "缺少文件路径".to_string())
                     .and_then(|path| open_path(path.to_string()))
                     .map(|_| Value::Null),
+                "install-update" => install_update(&app, Some(&payload)),
                 _ => Err(format!("未知的本地窗口操作：{action}")),
             };
             let response = match result {
@@ -478,26 +508,67 @@ fn handle_backend_control(
             }
         }
         "install-update" => {
-            if let Some(path) = message
-                .get("payload")
-                .and_then(|payload| payload.get("path"))
-                .and_then(Value::as_str)
-            {
-                let mut command = Command::new(path);
-                command.arg("/S").arg("/R");
-                #[cfg(windows)]
-                {
-                    use std::os::windows::process::CommandExt;
-                    const CREATE_NO_WINDOW: u32 = 0x0800_0000;
-                    command.creation_flags(CREATE_NO_WINDOW);
-                }
-                if let Err(error) = command.spawn() {
-                    eprintln!("无法启动更新安装程序：{error}");
-                }
+            if let Err(error) = install_update(app, message.get("payload")) {
+                eprintln!("{error}");
             }
-            app.exit(0);
         }
         _ => {}
+    }
+}
+
+fn installer_path_from_payload(payload: Option<&Value>) -> Result<String, String> {
+    let path = payload
+        .and_then(|payload| payload.get("path"))
+        .and_then(Value::as_str)
+        .ok_or_else(|| "缺少更新安装包路径".to_string())?;
+    if !std::path::Path::new(path).is_file() {
+        let message = format!("更新安装包不存在：{path}。请重新下载更新或手动运行安装包。");
+        log_install_failure(&message);
+        return Err(message);
+    }
+    Ok(path.to_string())
+}
+
+fn install_update(app: &tauri::AppHandle, payload: Option<&Value>) -> Result<Value, String> {
+    let path = installer_path_from_payload(payload)?;
+    let mut command = Command::new(&path);
+    // 静默安装（/S）并在安装完成后由安装器拉起应用（/R）。
+    command.arg("/S").arg("/R");
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+        command.creation_flags(CREATE_NO_WINDOW);
+    }
+    if let Err(error) = command.spawn() {
+        let message = format!("无法启动更新安装程序：{error}。请手动运行 {path} 完成更新。");
+        log_install_failure(&message);
+        return Err(message);
+    }
+    // 先把成功响应写回后端，再退出当前进程，避免调用方只看到连接断开。
+    let handle = app.clone();
+    std::thread::spawn(move || {
+        std::thread::sleep(std::time::Duration::from_millis(250));
+        handle.exit(0);
+    });
+    Ok(json!({ "started": true }))
+}
+
+fn log_install_failure(message: &str) {
+    let Some(base) = std::env::var_os("APPDATA").map(PathBuf::from) else {
+        return;
+    };
+    let directory = base.join("AutoLogin");
+    if std::fs::create_dir_all(&directory).is_err() {
+        return;
+    }
+    let path = directory.join("update-install.log");
+    if let Ok(mut file) = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(path)
+    {
+        let _ = writeln!(file, "{message}");
     }
 }
 

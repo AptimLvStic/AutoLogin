@@ -1141,7 +1141,7 @@ export function SettingsPage({
               </div>
             </div>
 
-            <div className="settings-card">
+            <div className="settings-card settings-card--browser-launch">
               <SettingsCardHeading
                 icon={<Monitor size={17} />}
                 title={tr('浏览器启动方式', 'Browser launch', '瀏覽器啟動方式')}
@@ -1182,7 +1182,7 @@ export function SettingsPage({
                   </button>
                 </div>
               </div>
-              <label className="switch-row">
+              <div className="switch-row switch-row--isolated">
                 <span>
                   <strong>{tr('纯净浏览器模式', 'Pure browser mode', '純淨瀏覽器模式')}</strong>
                   <small>
@@ -1193,15 +1193,18 @@ export function SettingsPage({
                     )}
                   </small>
                 </span>
-                <input
-                  type="checkbox"
-                  checked={settings.pureBrowserMode}
-                  onChange={(event) =>
-                    void changePureBrowserMode(event.target.checked)
-                  }
-                />
-                <span className="switch" aria-hidden="true" />
-              </label>
+                <label className="switch-row__hit">
+                  <input
+                    type="checkbox"
+                    checked={settings.pureBrowserMode}
+                    onChange={(event) =>
+                      void changePureBrowserMode(event.target.checked)
+                    }
+                    aria-label={tr('纯净浏览器模式', 'Pure browser mode', '純淨瀏覽器模式')}
+                  />
+                  <span className="switch" aria-hidden="true" />
+                </label>
+              </div>
               <p className="settings-hint">
                 {tr(
                   '若某些站点必须依赖扩展登录，可关闭纯净模式；配置清洗仍会清除崩溃恢复状态。',

@@ -639,7 +639,13 @@ export const dataExportInputSchema = z
   .object({
     tabId: idSchema,
     format: z.enum(['autologin', 'csv', 'kdbx']).optional(),
-    password: exportPasswordSchema.optional()
+    password: exportPasswordSchema.optional(),
+    fileName: z
+      .string()
+      .trim()
+      .max(80, '文件名不能超过 80 个字符')
+      .regex(/^[^<>:"/\\|?*\u0000-\u001f]*$/, '文件名不能包含 \\ / : * ? " < > |')
+      .optional()
   })
   .strict()
 

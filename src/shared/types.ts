@@ -729,6 +729,7 @@ export interface DataExportInput {
   tabId: string
   format?: DataExportFormat
   password?: string
+  fileName?: string
 }
 
 export type DataExportFormat = 'autologin' | 'csv' | 'kdbx'

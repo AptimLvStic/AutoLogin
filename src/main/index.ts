@@ -1899,7 +1899,15 @@ function registerIpc(): void {
       kdbx: 'kdbx',
       html: 'html'
     }
-    const defaultName = `${safeFileBaseName(tab.name)}-${fileDateStamp()}.${extensions[format]}`
+    const requestedBase = parsed.data.fileName
+      ? safeFileBaseName(
+          parsed.data.fileName.replace(
+            new RegExp(`\\.${extensions[format]}$`, 'i'),
+            ''
+          )
+        )
+      : ''
+    const defaultName = `${requestedBase || `${safeFileBaseName(tab.name)}-${fileDateStamp()}`}.${extensions[format]}`
     const selection = await dialog.showSaveDialog(mainWindow, {
       title:
         format === 'autologin'

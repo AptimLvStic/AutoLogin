@@ -71,6 +71,7 @@ export function AccountTransferControls({
   const [exportPasswordOpen, setExportPasswordOpen] = useState(false)
   const [exportPasswordFormat, setExportPasswordFormat] =
     useState<DataExportFormat>('kdbx')
+  const [exportFileName, setExportFileName] = useState('')
   const [exportPassword, setExportPassword] = useState('')
   const [exportPasswordConfirm, setExportPasswordConfirm] = useState('')
   const [exportPasswordError, setExportPasswordError] = useState('')
@@ -367,7 +368,8 @@ export function AccountTransferControls({
 
   async function exportTab(
     format: DataExportFormat,
-    password?: string
+    password?: string,
+    fileName?: string
   ): Promise<FileOperationResult> {
     if (exportBusy) return { canceled: true }
     setExportBusy(true)
@@ -375,7 +377,8 @@ export function AccountTransferControls({
       const result = await window.autologin.data.exportTab({
         tabId,
         format,
-        password
+        password,
+        fileName: fileName?.trim() || undefined
       })
       if (!result.canceled) {
         notify(
@@ -407,6 +410,7 @@ export function AccountTransferControls({
     if (exportBusy) return
     setMenuOpen(false)
     setExportPasswordFormat(format)
+    setExportFileName('')
     setExportPassword('')
     setExportPasswordConfirm('')
     setExportPasswordError('')
@@ -415,6 +419,26 @@ export function AccountTransferControls({
 
   async function submitExportPassword(event: React.FormEvent): Promise<void> {
     event.preventDefault()
+    const requestedName = exportFileName.trim()
+    if (requestedName.length > 80) {
+      setExportPasswordError(
+        tr('文件名不能超过 80 个字符', 'Use at most 80 characters.', '檔案名稱不能超過 80 個字元')
+      )
+      return
+    }
+    if (
+      requestedName &&
+      !/^[^<>:"/\\|?*\u0000-\u001f]+$/.test(requestedName)
+    ) {
+      setExportPasswordError(
+        tr(
+          '文件名不能包含 \\ / : * ? " < > |',
+          'The file name cannot contain \\ / : * ? " < > |',
+          '檔案名稱不能包含 \\ / : * ? " < > |'
+        )
+      )
+      return
+    }
     const minLength = exportPasswordFormat === 'kdbx' ? 10 : 8
     if (exportPassword.length < minLength) {
       setExportPasswordError(
@@ -432,7 +456,11 @@ export function AccountTransferControls({
     }
     setExportPasswordError('')
     try {
-      const result = await exportTab(exportPasswordFormat, exportPassword)
+      const result = await exportTab(
+        exportPasswordFormat,
+        exportPassword,
+        requestedName
+      )
       if (!result.canceled) setExportPasswordOpen(false)
     } catch {
       // The shared export handler already reports the error.
@@ -987,6 +1015,7 @@ export function AccountTransferControls({
           onClose={() => {
             if (exportBusy) return
             setExportPasswordOpen(false)
+            setExportFileName('')
             setExportPassword('')
             setExportPasswordConfirm('')
             setExportPasswordError('')
@@ -1009,6 +1038,27 @@ export function AccountTransferControls({
             </p>
             <label className="field">
               <span className="field__label">
+                {tr('文件名（可选）', 'File name (optional)', '檔案名稱（選填）')}
+              </span>
+              <span className="input-shell">
+                <FileDown size={16} />
+                <input
+                  type="text"
+                  value={exportFileName}
+                  onChange={(event) => setExportFileName(event.target.value)}
+                  data-autofocus
+                  maxLength={80}
+                  spellCheck={false}
+                  placeholder={tr(
+                    '留空自动生成；扩展名自动添加',
+                    'Leave blank to auto-name; extension is added',
+                    '留空自動產生；副檔名自動加入'
+                  )}
+                />
+              </span>
+            </label>
+            <label className="field">
+              <span className="field__label">
                 {exportPasswordFormat === 'kdbx'
                   ? tr('数据库主密码', 'Database master password', '資料庫主密碼')
                   : tr('导出密码', 'Export password', '匯出密碼')}
@@ -1019,7 +1069,6 @@ export function AccountTransferControls({
                   type="password"
                   value={exportPassword}
                   onChange={(event) => setExportPassword(event.target.value)}
-                  data-autofocus
                   autoComplete="new-password"
                 />
               </span>
@@ -1047,6 +1096,7 @@ export function AccountTransferControls({
                 className="button button--ghost"
                 onClick={() => {
                   setExportPasswordOpen(false)
+                  setExportFileName('')
                   setExportPassword('')
                   setExportPasswordConfirm('')
                   setExportPasswordError('')

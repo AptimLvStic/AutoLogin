@@ -7,6 +7,7 @@ import {
   accountIdsSchema,
   accountCreateInputSchema,
   appSettingsPatchSchema,
+  dataExportInputSchema,
   appSettingsSchema,
   groupCreateInputSchema,
   groupDeleteInputSchema,
@@ -24,6 +25,20 @@ import {
 } from '../../src/shared/theme'
 
 describe('shared input schemas', () => {
+  it('validates optional export file names without path characters', () => {
+    const base = { tabId: 'tab-1', format: 'csv', password: '12345678' }
+    expect(
+      dataExportInputSchema.safeParse({ ...base, fileName: '我的账号 2026' }).success
+    ).toBe(true)
+    expect(dataExportInputSchema.safeParse(base).success).toBe(true)
+    expect(
+      dataExportInputSchema.safeParse({ ...base, fileName: 'a/b' }).success
+    ).toBe(false)
+    expect(
+      dataExportInputSchema.safeParse({ ...base, fileName: 'x'.repeat(81) }).success
+    ).toBe(false)
+  })
+
   it('maps the default 110 scale setting to the 90% visual baseline', () => {
     expect(interfaceScaleToZoom(110)).toBeCloseTo(0.9)
     expect(interfaceScaleToZoom(115)).toBeCloseTo(0.95)

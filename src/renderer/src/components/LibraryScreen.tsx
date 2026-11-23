@@ -1378,7 +1378,9 @@ export function LibraryScreen({
     const closeOnPointer = (event: PointerEvent): void => {
       if (
         event.target instanceof Element &&
-        event.target.closest('.group-context-menu')
+        event.target.closest(
+          '.group-context-menu, .account-subnav__group-more'
+        )
       ) {
         return
       }
@@ -5530,6 +5532,22 @@ export function LibraryScreen({
                                 data-group-path={groupPath}
                                 data-group-level={group.level}
                                 data-has-children={hasChildren ? 'true' : undefined}
+                                onPointerDown={
+                                  isUngrouped
+                                    ? undefined
+                                    : (event) => {
+                                        const target = event.target
+                                        if (
+                                          target instanceof Element &&
+                                          target.closest(
+                                            '.account-subnav__group-more, .account-subnav__group-toggle'
+                                          )
+                                        ) {
+                                          return
+                                        }
+                                        beginGroupPointerDrag(event, group)
+                                      }
+                                }
                                 onContextMenu={
                                   isUngrouped
                                     ? undefined
@@ -5558,10 +5576,6 @@ export function LibraryScreen({
                                       'Drag to move group',
                                       '拖動調整分組'
                                     )}
-                                    onPointerDown={(event) => {
-                                      event.stopPropagation()
-                                      beginGroupPointerDrag(event, group)
-                                    }}
                                     onKeyDown={(event) => {
                                       if (event.key === 'ArrowRight') {
                                         event.preventDefault()
@@ -5722,7 +5736,17 @@ export function LibraryScreen({
                                       `「${group.name}」更多操作`
                                     )}
                                     title={tr('更多操作', 'More actions', '更多操作')}
-                                    onClick={(event) => openGroupMenu(event, group)}
+                                    onClick={(event) => {
+                                      if (
+                                        groupMenu &&
+                                        groupDragPath(groupMenu.group) ===
+                                          groupDragPath(group)
+                                      ) {
+                                        setGroupMenu(null)
+                                        return
+                                      }
+                                      openGroupMenu(event, group)
+                                    }}
                                     onKeyDown={(event) => {
                                       if (event.key === 'ArrowLeft') {
                                         event.preventDefault()

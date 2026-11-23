@@ -3044,16 +3044,10 @@ export function LibraryScreen({
       const rect = hit.row.getBoundingClientRect()
       const offset = (moveEvent.clientY - rect.top) / Math.max(1, rect.height)
       const targetHasChildren = groupsWithChildren.has(hit.group.actualName ?? '')
+      // 中间 50% 始终表示“移入该分组”，这样叶子分组也能成为父级；
+      // 顶部/底部 25% 仍用于同级重排。
       const requested: GroupDropPosition =
-        offset < 0.25
-          ? 'before'
-          : offset > 0.75
-            ? 'after'
-            : targetHasChildren
-              ? 'inside'
-              : offset < 0.5
-                ? 'before'
-                : 'after'
+        offset < 0.25 ? 'before' : offset > 0.75 ? 'after' : 'inside'
       const targetHoverPath = hit.group.actualName
       if (
         targetHasChildren &&

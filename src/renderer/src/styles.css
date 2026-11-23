@@ -22248,8 +22248,6 @@ html[data-color-mode='dark'] .account-row.is-selected:hover {
   width: 24px;
   height: 24px;
   place-items: center;
-  /* 图标靠右，使其右缘与「全部账号」行展开箭头落在同一条竖线上。 */
-  justify-items: end;
   padding: 0;
   border: 0;
   border-radius: 6px;

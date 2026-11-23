@@ -19174,6 +19174,12 @@ html[data-color-mode='light'] .auth-story {
   color: var(--muted-light);
 }
 
+/* 解锁/建库页自带“显示”按钮：隐藏 WebView2 原生的密码显示/清除图标，避免两个眼睛。 */
+.auth-form input[type='password']::-ms-reveal,
+.auth-form input[type='password']::-ms-clear {
+  display: none;
+}
+
 .input-text-action {
   display: inline-flex;
   min-width: 36px;

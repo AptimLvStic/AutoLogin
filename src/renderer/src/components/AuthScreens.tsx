@@ -239,13 +239,20 @@ export function UnlockScreen({
     try {
       await onUnlock(password)
     } catch (reason) {
-      setError(
-        language === 'zh-CN' && reason instanceof Error
-          ? reason.message
-          : tr('无法解锁保险库', 'Could not unlock the vault.', '無法解鎖保險庫')
-      )
+      const raw = reason instanceof Error ? reason.message : ''
+      const message = raw.includes('主密码不正确')
+        ? tr(
+            '主密码不正确，或保险库文件已损坏',
+            'Incorrect master password, or the vault file is damaged.',
+            '主密碼不正確，或保險庫檔案已損壞'
+          )
+        : raw.includes('主密码至少需要 10 个字符')
+          ? tr('主密码至少需要 10 个字符', 'Use at least 10 characters.', '主密碼至少需要 10 個字元')
+          : language === 'zh-CN' && raw
+            ? raw
+            : tr('无法解锁保险库', 'Could not unlock the vault.', '無法解鎖保險庫')
       setPassword('')
-      reject(error || '')
+      reject(message)
     } finally {
       setBusy(false)
     }

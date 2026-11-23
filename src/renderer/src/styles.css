@@ -24119,3 +24119,32 @@ body.is-dragging-group .account-subnav__group-grip:active {
 .account-subnav__group-row--ungrouped .account-subnav__item--group {
   padding-left: 9px;
 }
+
+/* 2026-11-23 分组行：展开箭头热区放大、hover 变深，
+   配合"点折叠的父分组行即展开"，不再需要瞄准 24px 的小箭头。 */
+.account-subnav__group-toggle {
+  right: 28px;
+  width: 28px;
+  height: 28px;
+  border-radius: 7px;
+}
+
+.account-subnav__group-row:hover .account-subnav__group-toggle {
+  color: var(--ink-soft);
+  background: color-mix(in srgb, var(--ink) 5%, transparent);
+}
+
+.account-subnav__group-toggle:hover,
+.account-subnav__group-toggle:focus-visible {
+  color: var(--accent-strong);
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
+}
+
+/* 折叠状态下箭头更实一点，提示"这里还有内容" */
+.account-subnav__group-toggle[aria-expanded='false'] {
+  color: var(--muted);
+}
+
+.account-subnav__group-more {
+  right: 2px;
+}

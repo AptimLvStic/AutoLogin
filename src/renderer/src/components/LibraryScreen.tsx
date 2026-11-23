@@ -2344,6 +2344,28 @@ export function LibraryScreen({
     })
   }
 
+  /** 只展开、不收起：选中分组时顺手展开子级。 */
+  function expandGroup(path: string): void {
+    setCollapsedGroupPaths((current) => {
+      if (!current.has(path)) return current
+      const next = new Set(current)
+      next.delete(path)
+      persistCollapsedGroupPaths(next)
+      return next
+    })
+  }
+
+  /** 只收起、不影响筛选：再点一次已选中的父分组时使用。 */
+  function collapseGroup(path: string): void {
+    setCollapsedGroupPaths((current) => {
+      if (current.has(path)) return current
+      const next = new Set(current)
+      next.add(path)
+      persistCollapsedGroupPaths(next)
+      return next
+    })
+  }
+
   function persistCollapsedGroupPaths(paths: Set<string>): void {
     window.localStorage.setItem(
       'autologin.account.groups.collapsedPaths',
@@ -5602,6 +5624,20 @@ export function LibraryScreen({
                                   }`}
                                   onClick={() => {
                                     if (suppressGroupClickRef.current) return
+                                    // 父分组的行主体像文件夹：折叠时点一下=选中+展开，
+                                    // 已选中的再点一下=收起，筛选保持不变。
+                                    // 这样展开/收起都不必去瞄 24px 的小箭头，
+                                    // 也不会出现"点一下就收起"的误触。
+                                    if (hasChildren && group.actualName) {
+                                      if (groupFilter !== group.key) {
+                                        chooseGroup(group)
+                                        expandGroup(group.actualName)
+                                        return
+                                      }
+                                      if (isCollapsed) expandGroup(group.actualName)
+                                      else collapseGroup(group.actualName)
+                                      return
+                                    }
                                     chooseGroup(group)
                                   }}
                                   onKeyDown={(event) => {
@@ -5616,6 +5652,10 @@ export function LibraryScreen({
                                     }
                                     if (event.key === 'ArrowRight') {
                                       event.preventDefault()
+                                      if (hasChildren && isCollapsed && group.actualName) {
+                                        expandGroup(group.actualName)
+                                        return
+                                      }
                                       focusGroupRowControl(
                                         event.currentTarget,
                                         hasChildren
@@ -5640,9 +5680,15 @@ export function LibraryScreen({
                                         )
                                       : hasChildren
                                         ? tr(
-                                            `按“${group.name}”筛选，共 ${displayCount} 个账号`,
-                                            `Filter by “${group.name}”, ${displayCount} accounts in total`,
-                                            `按「${group.name}」篩選，共 ${displayCount} 個帳號`
+                                            `按“${group.name}”筛选，共 ${displayCount} 个账号${
+                                              isCollapsed ? '，点按展开子分组' : '，再点收起子分组'
+                                            }`,
+                                            `Filter by “${group.name}”, ${displayCount} accounts in total${
+                                              isCollapsed ? ', press to expand subgroups' : ', press again to collapse'
+                                            }`,
+                                            `按「${group.name}」篩選，共 ${displayCount} 個帳號${
+                                              isCollapsed ? '，點按展開子分組' : '，再點收合子分組'
+                                            }`
                                           )
                                         : tr(
                                             `${group.name}，${displayCount} 个账号`,

@@ -6,7 +6,7 @@
   "license": "UNLICENSED",
   "private": true,
   "scripts": {
-    "dev": "tauri dev",
+    "dev": "tauri dev --config src-tauri/tauri.dev.conf.json",
     "dev:before": "npm run build:backend && npm run verify:backend && npm run prepare:sidecar && npm run dev:renderer",
     "dev:renderer": "vite --config vite.config.ts",
     "typecheck": "npm run typecheck:tauri",

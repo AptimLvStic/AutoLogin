@@ -630,11 +630,16 @@ export const clipboardSecretInputSchema = z
   })
   .strict()
 
+export const exportPasswordSchema = z
+  .string()
+  .min(8, '导出密码至少需要 8 个字符')
+  .max(256)
+
 export const dataExportInputSchema = z
   .object({
     tabId: idSchema,
     format: z.enum(['autologin', 'csv', 'kdbx']).optional(),
-    password: masterPasswordSchema.optional()
+    password: exportPasswordSchema.optional()
   })
   .strict()
 
@@ -642,6 +647,13 @@ export const csvImportInputSchema = z
   .object({
     mode: z.enum(['current', 'new']),
     tabId: idSchema
+  })
+  .strict()
+
+export const csvSelectionImportSchema = z
+  .object({
+    token: z.string().regex(/^[a-f0-9-]{36}$/),
+    password: z.string().min(1, '请输入导出时设置的密码').max(256).optional()
   })
   .strict()
 

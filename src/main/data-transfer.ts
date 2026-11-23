@@ -13,6 +13,11 @@ import {
 } from 'kdbxweb'
 import { argon2d, argon2id } from 'hash-wasm'
 import {
+  decryptBufferWithPassword,
+  detectEnvelopeFormat,
+  type ExportEnvelopeFormat
+} from './vault'
+import {
   DEFAULT_ACCOUNT_TAB_ID,
   GROUP_PATH_MAX_LENGTH,
   GROUP_PATH_SEPARATOR
@@ -93,8 +98,54 @@ export interface ParsedImport {
 
 let argon2Configured = false
 
-export async function parseCsvImport(path: string): Promise<ParsedImport> {
+export interface CsvFileInspection {
+  encrypted: boolean
+  size: number
+}
+
+export async function inspectCsvFile(path: string): Promise<CsvFileInspection> {
   const buffer = await readBoundedFile(path)
+  return {
+    encrypted: envelopeFormatOfBuffer(buffer) === 'autologin-csv',
+    size: buffer.byteLength
+  }
+}
+
+export async function parseCsvImport(
+  path: string,
+  password?: string
+): Promise<ParsedImport> {
+  const buffer = await readBoundedFile(path)
+  if (envelopeFormatOfBuffer(buffer) === 'autologin-csv') {
+    if (!password) {
+      throw new Error('该 CSV 文件已加密，请输入导出时设置的密码')
+    }
+    let plaintext: Buffer
+    try {
+      plaintext = await decryptBufferWithPassword(
+        buffer.toString('utf8'),
+        password,
+        'autologin-csv'
+      )
+    } catch (error) {
+      if (error instanceof Error && error.message.includes('密码不正确')) {
+        throw new Error('CSV 解密失败：密码不正确或文件已损坏')
+      }
+      throw error
+    }
+    return parseCsvBuffer(plaintext)
+  }
+  return parseCsvBuffer(buffer)
+}
+
+function envelopeFormatOfBuffer(buffer: Buffer): ExportEnvelopeFormat | null {
+  if (buffer.length === 0 || buffer[0] !== 0x7b) {
+    return null
+  }
+  return detectEnvelopeFormat(buffer.subarray(0, 256).toString('utf8'))
+}
+
+function parseCsvBuffer(buffer: Buffer): ParsedImport {
   const text = stripCsvCommentLines(decodeCsvBuffer(buffer))
   let records: Record<string, string>[]
 

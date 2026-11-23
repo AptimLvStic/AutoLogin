@@ -10633,7 +10633,7 @@ body.is-resizing-account-subnav .library-view-layout--accounts {
 
 .account-subnav__group-row.is-drop-inside {
   background: color-mix(in srgb, var(--accent) 9%, transparent);
-  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 30%, transparent);
+  box-shadow: inset 0 0 0 1.5px color-mix(in srgb, var(--accent) 32%, transparent);
 }
 
 .sidebar-child-item {
@@ -22163,14 +22163,14 @@ html[data-color-mode='dark'] .account-workspace .account-tab.is-active {
 }
 
 .account-row:hover .row-more-button,
-.account-row:focus-within .row-more-button,
+.account-row:has(:focus-visible) .row-more-button,
 .account-row .row-more-button:focus-visible {
   opacity: 1;
   pointer-events: auto;
 }
 
 .account-row:hover .row-login-button,
-.account-row:focus-within .row-login-button {
+.account-row:has(:focus-visible) .row-login-button {
   transform: translateX(-34px);
 }
 
@@ -23924,4 +23924,182 @@ html[data-color-mode='light'] .auth-shell .auth-orbit__core {
     display: block;
     animation: auth-halo 6s cubic-bezier(0.4, 0, 0.2, 1) 1.4s infinite both !important;
   }
+}
+
+/* 分组栏交互重构：行主体筛选 / 展开按钮 / 更多菜单 / 拖拽把手 四个独立命中区 */
+.account-workspace .account-subnav__group-row {
+  min-height: 32px;
+  margin: 2px 0;
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.account-workspace .account-subnav__item--group {
+  min-height: 32px;
+  grid-template-columns: minmax(0, 1fr) 34px;
+  gap: 8px;
+  padding-left: calc(26px + var(--group-depth, 0) * 18px);
+  padding-right: 58px;
+  border-radius: 8px;
+}
+
+.account-workspace
+  .account-subnav__group-row--ungrouped
+  .account-subnav__item--group {
+  padding-left: 14px;
+}
+
+.account-subnav__group-row .account-subnav__item--group > small {
+  width: 34px;
+  min-width: 34px;
+  border: 0;
+  background: none;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+
+.account-subnav__group-row .account-subnav__item--group > small.is-total {
+  color: var(--muted-light);
+}
+
+.account-subnav__group-row .account-subnav__item--group.is-active::before {
+  top: 6px;
+  bottom: 6px;
+  width: 2px;
+}
+
+.account-subnav__group-grip {
+  position: absolute;
+  z-index: 3;
+  top: 0;
+  bottom: 0;
+  left: calc(2px + var(--group-depth, 0) * 18px);
+  display: grid;
+  width: 20px;
+  place-items: center;
+  border-radius: 6px;
+  cursor: grab;
+  touch-action: none;
+}
+
+.account-subnav__group-grip:active {
+  cursor: grabbing;
+}
+
+.account-subnav__group-grip-glyph {
+  position: absolute;
+  color: var(--muted-light);
+  font-size: calc(10px * var(--font-scale, 1));
+  letter-spacing: -1px;
+  opacity: 0;
+  transition: opacity 120ms ease;
+  pointer-events: none;
+}
+
+.account-subnav__group-grip:hover .account-subnav__group-dot,
+.account-subnav__group-grip:focus-visible .account-subnav__group-dot {
+  opacity: 0;
+}
+
+.account-subnav__group-grip:hover .account-subnav__group-grip-glyph,
+.account-subnav__group-grip:focus-visible .account-subnav__group-grip-glyph {
+  opacity: 1;
+}
+
+.account-subnav__group-row.is-dragging .account-subnav__group-dot {
+  opacity: 0;
+}
+
+.account-subnav__group-row.is-dragging .account-subnav__group-grip-glyph {
+  opacity: 1;
+}
+
+.account-subnav__group-toggle,
+.account-subnav__group-more {
+  position: absolute;
+  z-index: 3;
+  top: 50%;
+  display: grid;
+  width: 24px;
+  height: 24px;
+  place-items: center;
+  padding: 0;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--muted-light);
+  transform: translateY(-50%);
+  transition:
+    opacity 120ms ease,
+    background 120ms ease,
+    color 120ms ease;
+}
+
+.account-subnav__group-toggle {
+  right: 30px;
+}
+
+.account-subnav__group-more {
+  right: 4px;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.account-subnav__group-row:hover .account-subnav__group-more,
+.account-subnav__group-row:focus-within .account-subnav__group-more,
+.account-subnav__group-more:focus-visible {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.account-subnav__group-toggle:hover,
+.account-subnav__group-more:hover,
+.account-subnav__group-toggle:focus-visible,
+.account-subnav__group-more:focus-visible {
+  background: color-mix(in srgb, var(--accent) 9%, transparent);
+  color: var(--accent-strong);
+}
+
+.account-subnav__group-drag-ghost {
+  position: fixed;
+  z-index: 9999;
+  top: 0;
+  left: 0;
+  padding: 5px 10px;
+  border: 1px solid color-mix(in srgb, var(--accent) 30%, var(--line));
+  border-radius: 8px;
+  background: var(--card);
+  box-shadow: 0 10px 24px rgba(31, 35, 40, 0.18);
+  color: var(--ink);
+  font-size: calc(11px * var(--font-scale, 1));
+  font-weight: 650;
+  opacity: 0.96;
+  pointer-events: none;
+  will-change: transform;
+}
+
+body.is-dragging-group .account-subnav__group-grip,
+body.is-dragging-group .account-subnav__group-grip:active {
+  cursor: grabbing;
+}
+
+/* 分组栏：压缩「全部账号」与「分组」标题之间的空带，分隔线不再撑高。 */
+.account-workspace .account-subnav__view-divider {
+  margin: 0 6px;
+}
+
+.account-workspace .account-subnav__groups-heading {
+  margin-top: 0;
+}
+
+/* 拖放落定后的短暂高亮，提示分组已经移动到位。 */
+.account-subnav__group-row.is-settled .account-subnav__item--group {
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 28%, transparent);
+  transition: background 200ms ease, box-shadow 200ms ease;
+}
+
+/* 未分组行的圆点与其它一级分组对齐（无把手，圆点直接在按钮内）。 */
+.account-subnav__group-row--ungrouped .account-subnav__item--group {
+  padding-left: 9px;
 }

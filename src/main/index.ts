@@ -45,6 +45,7 @@ import {
   changePasswordSchema,
   clipboardSecretInputSchema,
   csvImportInputSchema,
+  csvSelectionImportSchema,
   dataExportInputSchema,
   dataLocationConflictInputSchema,
   embeddedBrowserBoundsSchema,
@@ -106,6 +107,7 @@ import type {
   BookmarkVisitResult,
   CredentialHistoryEntry,
   CredentialHistoryReveal,
+  CsvFileSelection,
   DataImportResult,
   DataExportFormat,
   DataLocationChoiceResult,
@@ -168,6 +170,7 @@ import {
   mergeAutologinSnapshot,
   mergeImportedLogins,
   parseBookmarksImport,
+  inspectCsvFile,
   parseCsvImport,
   parseKdbxImport,
   serializeTabBookmarks,
@@ -224,7 +227,7 @@ import {
   discoverManagedPartitionIds,
   SessionIndex
 } from './session-index'
-import { VaultManager } from './vault'
+import { encryptBufferWithPassword, VaultManager } from './vault'
 
 app.setName('AutoLogin')
 app.setAppUserModelId('com.autologin.desktop')
@@ -283,6 +286,18 @@ const pendingKdbxSelections = new Map<
 const pendingAutologinSelections = new Map<
   string,
   { path: string; fileName: string; size: number; expiresAt: number }
+>()
+const pendingCsvSelections = new Map<
+  string,
+  {
+    path: string
+    fileName: string
+    size: number
+    encrypted: boolean
+    mode: 'current' | 'new'
+    tabId: string
+    expiresAt: number
+  }
 >()
 const pendingDatabaseSelections = new Map<
   string,
@@ -1884,7 +1899,7 @@ function registerIpc(): void {
       kdbx: 'kdbx',
       html: 'html'
     }
-    const defaultName = `${safeFileBaseName(tab.name)}-v${app.getVersion()}-${fileDateStamp()}.${extensions[format]}`
+    const defaultName = `${safeFileBaseName(tab.name)}-${fileDateStamp()}.${extensions[format]}`
     const selection = await dialog.showSaveDialog(mainWindow, {
       title:
         format === 'autologin'
@@ -1903,15 +1918,29 @@ function registerIpc(): void {
     }
 
     if (format === 'autologin') {
-      vault.copyEncryptedTo(selection.filePath)
+      if (!parsed.data.password) {
+        throw new Error('导出 AutoLogin 加密配置需要设置导出密码')
+      }
+      await vault.exportEncryptedTo(selection.filePath, parsed.data.password)
     } else if (format === 'csv') {
-      writeFileSync(selection.filePath, serializeTabCsv(data, tab.id), {
+      if (!parsed.data.password) {
+        throw new Error('导出 CSV 账号需要设置导出密码')
+      }
+      const serialized = await encryptBufferWithPassword(
+        Buffer.from(serializeTabCsv(data, tab.id), 'utf8'),
+        parsed.data.password,
+        'autologin-csv'
+      )
+      writeFileSync(selection.filePath, serialized, {
         encoding: 'utf8',
         mode: 0o600
       })
     } else if (format === 'kdbx') {
       if (!parsed.data.password) {
         throw new Error('导出 KDBX 数据库需要设置数据库主密码')
+      }
+      if (parsed.data.password.length < 10) {
+        throw new Error('数据库主密码至少需要 10 个字符')
       }
       const buffer = await serializeTabKdbx(data, tab.id, parsed.data.password)
       writeFileSync(selection.filePath, Buffer.from(buffer), { mode: 0o600 })
@@ -1963,38 +1992,75 @@ function registerIpc(): void {
     })
     return { canceled: false, fileName: basename(selection.filePath) }
   })
-  ipcMain.handle('data:import-csv', async (event, payload: unknown): Promise<ImportPreview | null> => {
+  ipcMain.handle('data:choose-csv', async (event, payload: unknown): Promise<CsvFileSelection | null> => {
     assertTrustedSender(event)
     const parsedInput = csvImportInputSchema.safeParse(payload)
     if (!parsedInput.success) {
       throw new Error(firstIssue(parsedInput.error))
     }
     if (!mainWindow) return null
+    cleanExpiredCsvSelections()
     const selection = await dialog.showOpenDialog(mainWindow, {
       title: '导入标准 CSV 账号',
       buttonLabel: '导入',
       properties: ['openFile'],
       filters: [{ name: 'CSV 文件', extensions: ['csv'] }]
     })
-    const path = selection.filePaths[0]
-    if (selection.canceled || !path) {
+    const selectedPath = selection.filePaths[0]
+    if (selection.canceled || !selectedPath) {
       return null
     }
+    const path = normalizeSelectedPath(selectedPath)
+    if (!existsSync(path)) {
+      throw new Error('所选 CSV 文件已被移动或删除，请重新选择')
+    }
+    const inspection = await inspectCsvFile(path)
+    const token = randomUUID()
+    pendingCsvSelections.set(token, {
+      path,
+      fileName: basename(path),
+      size: inspection.size,
+      encrypted: inspection.encrypted,
+      mode: parsedInput.data.mode,
+      tabId: parsedInput.data.tabId,
+      expiresAt: Date.now() + 10 * 60 * 1000
+    })
+    return {
+      token,
+      fileName: basename(path),
+      size: inspection.size,
+      encrypted: inspection.encrypted
+    }
+  })
+  ipcMain.handle('data:import-csv', async (event, payload: unknown): Promise<ImportPreview | null> => {
+    assertTrustedSender(event)
+    const parsedInput = csvSelectionImportSchema.safeParse(payload)
+    if (!parsedInput.success) {
+      throw new Error(firstIssue(parsedInput.error))
+    }
+    cleanExpiredCsvSelections()
+    const selection = pendingCsvSelections.get(parsedInput.data.token)
+    if (!selection) {
+      throw new Error('CSV 文件选择已过期，请重新选择文件')
+    }
+    if (selection.encrypted && !parsedInput.data.password) {
+      throw new Error('该 CSV 文件已加密，请输入导出时设置的密码')
+    }
     try {
-      const parsed = await parseCsvImport(path)
-      return stageImportPreview({
+      const parsed = await parseCsvImport(selection.path, parsedInput.data.password)
+      const preview = stageImportPreview({
         parsed,
         source: 'csv',
-        fileName: basename(path),
-        mode: parsedInput.data.mode,
-        currentTabId: parsedInput.data.tabId,
+        fileName: selection.fileName,
+        mode: selection.mode,
+        currentTabId: selection.tabId,
         sourcePath:
-          parsedInput.data.mode === 'new'
-            ? normalizeSelectedPath(path)
-            : undefined
+          selection.mode === 'new' ? normalizeSelectedPath(selection.path) : undefined
       })
+      pendingCsvSelections.delete(parsedInput.data.token)
+      return preview
     } catch (error) {
-      appendImportFailureLog('CSV 账号', basename(path), error)
+      appendImportFailureLog('CSV 账号', selection.fileName, error)
       throw error
     }
   })
@@ -2108,9 +2174,8 @@ function registerIpc(): void {
           }
         }
 
-        pendingDatabaseSelections.delete(parsed.data.token)
         if (selection.kind === 'kdbx') {
-          return stageImportPreview({
+          const preview = stageImportPreview({
             parsed: await parseKdbxImport(
               databasePath,
               parsed.data.password
@@ -2120,6 +2185,8 @@ function registerIpc(): void {
             mode: 'new',
             sourcePath: databasePath
           })
+          pendingDatabaseSelections.delete(parsed.data.token)
+          return preview
         }
         const result = applyAutologinImport(
           await vault.readEncryptedSnapshot(
@@ -2132,6 +2199,7 @@ function registerIpc(): void {
             exactFileName: true
           }
         )
+        pendingDatabaseSelections.delete(parsed.data.token)
         appendImportLog(result, selection.fileName)
         return result
       } catch (error) {
@@ -4462,6 +4530,15 @@ function cleanExpiredKdbxSelections(): void {
   for (const [token, selection] of pendingKdbxSelections) {
     if (selection.expiresAt <= now) {
       pendingKdbxSelections.delete(token)
+    }
+  }
+}
+
+function cleanExpiredCsvSelections(): void {
+  const now = Date.now()
+  for (const [token, selection] of pendingCsvSelections) {
+    if (selection.expiresAt <= now) {
+      pendingCsvSelections.delete(token)
     }
   }
 }

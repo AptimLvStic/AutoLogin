@@ -349,6 +349,7 @@ const api: AutologinApi = {
   data: {
     exportTab: (input) => call('data:export-vault', input),
     exportCsvTemplate: () => call('data:export-csv-template'),
+    chooseCsv: (input) => call('data:choose-csv', input),
     importCsv: (input) => call('data:import-csv', input),
     chooseDatabase: () => call('data:choose-database'),
     importDatabase: (input) => call('data:import-database', input),

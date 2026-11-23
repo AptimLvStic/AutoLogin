@@ -46,8 +46,10 @@ const IV_LENGTH = 12
  */
 const ENVELOPE_SYNC_TIMEOUT_MS = 3_000
 
+export type ExportEnvelopeFormat = 'autologin-vault' | 'autologin-csv'
+
 interface VaultEnvelope {
-  format: 'autologin-vault'
+  format: ExportEnvelopeFormat
   version: 1
   kdf: {
     name: 'argon2id'
@@ -280,6 +282,19 @@ export class VaultManager {
     copyFileSync(this.vaultPath, destination)
   }
 
+  /**
+   * 用调用方指定的密码导出整库快照（与主密码无关），供「数据导出」使用。
+   */
+  async exportEncryptedTo(destination: string, password: string): Promise<void> {
+    const data = this.requireData()
+    const serialized = await encryptBufferWithPassword(
+      Buffer.from(JSON.stringify(data), 'utf8'),
+      password,
+      'autologin-vault'
+    )
+    writeSerializedEnvelope(destination, serialized)
+  }
+
   async readEncryptedSnapshot(path: string, password: string): Promise<VaultData> {
     try {
       const decrypted = await this.decryptFile(path, password)
@@ -370,28 +385,13 @@ export class VaultManager {
   }
 
   private readEnvelope(path: string): VaultEnvelope {
+    let text: string
     try {
-      const parsed = JSON.parse(readFileSync(path, 'utf8')) as Partial<VaultEnvelope>
-      if (
-        parsed.format !== 'autologin-vault' ||
-        parsed.version !== 1 ||
-        parsed.kdf?.name !== 'argon2id' ||
-        parsed.kdf.memoryKiB !== KDF_MEMORY_KIB ||
-        parsed.kdf.iterations !== KDF_ITERATIONS ||
-        parsed.kdf.parallelism !== KDF_PARALLELISM ||
-        parsed.kdf.keyLength !== KEY_LENGTH ||
-        parsed.cipher?.name !== 'aes-256-gcm' ||
-        !isBase64OfLength(parsed.kdf.salt, SALT_LENGTH) ||
-        !isBase64OfLength(parsed.cipher.iv, IV_LENGTH) ||
-        !isBase64OfLength(parsed.cipher.tag, 16) ||
-        !isNonEmptyBase64(parsed.ciphertext)
-      ) {
-        throw new Error('invalid envelope')
-      }
-      return parsed as VaultEnvelope
+      text = readFileSync(path, 'utf8')
     } catch {
       throw new VaultError('保险库文件已损坏或格式不正确', 'CORRUPTED')
     }
+    return parseEnvelope(text, 'autologin-vault')
   }
 
   private writeEncrypted(options?: VaultSaveOptions): void {
@@ -489,31 +489,12 @@ export class VaultManager {
       throw new VaultError('保险库已锁定', 'LOCKED')
     }
 
-    const plaintext = Buffer.from(JSON.stringify(snapshot), 'utf8')
-    const iv = randomBytes(IV_LENGTH)
-    const cipher = createCipheriv('aes-256-gcm', this.key, iv)
-    const ciphertext = Buffer.concat([cipher.update(plaintext), cipher.final()])
-    const tag = cipher.getAuthTag()
-
-    const envelope: VaultEnvelope = {
-      format: 'autologin-vault',
-      version: 1,
-      kdf: {
-        name: 'argon2id',
-        salt: this.salt.toString('base64'),
-        memoryKiB: KDF_MEMORY_KIB,
-        iterations: KDF_ITERATIONS,
-        parallelism: KDF_PARALLELISM,
-        keyLength: KEY_LENGTH
-      },
-      cipher: {
-        name: 'aes-256-gcm',
-        iv: iv.toString('base64'),
-        tag: tag.toString('base64')
-      },
-      ciphertext: ciphertext.toString('base64')
-    }
-    return envelope
+    return buildEnvelopeFromKey(
+      Buffer.from(JSON.stringify(snapshot), 'utf8'),
+      this.key,
+      this.salt,
+      'autologin-vault'
+    )
   }
 
   private scheduleLock(): void {
@@ -569,6 +550,145 @@ async function decryptEnvelope(
   } catch {
     key.fill(0)
     throw new VaultError('主密码不正确或保险库已损坏', 'WRONG_PASSWORD')
+  }
+}
+
+/**
+ * 用任意密码把一个二进制载荷封装成 AutoLogin 信封（argon2id + AES-256-GCM）。
+ * 导出数据库（autologin-vault）与加密 CSV（autologin-csv）共用这套格式。
+ */
+export async function encryptBufferWithPassword(
+  plaintext: Buffer,
+  password: string,
+  format: ExportEnvelopeFormat
+): Promise<string> {
+  const salt = randomBytes(SALT_LENGTH)
+  const key = await deriveKey(password, salt)
+  try {
+    return JSON.stringify(buildEnvelopeFromKey(plaintext, key, salt, format))
+  } finally {
+    key.fill(0)
+  }
+}
+
+export async function decryptBufferWithPassword(
+  serialized: string,
+  password: string,
+  format: ExportEnvelopeFormat
+): Promise<Buffer> {
+  const envelope = parseEnvelope(serialized, format)
+  const salt = Buffer.from(envelope.kdf.salt, 'base64')
+  const key = await deriveKey(password, salt)
+  try {
+    const decipher = createDecipheriv(
+      'aes-256-gcm',
+      key,
+      Buffer.from(envelope.cipher.iv, 'base64')
+    )
+    decipher.setAuthTag(Buffer.from(envelope.cipher.tag, 'base64'))
+    return Buffer.concat([
+      decipher.update(Buffer.from(envelope.ciphertext, 'base64')),
+      decipher.final()
+    ])
+  } catch {
+    throw new VaultError('密码不正确或文件已损坏', 'WRONG_PASSWORD')
+  } finally {
+    key.fill(0)
+  }
+}
+
+/**
+ * 只读文件开头判断是否为加密载荷，避免在「选择文件」阶段就做完整 JSON 解析。
+ */
+export function detectEnvelopeFormat(text: string): ExportEnvelopeFormat | null {
+  const head = text.slice(0, 256)
+  if (!head.startsWith('{') || !head.includes('"format"')) {
+    return null
+  }
+  if (head.includes('"autologin-csv"')) return 'autologin-csv'
+  if (head.includes('"autologin-vault"')) return 'autologin-vault'
+  return null
+}
+
+function buildEnvelopeFromKey(
+  plaintext: Buffer,
+  key: Buffer,
+  salt: Buffer,
+  format: ExportEnvelopeFormat
+): VaultEnvelope {
+  const iv = randomBytes(IV_LENGTH)
+  const cipher = createCipheriv('aes-256-gcm', key, iv)
+  const ciphertext = Buffer.concat([cipher.update(plaintext), cipher.final()])
+  const tag = cipher.getAuthTag()
+
+  return {
+    format,
+    version: 1,
+    kdf: {
+      name: 'argon2id',
+      salt: salt.toString('base64'),
+      memoryKiB: KDF_MEMORY_KIB,
+      iterations: KDF_ITERATIONS,
+      parallelism: KDF_PARALLELISM,
+      keyLength: KEY_LENGTH
+    },
+    cipher: {
+      name: 'aes-256-gcm',
+      iv: iv.toString('base64'),
+      tag: tag.toString('base64')
+    },
+    ciphertext: ciphertext.toString('base64')
+  }
+}
+
+function parseEnvelope(text: string, format: ExportEnvelopeFormat): VaultEnvelope {
+  const label = format === 'autologin-vault' ? '保险库文件' : 'CSV 文件'
+  try {
+    const parsed = JSON.parse(text) as Partial<VaultEnvelope>
+    if (
+      parsed.format !== format ||
+      parsed.version !== 1 ||
+      parsed.kdf?.name !== 'argon2id' ||
+      parsed.kdf.memoryKiB !== KDF_MEMORY_KIB ||
+      parsed.kdf.iterations !== KDF_ITERATIONS ||
+      parsed.kdf.parallelism !== KDF_PARALLELISM ||
+      parsed.kdf.keyLength !== KEY_LENGTH ||
+      parsed.cipher?.name !== 'aes-256-gcm' ||
+      !isBase64OfLength(parsed.kdf.salt, SALT_LENGTH) ||
+      !isBase64OfLength(parsed.cipher.iv, IV_LENGTH) ||
+      !isBase64OfLength(parsed.cipher.tag, 16) ||
+      !isNonEmptyBase64(parsed.ciphertext)
+    ) {
+      throw new Error('invalid envelope')
+    }
+    return parsed as VaultEnvelope
+  } catch {
+    throw new VaultError(`${label}已损坏或格式不正确`, 'CORRUPTED')
+  }
+}
+
+function writeSerializedEnvelope(destination: string, serialized: string): void {
+  const tempPath = `${destination}.${process.pid}.export.tmp`
+  mkdirSync(dirname(destination), { recursive: true })
+  const file = openSync(tempPath, 'w', 0o600)
+  try {
+    writeSync(file, serialized)
+    fsyncSync(file)
+  } finally {
+    closeSync(file)
+  }
+
+  try {
+    renameSync(tempPath, destination)
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException).code
+    if (code === 'EEXIST' || code === 'EPERM') {
+      rmSync(destination, { force: true })
+      renameSync(tempPath, destination)
+    } else {
+      rmSync(tempPath, { force: true })
+      throw error
+    }
   }
 }
 

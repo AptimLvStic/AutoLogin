@@ -1,5 +1,4 @@
 import {
-  Fragment,
   forwardRef,
   useEffect,
   useId,
@@ -17,8 +16,7 @@ import {
   ChevronDown,
   ChevronLeft,
   ChevronRight,
-  ChevronsDown,
-  ChevronsUp,
+  ChevronsUpDown,
   Copy,
   Database,
   FileClock,
@@ -692,6 +690,7 @@ export function LibraryScreen({
     path: string
     position: GroupDropPosition
   } | null>(null)
+  const [settledGroupPath, setSettledGroupPath] = useState<string | null>(null)
   const [groupMenu, setGroupMenu] = useState<{
     group: GroupSummary
     left: number
@@ -835,6 +834,26 @@ export function LibraryScreen({
     () => groups.filter((group) => group.actualName !== null),
     [groups]
   )
+  const groupTotals = useMemo(() => {
+    const totals = new Map<string, number>()
+    for (const group of namedGroups) {
+      const path = group.actualName
+      if (!path) continue
+      let total = 0
+      for (const candidate of namedGroups) {
+        const candidatePath = candidate.actualName
+        if (!candidatePath) continue
+        if (
+          candidatePath === path ||
+          candidatePath.startsWith(`${path}${GROUP_PATH_SEPARATOR}`)
+        ) {
+          total += candidate.count
+        }
+      }
+      totals.set(path, total)
+    }
+    return totals
+  }, [namedGroups])
   const groupsWithChildren = useMemo(
     () =>
       new Set(
@@ -845,6 +864,12 @@ export function LibraryScreen({
           ))
       ),
     [groups, namedGroups]
+  )
+  const allGroupsCollapsed = useMemo(
+    () =>
+      groupsWithChildren.size > 0 &&
+      [...groupsWithChildren].every((path) => collapsedGroupPaths.has(path)),
+    [collapsedGroupPaths, groupsWithChildren]
   )
   const visibleTreeGroups = useMemo(
     () => {
@@ -922,7 +947,14 @@ export function LibraryScreen({
     const query = search.trim().toLocaleLowerCase(language)
     return accounts
       .filter((account) => {
-        if (groupFilter && groupKeyFor(account) !== groupFilter) return false
+        if (groupFilter) {
+          const accountGroup = groupKeyFor(account)
+          const isDirect = accountGroup === groupFilter
+          const isDescendant =
+            groupFilter !== UNGROUPED_KEY &&
+            accountGroup.startsWith(`${groupFilter}${GROUP_PATH_SEPARATOR}`)
+          if (!isDirect && !isDescendant) return false
+        }
         if (!query) return true
         return [
           account.label,
@@ -1963,7 +1995,8 @@ export function LibraryScreen({
 
   function chooseGroup(group: GroupSummary): void {
     setView(view === 'bookmarks' ? 'bookmarks' : 'accounts')
-    setGroupFilter(group.key)
+    // 点当前分组再点一次＝取消筛选，回到“全部账号”。
+    setGroupFilter((current) => (current === group.key ? null : group.key))
     setSearch('')
     setSearchExpanded(false)
     setSelectedIds(new Set())
@@ -1984,12 +2017,6 @@ export function LibraryScreen({
       ''
     setBookmarkTabId(targetId)
     switchView('bookmarks')
-  }
-
-  function chooseGroupFromTree(group: GroupSummary, hasChildren: boolean): void {
-    chooseGroup(group)
-    if (!hasChildren || !group.actualName) return
-    toggleGroupExpanded(group.actualName)
   }
 
   function toggleAccountGroupTree(): void {
@@ -2882,16 +2909,10 @@ export function LibraryScreen({
   }
 
   function beginGroupPointerDrag(
-    event: React.PointerEvent<HTMLDivElement>,
+    event: React.PointerEvent<HTMLElement>,
     group: GroupSummary
   ): void {
     if (event.button !== 0) return
-    if (
-      event.target instanceof Element &&
-      event.target.closest('.account-subnav__add-group')
-    ) {
-      return
-    }
     const dragPath = groupDragPath(group)
     if (!dragPath) return
 
@@ -2906,17 +2927,35 @@ export function LibraryScreen({
       position: GroupDropPosition
     } | null = null
     let latestTargetSignature: string | null = null
+    let hoverExpandTimer: number | null = null
+    let hoverExpandPath: string | null = null
+    let ghost: HTMLDivElement | null = null
+    const clearHoverExpand = (): void => {
+      if (hoverExpandTimer !== null) window.clearTimeout(hoverExpandTimer)
+      hoverExpandTimer = null
+      hoverExpandPath = null
+    }
     const cleanup = (): void => {
       document.removeEventListener('pointermove', onPointerMove)
       document.removeEventListener('pointerup', onPointerUp)
       document.removeEventListener('pointercancel', onPointerCancel)
+      document.removeEventListener('keydown', onKeyDown)
       window.removeEventListener('blur', onPointerCancel)
+      clearHoverExpand()
+      ghost?.remove()
+      ghost = null
       if (sourceRow.hasPointerCapture(pointerId)) {
         sourceRow.releasePointerCapture(pointerId)
       }
       document.body.classList.remove('is-dragging-group')
       if (groupDragCleanupRef.current === cleanup) {
         groupDragCleanupRef.current = null
+      }
+    }
+    const onKeyDown = (keyEvent: KeyboardEvent): void => {
+      if (keyEvent.key === 'Escape') {
+        keyEvent.preventDefault()
+        onPointerCancel()
       }
     }
 
@@ -2930,7 +2969,7 @@ export function LibraryScreen({
       if (moveEvent.pointerId !== pointerId) return
       if (
         !active &&
-        Math.hypot(moveEvent.clientX - startX, moveEvent.clientY - startY) < 6
+        Math.hypot(moveEvent.clientX - startX, moveEvent.clientY - startY) < 4
       ) {
         return
       }
@@ -2940,6 +2979,14 @@ export function LibraryScreen({
         draggedGroupPathRef.current = dragPath
         setDraggedGroupPath(dragPath)
         document.body.classList.add('is-dragging-group')
+        const ghostGroupPath = group.actualName ?? ''
+        const ghostCount = groupsWithChildren.has(ghostGroupPath)
+          ? (groupTotals.get(ghostGroupPath) ?? group.count)
+          : group.count
+        ghost = document.createElement('div')
+        ghost.className = 'account-subnav__group-drag-ghost'
+        ghost.textContent = `${group.name}  ${ghostCount}`
+        document.body.appendChild(ghost)
         try {
           sourceRow.setPointerCapture(pointerId)
         } catch {
@@ -2947,6 +2994,42 @@ export function LibraryScreen({
         }
       }
       moveEvent.preventDefault()
+      if (ghost) {
+        ghost.style.transform = `translate(${moveEvent.clientX + 14}px, ${moveEvent.clientY + 10}px) rotate(-1.5deg)`
+      }
+      const listEl = document.querySelector<HTMLElement>('.account-subnav__group-list')
+      if (listEl) {
+        const listRect = listEl.getBoundingClientRect()
+        const outsideX = Math.max(
+          listRect.left - moveEvent.clientX,
+          moveEvent.clientX - listRect.right,
+          0
+        )
+        const outsideY = Math.max(
+          listRect.top - moveEvent.clientY,
+          moveEvent.clientY - listRect.bottom,
+          0
+        )
+        if (outsideX > 120 || outsideY > 120) {
+          onPointerCancel()
+          return
+        }
+        const scrollRegion =
+          listEl.scrollHeight > listEl.clientHeight
+            ? listEl
+            : listEl.parentElement
+        if (
+          scrollRegion &&
+          scrollRegion.scrollHeight > scrollRegion.clientHeight
+        ) {
+          const scrollRect = scrollRegion.getBoundingClientRect()
+          if (moveEvent.clientY < scrollRect.top + 24) {
+            scrollRegion.scrollTop -= 6
+          } else if (moveEvent.clientY > scrollRect.bottom - 24) {
+            scrollRegion.scrollTop += 6
+          }
+        }
+      }
       const hit = groupAtPointer(moveEvent.clientX, moveEvent.clientY)
       if (!hit) {
         if (latestTarget) {
@@ -2958,8 +3041,41 @@ export function LibraryScreen({
       }
       const rect = hit.row.getBoundingClientRect()
       const offset = (moveEvent.clientY - rect.top) / Math.max(1, rect.height)
+      const targetHasChildren = groupsWithChildren.has(hit.group.actualName ?? '')
       const requested: GroupDropPosition =
-        offset < 0.3 ? 'before' : offset > 0.7 ? 'after' : 'inside'
+        offset < 0.25
+          ? 'before'
+          : offset > 0.75
+            ? 'after'
+            : targetHasChildren
+              ? 'inside'
+              : offset < 0.5
+                ? 'before'
+                : 'after'
+      const targetHoverPath = hit.group.actualName
+      if (
+        targetHasChildren &&
+        targetHoverPath &&
+        collapsedGroupPaths.has(targetHoverPath)
+      ) {
+        const expandPath = targetHoverPath
+        if (hoverExpandPath !== expandPath) {
+          clearHoverExpand()
+          hoverExpandPath = expandPath
+          hoverExpandTimer = window.setTimeout(() => {
+            hoverExpandTimer = null
+            setCollapsedGroupPaths((current) => {
+              if (!current.has(expandPath)) return current
+              const next = new Set(current)
+              next.delete(expandPath)
+              persistCollapsedGroupPaths(next)
+              return next
+            })
+          }, 600)
+        }
+      } else if (hoverExpandTimer !== null) {
+        clearHoverExpand()
+      }
       const position = resolveGroupDropPosition(dragPath, hit.group, requested)
       const targetPath = groupDragPath(hit.group)
       if (!position || !targetPath) {
@@ -2988,7 +3104,19 @@ export function LibraryScreen({
       cleanup()
       clearDragState()
       const target = latestTarget
-      if (target) void moveGroupToTarget(dragPath, target.group, target.position)
+      if (target) {
+        void moveGroupToTarget(dragPath, target.group, target.position).then(
+          (settledPath) => {
+            if (!settledPath) return
+            setSettledGroupPath(settledPath)
+            window.setTimeout(() => {
+              setSettledGroupPath((current) =>
+                current === settledPath ? null : current
+              )
+            }, 260)
+          }
+        )
+      }
       window.setTimeout(() => {
         suppressGroupClickRef.current = false
       }, 0)
@@ -3004,6 +3132,7 @@ export function LibraryScreen({
     document.addEventListener('pointermove', onPointerMove, { passive: false })
     document.addEventListener('pointerup', onPointerUp)
     document.addEventListener('pointercancel', onPointerCancel)
+    document.addEventListener('keydown', onKeyDown)
     window.addEventListener('blur', onPointerCancel)
   }
 
@@ -3068,9 +3197,9 @@ export function LibraryScreen({
     draggedPath: string,
     target: GroupSummary,
     position: GroupDropPosition
-  ): Promise<void> {
+  ): Promise<string | null> {
     const targetPath = groupDragPath(target)
-    if (!targetPath) return
+    if (!targetPath) return null
     const destinationParent =
       position === 'inside'
         ? target.actualName ?? null
@@ -3088,7 +3217,7 @@ export function LibraryScreen({
         destinationParent
       )
       if (!nextSiblings || nextSiblings.join('\u0000') === siblings.join('\u0000')) {
-        return
+        return null
       }
       const nextOrder = groups
         .map(groupDragPath)
@@ -3103,7 +3232,7 @@ export function LibraryScreen({
         siblingIndex += 1
       }
       await saveGroupOrder(nextOrder)
-      return
+      return draggedPath
     }
 
     setGroupActionBusy(true)
@@ -3124,6 +3253,7 @@ export function LibraryScreen({
           `分組已移動到「${destinationParent ?? '第一層分組'}」`
         )
       )
+      return result.toPath
     } catch (error) {
       notify(
         'error',
@@ -3135,10 +3265,11 @@ export function LibraryScreen({
     } finally {
       setGroupActionBusy(false)
     }
+    return null
   }
 
   function openGroupMenu(
-    event: React.MouseEvent<HTMLButtonElement>,
+    event: React.MouseEvent<HTMLElement>,
     group: GroupSummary
   ): void {
     event.preventDefault()
@@ -3164,6 +3295,14 @@ export function LibraryScreen({
       left: Math.max(8, Math.min(rect.right + 6, window.innerWidth - 196)),
       top: Math.max(8, Math.min(rect.top, window.innerHeight - 198))
     })
+  }
+
+  // 方向键在“拖动点 / 分组名 / 展开 / 更多”四个控件之间移动焦点。
+  function focusGroupRowControl(current: HTMLElement, selector: string): void {
+    const target = current
+      .closest('.account-subnav__group-row')
+      ?.querySelector<HTMLElement>(selector)
+    target?.focus()
   }
 
   async function renameSelectedGroup(): Promise<void> {
@@ -3971,22 +4110,6 @@ export function LibraryScreen({
     setDrawer(null)
     void refreshAll()
     notify('success', message)
-  }
-
-  function renderGroupDropSlot(
-    targetPath: string,
-    position: 'before' | 'after'
-  ): React.JSX.Element {
-    return (
-      <div
-        className="account-subnav__drop-slot"
-        data-group-drop-path={targetPath}
-        data-group-drop-position={position}
-        aria-hidden="true"
-      >
-        <span>{tr('松开放到此处', 'Drop here', '鬆開放至此處')}</span>
-      </div>
-    )
   }
 
   return (
@@ -5337,7 +5460,7 @@ export function LibraryScreen({
                       <div className="account-subnav__groups-heading">
                         <span className="account-subnav__groups-heading-label">
                           <span>{tr('分组', 'Groups', '分組')}</span>
-                          <small>{visibleTreeGroups.length}</small>
+                          <small>{namedGroups.length}</small>
                         </span>
                         <div
                           className="account-subnav__groups-heading-actions"
@@ -5346,37 +5469,20 @@ export function LibraryScreen({
                         >
                           <button
                             type="button"
-                            onClick={() => setAllGroupsExpanded(true)}
+                            onClick={() => setAllGroupsExpanded(allGroupsCollapsed)}
                             disabled={groupsWithChildren.size === 0}
-                            aria-label={tr(
-                              '全部展开分组',
-                              'Expand all groups',
-                              '全部展開分組'
-                            )}
-                            title={tr(
-                              '全部展开分组',
-                              'Expand all groups',
-                              '全部展開分組'
-                            )}
+                            aria-label={
+                              allGroupsCollapsed
+                                ? tr('全部展开分组', 'Expand all groups', '全部展開分組')
+                                : tr('全部收缩分组', 'Collapse all groups', '全部收合分組')
+                            }
+                            title={
+                              allGroupsCollapsed
+                                ? tr('全部展开分组', 'Expand all groups', '全部展開分組')
+                                : tr('全部收缩分组', 'Collapse all groups', '全部收合分組')
+                            }
                           >
-                            <ChevronsDown size={14} />
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => setAllGroupsExpanded(false)}
-                            disabled={groupsWithChildren.size === 0}
-                            aria-label={tr(
-                              '全部收缩分组',
-                              'Collapse all groups',
-                              '全部收合分組'
-                            )}
-                            title={tr(
-                              '全部收缩分组',
-                              'Collapse all groups',
-                              '全部收合分組'
-                            )}
-                          >
-                            <ChevronsUp size={14} />
+                            <ChevronsUpDown size={14} />
                           </button>
                         </div>
                       </div>
@@ -5395,141 +5501,244 @@ export function LibraryScreen({
                             const isCollapsed = collapsedGroupPaths.has(
                               group.actualName ?? ''
                             )
+                            const displayCount = hasChildren
+                              ? (groupTotals.get(group.actualName ?? '') ?? group.count)
+                              : group.count
+                            const countLabel =
+                              hasChildren && displayCount === 0 ? '—' : String(displayCount)
                             return (
-                              <Fragment key={group.key}>
-                                {dropPosition === 'before' &&
-                                  renderGroupDropSlot(groupPath, 'before')}
-                                <div
-                                  className={`account-subnav__group-row${
-                                    isUngrouped
-                                      ? ' account-subnav__group-row--ungrouped'
-                                      : ''
-                                  }${
-                                    hasChildren
-                                      ? ' account-subnav__group-row--parent'
-                                      : ''
-                                  }${
-                                    group.level > 1
-                                      ? ' account-subnav__group-row--child'
-                                      : ''
-                                  }${
-                                    dropPosition === 'inside'
-                                      ? ' is-drop-inside'
-                                      : ''
-                                  }${
-                                    draggedGroupPath === groupPath
-                                      ? ' is-dragging'
-                                      : ''
-                                  }`}
-                                  data-group-path={groupPath}
-                                  data-group-level={group.level}
-                                  onPointerDown={(event) =>
-                                    beginGroupPointerDrag(event, group)
-                                  }
-                                  style={
-                                    isUngrouped
-                                      ? undefined
-                                      : ({
-                                          '--group-depth': Math.max(
-                                            0,
-                                            group.level - 1
-                                          )
-                                        } as React.CSSProperties)
-                                  }
-                                >
-                                  <button
-                                    type="button"
-                                    className={`account-subnav__item account-subnav__item--group account-subnav__item--text-only${
-                                      groupFilter === group.key ? ' is-active' : ''
-                                    }`}
-                                    onClick={() => {
-                                      if (suppressGroupClickRef.current) return
-                                      if (isUngrouped) {
-                                        chooseGroup(group)
-                                      } else {
-                                        chooseGroupFromTree(group, hasChildren)
+                              <div
+                                key={group.key}
+                                className={[
+                                  'account-subnav__group-row',
+                                  isUngrouped
+                                    ? 'account-subnav__group-row--ungrouped'
+                                    : '',
+                                  hasChildren
+                                    ? 'account-subnav__group-row--parent has-children'
+                                    : '',
+                                  group.level > 1
+                                    ? 'account-subnav__group-row--child'
+                                    : '',
+                                  groupFilter === group.key ? 'is-active' : '',
+                                  dropPosition ? `is-drop-${dropPosition}` : '',
+                                  draggedGroupPath === groupPath ? 'is-dragging' : '',
+                                  settledGroupPath === groupPath ? 'is-settled' : ''
+                                ]
+                                  .filter(Boolean)
+                                  .join(' ')}
+                                data-group-path={groupPath}
+                                data-group-level={group.level}
+                                data-has-children={hasChildren ? 'true' : undefined}
+                                onContextMenu={
+                                  isUngrouped
+                                    ? undefined
+                                    : (event) => openGroupMenu(event, group)
+                                }
+                                style={
+                                  isUngrouped
+                                    ? undefined
+                                    : ({
+                                        '--group-depth': Math.max(0, group.level - 1)
+                                      } as React.CSSProperties)
+                                }
+                              >
+                                {!isUngrouped && (
+                                  <span
+                                    className="account-subnav__group-grip"
+                                    role="button"
+                                    tabIndex={-1}
+                                    aria-label={tr(
+                                      `拖动“${group.name}”`,
+                                      `Drag “${group.name}”`,
+                                      `拖動「${group.name}」`
+                                    )}
+                                    title={tr(
+                                      '拖动调整分组',
+                                      'Drag to move group',
+                                      '拖動調整分組'
+                                    )}
+                                    onPointerDown={(event) => {
+                                      event.stopPropagation()
+                                      beginGroupPointerDrag(event, group)
+                                    }}
+                                    onKeyDown={(event) => {
+                                      if (event.key === 'ArrowRight') {
+                                        event.preventDefault()
+                                        focusGroupRowControl(
+                                          event.currentTarget,
+                                          '.account-subnav__item--group'
+                                        )
                                       }
                                     }}
-                                    onContextMenu={
-                                      isUngrouped
-                                        ? undefined
-                                        : (event) => openGroupMenu(event, group)
-                                    }
-                                    onKeyDown={
-                                      isUngrouped
-                                        ? undefined
-                                        : (event) =>
-                                            openGroupMenuFromKeyboard(event, group)
-                                    }
-                                    aria-haspopup={isUngrouped ? undefined : 'menu'}
-                                    aria-expanded={
-                                      hasChildren ? !isCollapsed : undefined
-                                    }
-                                    aria-level={group.level}
-                                    aria-label={
-                                      isUngrouped
-                                        ? tr(
-                                            '未分组，无子分组',
-                                            'Ungrouped, no subgroups',
-                                            '未分組，無子分組'
-                                          )
-                                        : hasChildren
-                                          ? isCollapsed
-                                            ? tr(
-                                                `展开“${group.name}”`,
-                                                `Expand “${group.name}”`,
-                                                `展開「${group.name}」`
-                                              )
-                                            : tr(
-                                                `收起“${group.name}”`,
-                                                `Collapse “${group.name}”`,
-                                                `收起「${group.name}」`
-                                              )
-                                          : tr(
-                                              `${group.name}，无子分组`,
-                                              `${group.name}, no subgroups`,
-                                              `${group.name}，無子分組`
-                                            )
-                                    }
-                                    title={group.actualName ?? group.name}
                                   >
-                                    <span className="account-subnav__group-label">
+                                    <span
+                                      className="account-subnav__group-dot"
+                                      style={{
+                                        backgroundColor: groupDotColor(groupPath)
+                                      }}
+                                      aria-hidden="true"
+                                    />
+                                    <span
+                                      className="account-subnav__group-grip-glyph"
+                                      aria-hidden="true"
+                                    >
+                                      ⠿
+                                    </span>
+                                  </span>
+                                )}
+                                <button
+                                  type="button"
+                                  className={`account-subnav__item account-subnav__item--group account-subnav__item--text-only${
+                                    groupFilter === group.key ? ' is-active' : ''
+                                  }`}
+                                  onClick={() => {
+                                    if (suppressGroupClickRef.current) return
+                                    chooseGroup(group)
+                                  }}
+                                  onKeyDown={(event) => {
+                                    if (isUngrouped) return
+                                    if (event.key === 'ArrowLeft') {
+                                      event.preventDefault()
+                                      focusGroupRowControl(
+                                        event.currentTarget,
+                                        '.account-subnav__group-grip'
+                                      )
+                                      return
+                                    }
+                                    if (event.key === 'ArrowRight') {
+                                      event.preventDefault()
+                                      focusGroupRowControl(
+                                        event.currentTarget,
+                                        hasChildren
+                                          ? '.account-subnav__group-toggle'
+                                          : '.account-subnav__group-more'
+                                      )
+                                      return
+                                    }
+                                    openGroupMenuFromKeyboard(event, group)
+                                  }}
+                                  aria-haspopup={isUngrouped ? undefined : 'menu'}
+                                  aria-current={
+                                    groupFilter === group.key ? 'true' : undefined
+                                  }
+                                  aria-level={group.level}
+                                  aria-label={
+                                    isUngrouped
+                                      ? tr(
+                                          `未分组，${displayCount} 个账号`,
+                                          `Ungrouped, ${displayCount} accounts`,
+                                          `未分組，${displayCount} 個帳號`
+                                        )
+                                      : hasChildren
+                                        ? tr(
+                                            `按“${group.name}”筛选，共 ${displayCount} 个账号`,
+                                            `Filter by “${group.name}”, ${displayCount} accounts in total`,
+                                            `按「${group.name}」篩選，共 ${displayCount} 個帳號`
+                                          )
+                                        : tr(
+                                            `${group.name}，${displayCount} 个账号`,
+                                            `${group.name}, ${displayCount} accounts`,
+                                            `${group.name}，${displayCount} 個帳號`
+                                          )
+                                  }
+                                  title={group.actualName ?? group.name}
+                                >
+                                  <span className="account-subnav__group-label">
+                                    {isUngrouped && (
                                       <span
                                         className="account-subnav__group-dot"
-                                        style={{
-                                          backgroundColor: isUngrouped
-                                            ? '#b7b7b1'
-                                            : groupDotColor(groupPath)
-                                        }}
-                                        aria-hidden="true"
-                                      />
-                                      <span className="account-subnav__group-name">
-                                        {group.name}
-                                      </span>
-                                    </span>
-                                    <small>{group.count}</small>
-                                    {hasChildren ? (
-                                      <span
-                                        className="account-subnav__tree-chevron"
-                                        aria-hidden="true"
-                                      >
-                                        {isCollapsed ? (
-                                          <ChevronRight size={14} />
-                                        ) : (
-                                          <ChevronDown size={14} />
-                                        )}
-                                      </span>
-                                    ) : (
-                                      <span
-                                        className="account-subnav__tree-spacer"
+                                        style={{ backgroundColor: '#b7b7b1' }}
                                         aria-hidden="true"
                                       />
                                     )}
+                                    <span className="account-subnav__group-name">
+                                      {group.name}
+                                    </span>
+                                  </span>
+                                  <small className={hasChildren ? 'is-total' : undefined}>
+                                    {countLabel}
+                                  </small>
+                                </button>
+                                {hasChildren && (
+                                  <button
+                                    type="button"
+                                    className="account-subnav__group-toggle"
+                                    tabIndex={-1}
+                                    aria-expanded={!isCollapsed}
+                                    aria-label={
+                                      isCollapsed
+                                        ? tr(
+                                            `展开“${group.name}”`,
+                                            `Expand “${group.name}”`,
+                                            `展開「${group.name}」`
+                                          )
+                                        : tr(
+                                            `收起“${group.name}”`,
+                                            `Collapse “${group.name}”`,
+                                            `收起「${group.name}」`
+                                          )
+                                    }
+                                    title={
+                                      isCollapsed
+                                        ? tr('展开子分组', 'Expand subgroups', '展開子分組')
+                                        : tr('收起子分组', 'Collapse subgroups', '收起子分組')
+                                    }
+                                    onClick={() => {
+                                      if (group.actualName) toggleGroupExpanded(group.actualName)
+                                    }}
+                                    onKeyDown={(event) => {
+                                      if (event.key === 'ArrowLeft') {
+                                        event.preventDefault()
+                                        focusGroupRowControl(
+                                          event.currentTarget,
+                                          '.account-subnav__item--group'
+                                        )
+                                      } else if (event.key === 'ArrowRight') {
+                                        event.preventDefault()
+                                        focusGroupRowControl(
+                                          event.currentTarget,
+                                          '.account-subnav__group-more'
+                                        )
+                                      }
+                                    }}
+                                  >
+                                    {isCollapsed ? (
+                                      <ChevronRight size={14} />
+                                    ) : (
+                                      <ChevronDown size={14} />
+                                    )}
                                   </button>
-                                </div>
-                                {dropPosition === 'after' &&
-                                  renderGroupDropSlot(groupPath, 'after')}
-                              </Fragment>
+                                )}
+                                {!isUngrouped && (
+                                  <button
+                                    type="button"
+                                    className="account-subnav__group-more"
+                                    tabIndex={-1}
+                                    aria-haspopup="menu"
+                                    aria-label={tr(
+                                      `“${group.name}”更多操作`,
+                                      `More actions for “${group.name}”`,
+                                      `「${group.name}」更多操作`
+                                    )}
+                                    title={tr('更多操作', 'More actions', '更多操作')}
+                                    onClick={(event) => openGroupMenu(event, group)}
+                                    onKeyDown={(event) => {
+                                      if (event.key === 'ArrowLeft') {
+                                        event.preventDefault()
+                                        focusGroupRowControl(
+                                          event.currentTarget,
+                                          hasChildren
+                                            ? '.account-subnav__group-toggle'
+                                            : '.account-subnav__item--group'
+                                        )
+                                      }
+                                    }}
+                                  >
+                                    <MoreHorizontal size={14} />
+                                  </button>
+                                )}
+                              </div>
                             )
                           })}
                         </div>

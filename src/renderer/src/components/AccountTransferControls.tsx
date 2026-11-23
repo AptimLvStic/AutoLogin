@@ -14,6 +14,7 @@ import {
 } from 'lucide-react'
 import type {
   AutologinSelection,
+  CsvFileSelection,
   CsvImportMode,
   DataExportFormat,
   DataImportResult,
@@ -63,7 +64,13 @@ export function AccountTransferControls({
   const [autologinBusy, setAutologinBusy] = useState(false)
   const [importPreview, setImportPreview] = useState<ImportPreview | null>(null)
   const [importPreviewBusy, setImportPreviewBusy] = useState(false)
+  const [csvSelection, setCsvSelection] = useState<CsvFileSelection | null>(null)
+  const [csvPassword, setCsvPassword] = useState('')
+  const [csvError, setCsvError] = useState('')
+  const [csvBusy, setCsvBusy] = useState(false)
   const [exportPasswordOpen, setExportPasswordOpen] = useState(false)
+  const [exportPasswordFormat, setExportPasswordFormat] =
+    useState<DataExportFormat>('kdbx')
   const [exportPassword, setExportPassword] = useState('')
   const [exportPasswordConfirm, setExportPasswordConfirm] = useState('')
   const [exportPasswordError, setExportPasswordError] = useState('')
@@ -76,12 +83,14 @@ export function AccountTransferControls({
         importBusy ||
         kdbxBusy ||
         autologinBusy ||
+        csvBusy ||
         Boolean(importPreview) ||
         importPreviewBusy
     )
   }, [
     autologinBusy,
     creatingTab,
+    csvBusy,
     importBusy,
     importPreview,
     importPreviewBusy,
@@ -138,7 +147,18 @@ export function AccountTransferControls({
     setMenuOpen(false)
     setImportBusy(true)
     try {
-      const result = await window.autologin.data.importCsv({ mode, tabId })
+      const selection = await window.autologin.data.chooseCsv({ mode, tabId })
+      if (!selection) {
+        notify('info', tr('已取消导入 CSV', 'CSV import cancelled.', '已取消匯入 CSV'))
+        return
+      }
+      if (selection.encrypted) {
+        setCsvSelection(selection)
+        setCsvPassword('')
+        setCsvError('')
+        return
+      }
+      const result = await window.autologin.data.importCsv({ token: selection.token })
       if (result) setImportPreview(result)
     } catch (error) {
       notify(
@@ -149,6 +169,42 @@ export function AccountTransferControls({
       )
     } finally {
       setImportBusy(false)
+    }
+  }
+
+  async function importCsvWithPassword(event: React.FormEvent): Promise<void> {
+    event.preventDefault()
+    if (!csvSelection) return
+    if (!csvPassword) {
+      setCsvError(
+        tr('请输入导出时设置的密码', 'Enter the password set when exporting.', '請輸入匯出時設定的密碼')
+      )
+      return
+    }
+    if (csvBusy) return
+    const startedAt = Date.now()
+    setCsvBusy(true)
+    setCsvError('')
+    try {
+      const result = await window.autologin.data.importCsv({
+        token: csvSelection.token,
+        password: csvPassword
+      })
+      setCsvSelection(null)
+      setCsvPassword('')
+      if (result) setImportPreview(result)
+    } catch (error) {
+      setCsvError(
+        error instanceof Error
+          ? error.message
+          : tr('导入 CSV 失败', 'Could not import CSV.', '匯入 CSV 失敗')
+      )
+    } finally {
+      const remaining = MIN_DATABASE_IMPORT_FEEDBACK_MS - (Date.now() - startedAt)
+      if (remaining > 0) {
+        await new Promise((resolve) => window.setTimeout(resolve, remaining))
+      }
+      setCsvBusy(false)
     }
   }
 
@@ -244,7 +300,7 @@ export function AccountTransferControls({
     event.preventDefault()
     if (!autologinSelection || !autologinPassword) {
       setAutologinError(
-        tr('请输入配置文件主密码', 'Enter the configuration master password.', '請輸入設定檔主密碼')
+        tr('请输入导出密码', 'Enter the export password.', '請輸入匯出密碼')
       )
       return
     }
@@ -350,21 +406,21 @@ export function AccountTransferControls({
   function beginExport(format: DataExportFormat): void {
     if (exportBusy) return
     setMenuOpen(false)
-    if (format === 'kdbx') {
-      setExportPassword('')
-      setExportPasswordConfirm('')
-      setExportPasswordError('')
-      setExportPasswordOpen(true)
-      return
-    }
-    void exportTab(format).catch(() => undefined)
+    setExportPasswordFormat(format)
+    setExportPassword('')
+    setExportPasswordConfirm('')
+    setExportPasswordError('')
+    setExportPasswordOpen(true)
   }
 
-  async function exportKdbx(event: React.FormEvent): Promise<void> {
+  async function submitExportPassword(event: React.FormEvent): Promise<void> {
     event.preventDefault()
-    if (exportPassword.length < 10) {
+    const minLength = exportPasswordFormat === 'kdbx' ? 10 : 8
+    if (exportPassword.length < minLength) {
       setExportPasswordError(
-        tr('数据库主密码至少需要 10 个字符', 'Use at least 10 characters.', '資料庫主密碼至少需要 10 個字元')
+        exportPasswordFormat === 'kdbx'
+          ? tr('数据库主密码至少需要 10 个字符', 'Use at least 10 characters.', '資料庫主密碼至少需要 10 個字元')
+          : tr('导出密码至少需要 8 个字符', 'Use at least 8 characters.', '匯出密碼至少需要 8 個字元')
       )
       return
     }
@@ -376,7 +432,7 @@ export function AccountTransferControls({
     }
     setExportPasswordError('')
     try {
-      const result = await exportTab('kdbx', exportPassword)
+      const result = await exportTab(exportPasswordFormat, exportPassword)
       if (!result.canceled) setExportPasswordOpen(false)
     } catch {
       // The shared export handler already reports the error.
@@ -688,9 +744,9 @@ export function AccountTransferControls({
       {autologinSelection && (
         <Modal
           title={tr(
-            '输入 AutoLogin 配置主密码',
-            'Enter AutoLogin master password',
-            '輸入 AutoLogin 設定主密碼'
+            '输入 AutoLogin 导出密码',
+            'Enter the AutoLogin export password',
+            '輸入 AutoLogin 匯出密碼'
           )}
           eyebrow={tr(
             'AutoLogin 配置导入',
@@ -723,14 +779,14 @@ export function AccountTransferControls({
             </div>
             <p className="modal-description">
               {tr(
-                '此密码是导出该配置时使用的 AutoLogin 主密码。解密后的账号会导入新的标签页，不会覆盖当前保险库。',
-                'Use the master password that protected the exported file. Imported accounts are added to new tabs without replacing the current vault.',
-                '此密碼是匯出該設定時使用的 AutoLogin 主密碼。解密後的帳號會匯入新標籤頁，不會覆蓋目前保險庫。'
+                '此密码是导出该配置时设置的导出密码，不是当前保险库的主密码。解密后的账号会导入新的标签页，不会覆盖当前保险库。',
+                'Use the export password set when this file was exported, not your current vault master password. Imported accounts are added to new tabs without replacing the current vault.',
+                '此密碼是匯出該設定時設定的匯出密碼，不是目前保險庫的主密碼。解密後的帳號會匯入新標籤頁，不會覆蓋目前保險庫。'
               )}
             </p>
             <label className="field">
               <span className="field__label">
-                {tr('配置主密码', 'Configuration master password', '設定主密碼')}
+                {tr('导出密码', 'Export password', '匯出密碼')}
               </span>
               <span className="input-shell">
                 <KeyRound size={16} />
@@ -759,9 +815,9 @@ export function AccountTransferControls({
                   </strong>
                   <small>
                     {tr(
-                      '正在校验主密码、读取账号与分组，请稍候',
-                      'Verifying the master password and reading accounts and groups. Please wait.',
-                      '正在驗證主密碼、讀取帳號與分組，請稍候'
+                      '正在校验导出密码、读取账号与分组，请稍候',
+                      'Verifying the export password and reading accounts and groups. Please wait.',
+                      '正在驗證匯出密碼、讀取帳號與分組，請稍候'
                     )}
                   </small>
                 </span>
@@ -811,10 +867,123 @@ export function AccountTransferControls({
         />
       )}
 
+      {csvSelection && (
+        <Modal
+          title={tr('输入 CSV 导出密码', 'Enter the CSV export password', '輸入 CSV 匯出密碼')}
+          eyebrow={tr('CSV 加密导入', 'ENCRYPTED CSV IMPORT', 'CSV 加密匯入')}
+          onClose={() => {
+            if (csvBusy) return
+            setCsvSelection(null)
+            setCsvPassword('')
+            setCsvError('')
+          }}
+          width="520px"
+        >
+          <form
+            className="kdbx-password-form"
+            onSubmit={importCsvWithPassword}
+            aria-busy={csvBusy}
+          >
+            <div className="kdbx-file-summary">
+              <span className="kdbx-file-summary__icon">
+                <FileSpreadsheet size={15} />
+              </span>
+              <code title={csvSelection.fileName}>{csvSelection.fileName}</code>
+              <span className="settings-location__badge">
+                {formatBytes(csvSelection.size)}
+              </span>
+            </div>
+            <p className="modal-description">
+              {tr(
+                '该 CSV 文件已加密。请输入导出它时设置的导出密码，而不是当前保险库的主密码。',
+                'This CSV file is encrypted. Enter the export password set when it was exported, not your current vault master password.',
+                '此 CSV 檔案已加密。請輸入匯出它時設定的匯出密碼，而不是目前保險庫的主密碼。'
+              )}
+            </p>
+            <label className="field">
+              <span className="field__label">
+                {tr('导出密码', 'Export password', '匯出密碼')}
+              </span>
+              <span className="input-shell">
+                <KeyRound size={16} />
+                <input
+                  type="password"
+                  value={csvPassword}
+                  onChange={(event) => setCsvPassword(event.target.value)}
+                  data-autofocus
+                  autoComplete="current-password"
+                  disabled={csvBusy}
+                />
+              </span>
+            </label>
+            {csvBusy && (
+              <div className="database-import-progress" role="status" aria-live="polite">
+                <span className="database-import-progress__spinner">
+                  <LoadingSpinner size={18} />
+                </span>
+                <span className="database-import-progress__copy">
+                  <strong>
+                    {tr(
+                      '正在解密并导入 CSV…',
+                      'Decrypting and importing the CSV…',
+                      '正在解密並匯入 CSV…'
+                    )}
+                  </strong>
+                  <small>
+                    {tr(
+                      '正在校验导出密码、读取账号与分组，请稍候',
+                      'Verifying the export password and reading accounts and groups. Please wait.',
+                      '正在驗證匯出密碼、讀取帳號與分組，請稍候'
+                    )}
+                  </small>
+                </span>
+                <span className="database-import-progress__track" aria-hidden="true" />
+              </div>
+            )}
+            {csvError && <p className="form-error">{csvError}</p>}
+            <div className="modal-actions">
+              <button
+                type="button"
+                className="button button--ghost"
+                onClick={() => {
+                  setCsvSelection(null)
+                  setCsvPassword('')
+                  setCsvError('')
+                }}
+                disabled={csvBusy}
+              >
+                {tr('取消', 'Cancel', '取消')}
+              </button>
+              <button
+                type="submit"
+                className={`button button--primary${csvBusy ? ' is-loading' : ''}`}
+                disabled={csvBusy}
+                aria-busy={csvBusy}
+              >
+                {csvBusy ? <LoadingSpinner size={15} /> : <Import size={15} />}
+                {csvBusy
+                  ? tr('正在解密…', 'Decrypting…', '正在解密…')
+                  : tr('解密并导入', 'Decrypt and import', '解密並匯入')}
+              </button>
+            </div>
+          </form>
+        </Modal>
+      )}
+
       {exportPasswordOpen && (
         <Modal
-          title={tr('设置 KDBX 主密码', 'Set a KDBX master password', '設定 KDBX 主密碼')}
-          eyebrow={tr('KDBX 数据库导出', 'KDBX DATABASE EXPORT', 'KDBX 資料庫匯出')}
+          title={
+            exportPasswordFormat === 'kdbx'
+              ? tr('设置 KDBX 主密码', 'Set a KDBX master password', '設定 KDBX 主密碼')
+              : tr('设置导出密码', 'Set an export password', '設定匯出密碼')
+          }
+          eyebrow={
+            exportPasswordFormat === 'kdbx'
+              ? tr('KDBX 数据库导出', 'KDBX DATABASE EXPORT', 'KDBX 資料庫匯出')
+              : exportPasswordFormat === 'autologin'
+                ? tr('AutoLogin 加密导出', 'AUTOLOGIN ENCRYPTED EXPORT', 'AUTOLOGIN 加密匯出')
+                : tr('CSV 加密导出', 'ENCRYPTED CSV EXPORT', 'CSV 加密匯出')
+          }
           onClose={() => {
             if (exportBusy) return
             setExportPasswordOpen(false)
@@ -824,17 +993,25 @@ export function AccountTransferControls({
           }}
           width="520px"
         >
-          <form className="kdbx-password-form" onSubmit={exportKdbx}>
+          <form className="kdbx-password-form" onSubmit={submitExportPassword}>
             <p className="modal-description">
-              {tr(
-                '当前标签页会导出为 KDBX 数据库。请设置该数据库的主密码，密码不会保存到 AutoLogin。',
-                'The current tab will be exported as a KDBX database. Set its master password; AutoLogin does not store it.',
-                '目前標籤頁會匯出為 KDBX 資料庫。請設定該資料庫的主密碼，密碼不會儲存到 AutoLogin。'
-              )}
+              {exportPasswordFormat === 'kdbx'
+                ? tr(
+                    '当前标签页会导出为 KDBX 数据库。请设置该数据库的主密码，密码不会保存到 AutoLogin。',
+                    'The current tab will be exported as a KDBX database. Set its master password; AutoLogin does not store it.',
+                    '目前標籤頁會匯出為 KDBX 資料庫。請設定該資料庫的主密碼，密碼不會儲存到 AutoLogin。'
+                  )
+                : tr(
+                    '请设置一个导出密码。导入此文件时需要输入同一密码；它不会保存到 AutoLogin，也不是当前保险库的主密码。',
+                    'Set an export password. You will need the same password to import this file; AutoLogin does not store it, and it is not your vault master password.',
+                    '請設定一個匯出密碼。匯入此檔案時需要輸入相同密碼；它不會儲存到 AutoLogin，也不是目前保險庫的主密碼。'
+                  )}
             </p>
             <label className="field">
               <span className="field__label">
-                {tr('数据库主密码', 'Database master password', '資料庫主密碼')}
+                {exportPasswordFormat === 'kdbx'
+                  ? tr('数据库主密码', 'Database master password', '資料庫主密碼')
+                  : tr('导出密码', 'Export password', '匯出密碼')}
               </span>
               <span className="input-shell">
                 <KeyRound size={16} />
@@ -849,7 +1026,9 @@ export function AccountTransferControls({
             </label>
             <label className="field">
               <span className="field__label">
-                {tr('确认主密码', 'Confirm master password', '確認主密碼')}
+                {exportPasswordFormat === 'kdbx'
+                  ? tr('确认主密码', 'Confirm master password', '確認主密碼')
+                  : tr('确认导出密码', 'Confirm export password', '確認匯出密碼')}
               </span>
               <span className="input-shell">
                 <LockKeyhole size={16} />
@@ -889,7 +1068,9 @@ export function AccountTransferControls({
                 )}
                 {exportBusy
                   ? tr('正在导出…', 'Exporting…', '正在匯出…')
-                  : tr('导出 KDBX', 'Export KDBX', '匯出 KDBX')}
+                  : exportPasswordFormat === 'kdbx'
+                    ? tr('导出 KDBX', 'Export KDBX', '匯出 KDBX')
+                    : tr('导出', 'Export', '匯出')}
               </button>
             </div>
           </form>

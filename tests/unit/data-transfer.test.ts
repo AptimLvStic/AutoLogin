@@ -11,6 +11,7 @@ import {
 import {
   CSV_TEMPLATE,
   configureKdbxArgon2,
+  inspectCsvFile,
   mergeAutologinSnapshot,
   mergeImportedLogins,
   parseBookmarksImport,
@@ -18,6 +19,7 @@ import {
   parseKdbxImport,
   serializeTabCsv
 } from '../../src/main/data-transfer'
+import { encryptBufferWithPassword } from '../../src/main/vault'
 import { DEFAULT_APP_SETTINGS } from '../../src/shared/theme'
 import type { ImportMissingField, VaultData } from '../../src/shared/types'
 
@@ -100,6 +102,43 @@ describe('data transfer', () => {
     })
     expect(merged.data.accounts.map((account) => account.password)).toEqual(['one', 'two'])
     expect(merged.data.accounts[1]?.favorite).toBe(true)
+  })
+
+  it('round-trips an encrypted CSV with its export password', async () => {
+    const directory = createDirectory()
+    const path = join(directory, 'encrypted.csv')
+    const csv = [
+      'siteName,startUrl,siteGroup,username,password,autoSubmit,favorite',
+      '"Encrypted","https://enc.example/login","私密","person@example.com","plain-secret","true","false"'
+    ].join('\r\n')
+    const sealed = await encryptBufferWithPassword(
+      Buffer.from(csv, 'utf8'),
+      'export-pass-123',
+      'autologin-csv'
+    )
+    writeFileSync(path, sealed, 'utf8')
+
+    expect(sealed).not.toContain('plain-secret')
+    expect(sealed).not.toContain('person@example.com')
+    expect(await inspectCsvFile(path)).toMatchObject({ encrypted: true })
+
+    await expect(parseCsvImport(path)).rejects.toThrow('该 CSV 文件已加密')
+    await expect(parseCsvImport(path, 'wrong-pass-123')).rejects.toThrow('CSV 解密失败')
+
+    const parsed = await parseCsvImport(path, 'export-pass-123')
+    expect(parsed.candidates).toHaveLength(1)
+    expect(parsed.candidates[0]).toMatchObject({
+      username: 'person@example.com',
+      password: 'plain-secret',
+      siteName: 'Encrypted'
+    })
+  })
+
+  it('reports an unencrypted CSV as plaintext', async () => {
+    const directory = createDirectory()
+    const path = join(directory, 'plain.csv')
+    writeFileSync(path, 'siteName,startUrl,siteGroup,username,password,autoSubmit,favorite', 'utf8')
+    expect(await inspectCsvFile(path)).toMatchObject({ encrypted: false })
   })
 
   it('skips duplicate credentials without creating duplicate sites', async () => {

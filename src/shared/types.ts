@@ -796,6 +796,18 @@ export interface CsvImportInput {
   tabId: string
 }
 
+export interface CsvFileSelection {
+  token: string
+  fileName: string
+  size: number
+  encrypted: boolean
+}
+
+export interface CsvImportSelectionInput {
+  token: string
+  password?: string
+}
+
 export interface BackupRecord {
   id: string
   fileName: string
@@ -995,7 +1007,8 @@ export interface AutologinApi {
   data: {
     exportTab: (input: DataExportInput) => Promise<FileOperationResult>
     exportCsvTemplate: () => Promise<FileOperationResult>
-    importCsv: (input: CsvImportInput) => Promise<ImportPreview | null>
+    chooseCsv: (input: CsvImportInput) => Promise<CsvFileSelection | null>
+    importCsv: (input: CsvImportSelectionInput) => Promise<ImportPreview | null>
     chooseDatabase: () => Promise<LocalDatabaseOpenSelection | null>
     importDatabase: (
       input: LocalDatabaseImportInput

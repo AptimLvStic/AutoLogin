@@ -5,8 +5,8 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/AptimLvStic/AutoLogin/releases/tag/v1.0.3">
-    <img alt="Version" src="https://img.shields.io/badge/version-1.0.3-5457E5" />
+  <a href="https://github.com/AptimLvStic/AutoLogin/releases/tag/v1.0.5">
+    <img alt="Version" src="https://img.shields.io/badge/version-1.0.5-5457E5" />
   </a>
   <img alt="Platform" src="https://img.shields.io/badge/platform-Windows%2010%2F11-0078D4" />
   <img alt="Tauri" src="https://img.shields.io/badge/Tauri-2-24C8DB" />
@@ -14,7 +14,7 @@
 
 AutoLogin 是一款面向 Windows 10/11 x64 的本地优先登录工作台。它不只保存密码，还会记住你在某个站点上的完整登录流程，下次点一下即可重放。
 
-当前版本为 `1.0.3`。桌面外壳使用 Tauri 2，账号、密码、配置、书签和日志都保存在本机；没有 AutoLogin 云账号、云同步或遥测。软件不会绕过验证码、短信验证、二次验证或网站风控。
+当前版本为 `1.0.5`。桌面外壳使用 Tauri 2，账号、密码、配置、书签和日志都保存在本机；没有 AutoLogin 云账号、云同步或遥测。软件不会绕过验证码、短信验证、二次验证或网站风控。
 
 ## 为什么还要一个密码管理器
 
@@ -67,7 +67,7 @@ AutoLogin 的做法是：把一次成功的登录过程完整演一遍，记录�
 
 为兼容使用 IP 地址、自签名证书或私有 CA 的内网站点，AutoLogin 启动的受管 Chromium 会忽略证书链错误。该设置不修改系统浏览器或其他浏览器窗口，但会降低受管会话对中间人攻击的防护，请仅在可信网络中使用。
 
-> **CSV 是明文格式。** 导出的 CSV 包含账号和密码明文；导入的原始 CSV 也由用户自行保管。AutoLogin 只把解析后的记录写入加密保险库，不会把 CSV 原文件加密。
+> **CSV 导出默认加密。** 导出 CSV 时会要求设置一个独立密码，并写出 `autologin-csv` 加密信封；导入时需输入该密码。旧版未加密的 CSV 仍可直接导入，导入后只把记录写入加密保险库，不会保留原 CSV 文件。
 
 更完整的数据处理说明见 [PRIVACY.md](PRIVACY.md)。
 
@@ -94,8 +94,8 @@ AutoLogin 提供内置浏览器和独立浏览器两种启动方式，默认使�
 
 ## 下载安装
 
-- 最新版本：[AutoLogin v1.0.3](https://github.com/AptimLvStic/AutoLogin/releases/tag/v1.0.3)
-- 当前安装包：`AutoLogin_1.0.3_x64-setup.exe`
+- 最新版本：[AutoLogin v1.0.5](https://github.com/AptimLvStic/AutoLogin/releases/tag/v1.0.5)
+- 当前安装包：`AutoLogin_1.0.5_x64-setup.exe`
 - 安装包尚未配置 Authenticode 代码签名，Windows SmartScreen 可能显示“未知发布者”提示。
 
 首次启动会要求创建主密码。主密码无法找回，也没有后门；忘记后只能清除本机数据并重新创建保险库。

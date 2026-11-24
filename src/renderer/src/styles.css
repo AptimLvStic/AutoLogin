@@ -879,6 +879,11 @@ p {
   padding-top: 4px;
 }
 
+.confirm-dialog {
+  /* 短确认框不需要常驻滚动条槽，否则右侧会多出一条 17px 的"假边距"。 */
+  scrollbar-gutter: auto;
+}
+
 .confirm-dialog .modal-actions {
   padding: 24px 28px 28px;
 }

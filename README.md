@@ -5,8 +5,8 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/AptimLvStic/AutoLogin/releases/tag/v1.0.7">
-    <img alt="Version" src="https://img.shields.io/badge/version-1.0.7-5457E5" />
+  <a href="https://github.com/AptimLvStic/AutoLogin/releases/tag/v1.0.8">
+    <img alt="Version" src="https://img.shields.io/badge/version-1.0.8-5457E5" />
   </a>
   <img alt="Platform" src="https://img.shields.io/badge/platform-Windows%2010%2F11-0078D4" />
   <img alt="Tauri" src="https://img.shields.io/badge/Tauri-2-24C8DB" />
@@ -14,7 +14,7 @@
 
 AutoLogin 是一款面向 Windows 10/11 x64 的本地优先登录工作台。它不只保存密码，还会记住你在某个站点上的完整登录流程，下次点一下即可重放。
 
-当前版本为 `1.0.7`。桌面外壳使用 Tauri 2，账号、密码、配置、书签和日志都保存在本机；没有 AutoLogin 云账号、云同步或遥测。软件不会绕过验证码、短信验证、二次验证或网站风控。
+当前版本为 `1.0.8`。桌面外壳使用 Tauri 2，账号、密码、配置、书签和日志都保存在本机；没有 AutoLogin 云账号、云同步或遥测。软件不会绕过验证码、短信验证、二次验证或网站风控。
 
 ## 为什么还要一个密码管理器
 
@@ -94,8 +94,8 @@ AutoLogin 提供内置浏览器和独立浏览器两种启动方式，默认使�
 
 ## 下载安装
 
-- 最新版本：[AutoLogin v1.0.7](https://github.com/AptimLvStic/AutoLogin/releases/tag/v1.0.7)
-- 当前安装包：`AutoLogin_1.0.7_x64-setup.exe`
+- 最新版本：[AutoLogin v1.0.8](https://github.com/AptimLvStic/AutoLogin/releases/tag/v1.0.8)
+- 当前安装包：`AutoLogin_1.0.8_x64-setup.exe`
 - 安装包尚未配置 Authenticode 代码签名，Windows SmartScreen 可能显示“未知发布者”提示。
 
 首次启动会要求创建主密码。主密码无法找回，也没有后门；忘记后只能清除本机数据并重新创建保险库。

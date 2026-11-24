@@ -127,9 +127,9 @@ export function LoginLogsPage({
       {
         key: 'action',
         label: tr('操作', 'Action', '操作'),
-        track: '44px',
-        defaultWidth: 44,
-        minWidth: 40,
+        track: '72px',
+        defaultWidth: 72,
+        minWidth: 72,
         hideable: false
       }
     ],

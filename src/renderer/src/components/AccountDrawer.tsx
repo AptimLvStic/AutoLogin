@@ -2719,6 +2719,7 @@ export function AccountDrawer({
             '放棄未儲存的變更？'
           )}
           width="460px"
+          className="confirm-dialog"
           onClose={() => setDiscardConfirmOpen(false)}
         >
           <p className="modal-description">

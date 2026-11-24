@@ -1,4 +1,11 @@
-import { FormEvent, useEffect, useRef, useState, WheelEvent } from 'react'
+import {
+  FormEvent,
+  KeyboardEvent as ReactKeyboardEvent,
+  useEffect,
+  useRef,
+  useState,
+  WheelEvent
+} from 'react'
 import type { CSSProperties } from 'react'
 import {
   ArrowLeft,
@@ -13,7 +20,7 @@ import {
   UserRound,
   X
 } from 'lucide-react'
-import type { EmbeddedBrowserTab } from '@shared/types'
+import type { AccountWithSite, EmbeddedBrowserTab } from '@shared/types'
 import { useI18n } from '../i18n'
 import { embeddedBrowserBounds } from '../native-browser-bounds'
 import { ConfirmDialog } from './Modal'
@@ -112,6 +119,9 @@ export function BrowserWorkspace({
   const [navigating, setNavigating] = useState(false)
   const [refreshing, setRefreshing] = useState(false)
   const [copiedField, setCopiedField] = useState<'username' | 'password' | null>(null)
+  const [accounts, setAccounts] = useState<AccountWithSite[]>([])
+  const [selectedAccountId, setSelectedAccountId] = useState('')
+  const [accountMenuOpen, setAccountMenuOpen] = useState(false)
   const [overflowOpen, setOverflowOpen] = useState(false)
   const [hasTabOverflow, setHasTabOverflow] = useState(false)
   const [goingBack, setGoingBack] = useState(false)
@@ -120,6 +130,8 @@ export function BrowserWorkspace({
   const tabsRef = useRef<HTMLDivElement>(null)
   const viewportRef = useRef<HTMLDivElement>(null)
   const viewportWrapRef = useRef<HTMLDivElement>(null)
+  const accountMenuRef = useRef<HTMLDivElement>(null)
+  const accountTriggerRef = useRef<HTMLButtonElement>(null)
   const addressInputRef = useRef<HTMLInputElement>(null)
   const overflowRef = useRef<HTMLDivElement>(null)
   const overviewRef = useRef<HTMLDivElement>(null)
@@ -127,6 +139,16 @@ export function BrowserWorkspace({
   const newTabDraftRef = useRef(false)
   const activeBeforeDraftRef = useRef('')
   const active = tabs.find((tab) => tab.label === activeLabel) ?? null
+  const siteAccounts = active
+    ? accounts.filter((item) => item.siteId === active.siteId)
+    : []
+  const currentAccountId = siteAccounts.some((item) => item.id === selectedAccountId)
+    ? selectedAccountId
+    : active?.accountId ?? ''
+  const currentAccount =
+    siteAccounts.find((item) => item.id === currentAccountId) ?? null
+  const currentAccountLabel =
+    currentAccount?.label || active?.accountLabel || ''
   const density = tabDensity(tabs.length)
   // 没有任何标签时不要留一条空标签栏，把「新建标签页」并进工具栏。
   const showTabsBar = tabs.length > 0 || newTabDraft || loadingTabs
@@ -208,6 +230,45 @@ export function BrowserWorkspace({
     if (document.activeElement === addressInputRef.current) return
     setAddress(active?.url ?? '')
   }, [active?.label, active?.url])
+
+  // 同一站点可能有多个账号：进入标签页或切换站点时重新取一次，供地址栏右侧选择。
+  useEffect(() => {
+    let cancelled = false
+    const load = window.autologin.accounts?.list
+    if (!load) return
+    void load()
+      .then((next) => {
+        if (!cancelled) setAccounts(next)
+      })
+      .catch(() => undefined)
+    return () => {
+      cancelled = true
+    }
+  }, [active?.siteId])
+
+  useEffect(() => {
+    setSelectedAccountId('')
+    setAccountMenuOpen(false)
+  }, [active?.label, active?.accountId])
+
+  useEffect(() => {
+    if (!accountMenuOpen) return
+    const frame = window.requestAnimationFrame(() => {
+      accountMenuRef.current
+        ?.querySelector<HTMLButtonElement>('[role="option"][aria-selected="true"]')
+        ?.focus()
+    })
+    const handlePointerDown = (event: PointerEvent): void => {
+      if (!accountMenuRef.current?.contains(event.target as Node)) {
+        setAccountMenuOpen(false)
+      }
+    }
+    document.addEventListener('pointerdown', handlePointerDown)
+    return () => {
+      window.cancelAnimationFrame(frame)
+      document.removeEventListener('pointerdown', handlePointerDown)
+    }
+  }, [accountMenuOpen])
 
   useEffect(() => {
     if (!newTabDraft) return
@@ -448,10 +509,53 @@ export function BrowserWorkspace({
     ).finally(() => setClosingAll(false))
   }
 
+  function chooseAccount(accountId: string): void {
+    setSelectedAccountId(accountId)
+    setAccountMenuOpen(false)
+    window.requestAnimationFrame(() => accountTriggerRef.current?.focus())
+  }
+
+  function handleAccountMenuKeyDown(event: ReactKeyboardEvent<HTMLDivElement>): void {
+    const options = Array.from(
+      accountMenuRef.current?.querySelectorAll<HTMLButtonElement>('[role="option"]') ?? []
+    )
+    if (event.key === 'Escape') {
+      event.preventDefault()
+      setAccountMenuOpen(false)
+      accountTriggerRef.current?.focus()
+      return
+    }
+    if (event.key === 'Tab') {
+      setAccountMenuOpen(false)
+      return
+    }
+    if (event.key === 'Enter' || event.key === ' ') {
+      const option = (document.activeElement as HTMLElement | null)?.closest<HTMLElement>(
+        '[role="option"]'
+      )
+      const accountId = option?.dataset.accountId
+      if (accountId) {
+        event.preventDefault()
+        chooseAccount(accountId)
+      }
+      return
+    }
+    if (event.key !== 'ArrowDown' && event.key !== 'ArrowUp' && event.key !== 'Home' && event.key !== 'End') {
+      return
+    }
+    event.preventDefault()
+    const current = options.findIndex((option) => option === document.activeElement)
+    let next = 0
+    if (event.key === 'End') next = options.length - 1
+    else if (event.key === 'ArrowUp') next = current <= 0 ? options.length - 1 : current - 1
+    else if (event.key === 'ArrowDown') next = current < 0 || current === options.length - 1 ? 0 : current + 1
+    options[next]?.focus()
+  }
+
   async function copyUsername(): Promise<void> {
-    if (!active) return
+    if (!currentAccountId) return
     try {
-      await window.autologin.accounts.copyUsername(active.accountId)
+      await window.autologin.accounts.copyUsername(currentAccountId)
       showCopyFeedback('username')
       notify('success', tr('用户名已复制', 'Username copied.', '使用者名稱已複製'))
     } catch (error) {
@@ -465,9 +569,9 @@ export function BrowserWorkspace({
   }
 
   async function copyPassword(): Promise<void> {
-    if (!active) return
+    if (!currentAccountId) return
     try {
-      await window.autologin.accounts.copy(active.accountId)
+      await window.autologin.accounts.copy(currentAccountId)
       showCopyFeedback('password')
       notify('success', tr('密码已复制', 'Password copied.', '密碼已複製'))
     } catch (error) {
@@ -725,6 +829,95 @@ export function BrowserWorkspace({
           />
           {navigating && <LoaderCircle size={14} className="spin" />}
         </form>
+        {active && currentAccountLabel && (
+          <div
+            className="browser-workspace__current-account"
+            title={tr(
+              `当前账号：${currentAccountLabel}${
+                currentAccount?.username ? ` · ${currentAccount.username}` : ''
+              }`,
+              `Current account: ${currentAccountLabel}${
+                currentAccount?.username ? ` · ${currentAccount.username}` : ''
+              }`,
+              `目前帳號：${currentAccountLabel}${
+                currentAccount?.username ? ` · ${currentAccount.username}` : ''
+              }`
+            )}
+          >
+            <span className="browser-workspace__current-account-label">
+              {tr('当前账号', 'Current account', '目前帳號')}
+            </span>
+            {siteAccounts.length > 1 ? (
+              <div className="browser-workspace__account-select" ref={accountMenuRef}>
+                <button
+                  ref={accountTriggerRef}
+                  type="button"
+                  className="browser-workspace__account-trigger"
+                  aria-haspopup="listbox"
+                  aria-expanded={accountMenuOpen}
+                  aria-label={tr(
+                    '选择要复制凭据的账号',
+                    'Choose the account to copy credentials from',
+                    '選擇要複製憑證的帳號'
+                  )}
+                  onClick={() => setAccountMenuOpen((current) => !current)}
+                  onKeyDown={(event) => {
+                    if (
+                      event.key === 'ArrowDown' ||
+                      event.key === 'ArrowUp' ||
+                      event.key === 'Enter' ||
+                      event.key === ' '
+                    ) {
+                      event.preventDefault()
+                      setAccountMenuOpen(true)
+                    }
+                  }}
+                >
+                  <span>
+                    {currentAccountLabel}
+                    {currentAccount?.username ? ` · ${currentAccount.username}` : ''}
+                  </span>
+                  <ChevronDown size={12} aria-hidden="true" />
+                </button>
+                {accountMenuOpen && (
+                  <div
+                    className="browser-workspace__account-menu"
+                    role="listbox"
+                    aria-label={tr('选择账号', 'Choose account', '選擇帳號')}
+                    onKeyDown={handleAccountMenuKeyDown}
+                  >
+                    {siteAccounts.map((item) => {
+                      const selected = item.id === currentAccountId
+                      return (
+                        <button
+                          type="button"
+                          role="option"
+                          data-account-id={item.id}
+                          aria-selected={selected}
+                          tabIndex={selected ? 0 : -1}
+                          className={`browser-workspace__account-option${
+                            selected ? ' is-selected' : ''
+                          }`}
+                          key={item.id}
+                          onClick={() => chooseAccount(item.id)}
+                          title={`${item.label}${item.username ? ` · ${item.username}` : ''}`}
+                        >
+                          <span>
+                            {item.label}
+                            {item.username ? ` · ${item.username}` : ''}
+                          </span>
+                          {selected && <Check size={13} aria-hidden="true" />}
+                        </button>
+                      )
+                    })}
+                  </div>
+                )}
+              </div>
+            ) : (
+              <strong>{currentAccountLabel}</strong>
+            )}
+          </div>
+        )}
         {!showTabsBar && (
           <button
             type="button"
@@ -780,7 +973,12 @@ export function BrowserWorkspace({
         )}
       </div>
 
-      <div ref={viewportWrapRef} className="browser-workspace__viewport-wrap">
+      <div
+        ref={viewportWrapRef}
+        className={`browser-workspace__viewport-wrap${
+          accountMenuOpen && active ? ' is-account-menu-open' : ''
+        }`}
+      >
         {overflowOpen && tabs.length > 1 ? (
           <div
             ref={overviewRef}

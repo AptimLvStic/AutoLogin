@@ -18511,6 +18511,8 @@ html[data-color-mode='dark'] .browser-workspace__tab.is-active {
 }
 
 .browser-workspace__bar {
+  position: relative;
+  z-index: 6;
   display: flex;
   min-height: 48px;
   align-items: center;
@@ -18577,10 +18579,242 @@ html[data-color-mode='dark'] .browser-workspace__tab.is-active {
   gap: 6px;
 }
 
+/* 设置保存模型：即时保存的行尾状态点，以及明确需要点击保存的标记。 */
+.setting-save-state {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 5px;
+  color: var(--muted);
+  font-size: calc(10px * var(--font-scale, 1));
+  white-space: nowrap;
+}
+
+.setting-save-state i {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: currentColor;
+}
+
+.setting-save-state.is-saving i {
+  animation: setting-save-pulse 900ms ease-in-out infinite;
+}
+
+.setting-save-state.is-saved {
+  color: var(--success);
+}
+
+.setting-save-state.is-error {
+  color: var(--danger);
+}
+
+@keyframes setting-save-pulse {
+  50% {
+    opacity: 0.35;
+  }
+}
+
+.settings-card__save-scope {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 8px;
+  margin-left: auto;
+}
+
+.settings-card__heading > .setting-save-state {
+  margin-left: auto;
+}
+
+.settings-save-requirement {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  height: 19px;
+  padding: 0 7px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--ink) 4%, transparent);
+  color: var(--muted);
+  font-size: calc(9.5px * var(--font-scale, 1));
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.settings-save-requirement.is-dirty {
+  border-color: color-mix(in srgb, var(--accent) 32%, var(--line));
+  background: color-mix(in srgb, var(--accent) 9%, transparent);
+  color: var(--accent-strong);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .setting-save-state.is-saving i {
+    animation: none;
+  }
+}
+
+/* 地址栏右侧：当前账号。同一站点有多个账号时可下拉切换，复制按钮跟随所选账号。 */
+.browser-workspace__current-account {
+  position: relative;
+  display: flex;
+  min-width: 0;
+  max-width: 250px;
+  flex: 0 1 auto;
+  align-items: center;
+  gap: 6px;
+  height: 32px;
+  padding: 0 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface);
+  font-size: calc(11px * var(--font-scale, 1));
+}
+
+.browser-workspace__current-account-label {
+  flex: 0 0 auto;
+  color: var(--muted);
+  font-size: calc(10px * var(--font-scale, 1));
+  letter-spacing: 0.02em;
+  white-space: nowrap;
+}
+
+.browser-workspace__current-account strong {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--ink);
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.browser-workspace__account-select {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+}
+
+.browser-workspace__account-trigger {
+  display: flex;
+  min-width: 0;
+  max-width: 168px;
+  align-items: center;
+  gap: 4px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--ink);
+  cursor: pointer;
+  font: inherit;
+  font-weight: 600;
+  text-align: left;
+}
+
+.browser-workspace__account-trigger > span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.browser-workspace__account-trigger > svg {
+  flex: 0 0 auto;
+  color: var(--muted);
+  transition: transform 0.16s ease;
+}
+
+.browser-workspace__account-trigger[aria-expanded='true'] > svg {
+  transform: rotate(180deg);
+}
+
+.browser-workspace__account-trigger:focus-visible {
+  outline: none;
+}
+
+.browser-workspace__account-menu {
+  position: absolute;
+  top: calc(100% + 7px);
+  right: 0;
+  left: 0;
+  z-index: 70;
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 2px;
+  padding: 5px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--surface);
+  box-shadow: var(--shadow-md);
+}
+
+.browser-workspace__account-option {
+  display: flex;
+  width: 100%;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 8px;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--ink);
+  cursor: pointer;
+  font: inherit;
+  text-align: left;
+}
+
+.browser-workspace__account-option > span {
+  min-width: 0;
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.browser-workspace__account-option > svg {
+  flex: 0 0 auto;
+  color: var(--accent-strong);
+}
+
+.browser-workspace__account-option:hover,
+.browser-workspace__account-option:focus-visible {
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
+  outline: none;
+}
+
+.browser-workspace__account-option.is-selected {
+  background: color-mix(in srgb, var(--accent) 8%, transparent);
+  color: var(--accent-strong);
+  font-weight: 600;
+}
+
+.browser-workspace__account-select:focus-within {
+  border-radius: 5px;
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 28%, transparent);
+}
+
+@media (max-width: 1220px) {
+  .browser-workspace__current-account-label {
+    display: none;
+  }
+
+  .browser-workspace__current-account {
+    max-width: 180px;
+  }
+
+  .browser-workspace__account-trigger {
+    max-width: 160px;
+  }
+}
+
 .browser-workspace__icon-button.is-copied {
   border-color: color-mix(in srgb, var(--success) 28%, var(--line));
   background: color-mix(in srgb, var(--success) 9%, var(--card));
   color: var(--success);
+}
+
+.browser-workspace__viewport-wrap.is-account-menu-open {
+  padding-top: 88px;
 }
 
 .browser-workspace__viewport-wrap {
@@ -24126,24 +24360,33 @@ body.is-dragging-group .account-subnav__group-grip:active {
   padding-left: 9px;
 }
 
-/* 2026-11-23 分组行：展开箭头热区放大、hover 变深，
-   配合"点折叠的父分组行即展开"，不再需要瞄准 24px 的小箭头。 */
+/* 2026-11-24 分组行：箭头不再自带底色壳。
+   整行可点展开，箭头只需 24×24 命中区；hover 只换图标颜色，
+   行 hover 与图标 hover 都不再铺灰底/紫底。 */
 .account-subnav__group-toggle {
-  right: 28px;
-  width: 28px;
-  height: 28px;
+  right: 32px;
+  width: 24px;
+  height: 24px;
   border-radius: 7px;
 }
 
 .account-subnav__group-row:hover .account-subnav__group-toggle {
   color: var(--ink-soft);
-  background: color-mix(in srgb, var(--ink) 5%, transparent);
+  background: transparent;
 }
 
-.account-subnav__group-toggle:hover,
-.account-subnav__group-toggle:focus-visible {
+.account-subnav__group-row .account-subnav__group-toggle:hover,
+.account-subnav__group-row .account-subnav__group-toggle:focus-visible,
+.account-subnav__group-row .account-subnav__group-more:hover,
+.account-subnav__group-row .account-subnav__group-more:focus-visible {
   color: var(--accent-strong);
-  background: color-mix(in srgb, var(--accent) 10%, transparent);
+  background: transparent;
+}
+
+.account-subnav__group-toggle:focus-visible,
+.account-subnav__group-more:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
 }
 
 /* 折叠状态下箭头更实一点，提示"这里还有内容" */
@@ -24154,3 +24397,92 @@ body.is-dragging-group .account-subnav__group-grip:active {
 .account-subnav__group-more {
   right: 2px;
 }
+
+/* 2026-11-24 表头常驻列设置齿轮：右键菜单保留，齿轮提供可见入口。 */
+.table-column-settings {
+  display: inline-flex;
+  flex: 0 0 auto;
+  width: 20px;
+  height: 20px;
+  align-items: center;
+  justify-content: center;
+  margin-left: 6px;
+  padding: 0;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--muted-light);
+  opacity: 0.62;
+  cursor: pointer;
+  transition:
+    color 140ms ease,
+    background 140ms ease,
+    opacity 140ms ease;
+}
+
+.table-column-settings:hover,
+.table-column-settings:focus-visible {
+  opacity: 1;
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
+  color: var(--accent-strong);
+  outline: none;
+}
+
+.account-list__header .account-column-settings {
+  margin-right: 2px;
+  margin-left: auto;
+}
+
+
+/* 2026-11-24 账号抽屉：必填/选填标签与字段级就地校验。 */
+.field__badge {
+  display: inline-flex;
+  height: 16px;
+  align-items: center;
+  margin-left: 6px;
+  padding: 0 5px;
+  border-radius: 4px;
+  background: color-mix(in srgb, var(--ink) 6%, transparent);
+  color: var(--muted);
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0;
+  line-height: 1;
+  vertical-align: middle;
+}
+
+.field__badge.is-required {
+  background: color-mix(in srgb, var(--danger) 10%, transparent);
+  color: var(--danger);
+}
+
+.field.is-invalid .input-shell {
+  border-color: var(--danger);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--danger) 12%, transparent);
+}
+
+.field__error {
+  margin: 6px 0 0;
+  color: var(--danger);
+  font-size: 11px;
+  line-height: 1.5;
+}
+
+/* 抽屉的字段是两列网格：标签放在左列，错误提示必须跟输入框同列。 */
+.account-editor-page .field__label {
+  flex-direction: row;
+  flex-wrap: wrap;
+  align-content: center;
+  justify-content: flex-end;
+}
+
+.account-editor-page .field__label small {
+  flex-basis: 100%;
+}
+
+.account-editor-page .field__error {
+  grid-column: 2;
+  margin-top: 1px;
+  text-align: left;
+}
+

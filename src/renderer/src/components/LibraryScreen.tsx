@@ -1909,6 +1909,25 @@ export function LibraryScreen({
     setColumnMenuOpen(true)
   }
 
+  function openColumnMenuFromButton(event: React.MouseEvent<HTMLElement>): void {
+    event.preventDefault()
+    event.stopPropagation()
+    const rect = event.currentTarget.getBoundingClientRect()
+    const menuWidth = 214
+    const menuHeight = 386
+    setColumnMenuPosition({
+      left: Math.max(
+        8,
+        Math.min(rect.right - menuWidth, window.innerWidth - menuWidth - 8)
+      ),
+      top:
+        rect.bottom + menuHeight + 8 <= window.innerHeight
+          ? rect.bottom + 6
+          : Math.max(8, rect.top - menuHeight - 6)
+    })
+    setColumnMenuOpen(true)
+  }
+
   function chooseAccountColumnSizing(sizing: AccountColumnSizing): void {
     setAccountColumnSizing(sizing)
     window.localStorage.setItem(ACCOUNT_COLUMN_SIZING_STORAGE_KEY, sizing)
@@ -6174,6 +6193,19 @@ export function LibraryScreen({
                       }}
                     >
                       <span>{tr('操作', 'Actions', '操作')}</span>
+                      <button
+                        type="button"
+                        className="account-column-settings table-column-settings"
+                        onClick={openColumnMenuFromButton}
+                        aria-label={tr('列设置', 'Column settings', '欄位設定')}
+                        title={tr(
+                          '列设置（也可右键表头）',
+                          'Column settings (or right-click the header)',
+                          '欄位設定（也可右鍵表頭）'
+                        )}
+                      >
+                        <Settings size={13} />
+                      </button>
                       {accountColumnResizer('actions', tr('操作', 'actions', '操作'))}
                       {columnMenuOpen &&
                         createPortal(

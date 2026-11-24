@@ -69,6 +69,8 @@ export type SettingsModule =
   | 'data'
   | 'about'
 
+type SettingSavePhase = 'saving' | 'saved' | 'error'
+
 export function SettingsPage({
   module,
   settings,
@@ -138,6 +140,7 @@ export function SettingsPage({
   const [fontSizeScale, setFontSizeScale] = useState(settings.fontSizeScale)
   const [proxy, setProxy] = useState<ProxySettings>(settings.proxy)
   const [proxySaving, setProxySaving] = useState(false)
+  const proxyDirty = JSON.stringify(proxy) !== JSON.stringify(settings.proxy)
   const [proxyTesting, setProxyTesting] = useState(false)
   const [proxyResult, setProxyResult] = useState<ProxyTestResult | null>(null)
   const [backups, setBackups] = useState<BackupRecord[]>([])
@@ -147,6 +150,47 @@ export function SettingsPage({
   const [restoringBackup, setRestoringBackup] = useState(false)
   const [resettingSettings, setResettingSettings] = useState(false)
   const scaleSaveTimer = useRef<number | null>(null)
+  const [saveStates, setSaveStates] = useState<
+    Record<string, { phase: SettingSavePhase; message?: string }>
+  >({})
+  const saveTimers = useRef<Record<string, number>>({})
+
+  function setSaveState(key: string, phase: SettingSavePhase, message?: string): void {
+    if (saveTimers.current[key]) {
+      window.clearTimeout(saveTimers.current[key])
+      delete saveTimers.current[key]
+    }
+    setSaveStates((current) => ({ ...current, [key]: { phase, message } }))
+    if (phase === 'saved') {
+      saveTimers.current[key] = window.setTimeout(() => {
+        delete saveTimers.current[key]
+        setSaveStates((current) => {
+          const next = { ...current }
+          delete next[key]
+          return next
+        })
+      }, 2000)
+    }
+  }
+
+  // 即时保存的统一入口：成功时只在行尾点亮 2 秒，失败时状态点变红并保留错误信息。
+  async function persistSetting(key: string, patch: AppSettingsPatch): Promise<boolean> {
+    setSaveState(key, 'saving')
+    try {
+      await onSettingsChange(patch)
+      setSaveState(key, 'saved')
+      return true
+    } catch (error) {
+      setSaveState(
+        key,
+        'error',
+        error instanceof Error
+          ? error.message
+          : tr('设置保存失败', 'Could not save setting.', '設定儲存失敗')
+      )
+      return false
+    }
+  }
 
   useEffect(() => {
     setAutoLock(settings.autoLockMinutes)
@@ -161,6 +205,9 @@ export function SettingsPage({
   useEffect(() => {
     return () => {
       if (scaleSaveTimer.current) window.clearTimeout(scaleSaveTimer.current)
+      for (const timer of Object.values(saveTimers.current)) {
+        window.clearTimeout(timer)
+      }
     }
   }, [])
 
@@ -224,32 +271,20 @@ export function SettingsPage({
 
   async function changeAutoLock(value: AutoLockMinutes): Promise<void> {
     setAutoLock(value)
-    try {
-      await onSettingsChange({ autoLockMinutes: value })
-      notify(
-        'success',
-        tr(
-          '自动锁定已设为 {value} 分钟',
-          'Auto-lock set to {value} minutes.',
-          '自動鎖定已設為 {value} 分鐘',
-          { value }
-        )
-      )
-    } catch (error) {
-      setAutoLock(settings.autoLockMinutes)
-      notify(
-        'error',
-        error instanceof Error
-          ? error.message
-          : tr('设置保存失败', 'Could not save setting.', '設定儲存失敗')
-      )
-    }
+    const saved = await persistSetting('auto-lock', { autoLockMinutes: value })
+    if (!saved) setAutoLock(settings.autoLockMinutes)
   }
 
-  async function saveAppearance(patch: AppSettingsPatch, message: string): Promise<void> {
+  async function saveAppearance(
+    patch: AppSettingsPatch,
+    message: string,
+    key?: string
+  ): Promise<boolean> {
+    if (key) return persistSetting(key, patch)
     try {
       await onSettingsChange(patch)
       notify('success', message)
+      return true
     } catch (error) {
       notify(
         'error',
@@ -257,11 +292,13 @@ export function SettingsPage({
           ? error.message
           : tr('外观设置保存失败', 'Could not save appearance.', '外觀設定儲存失敗')
       )
+      return false
     }
   }
 
   function scheduleScaleSave(value: number): void {
     setInterfaceScale(value)
+    setSaveState('interface-scale', 'saving')
     if (scaleSaveTimer.current) window.clearTimeout(scaleSaveTimer.current)
     scaleSaveTimer.current = window.setTimeout(() => {
       void saveAppearance(
@@ -271,33 +308,16 @@ export function SettingsPage({
           'Interface scale set to {value}%.',
           '介面比例已設為 {value}%',
           { value }
-        )
+        ),
+        'interface-scale'
       )
     }, 260)
   }
 
   async function changeFontSize(value: number): Promise<void> {
     setFontSizeScale(value)
-    try {
-      await onSettingsChange({ fontSizeScale: value })
-      notify(
-        'success',
-        tr(
-          '字体大小已设为 {value}%',
-          'Font size set to {value}%.',
-          '字體大小已設為 {value}%',
-          { value }
-        )
-      )
-    } catch (error) {
-      setFontSizeScale(settings.fontSizeScale)
-      notify(
-        'error',
-        error instanceof Error
-          ? error.message
-          : tr('字体大小保存失败', 'Could not save font size.', '字體大小儲存失敗')
-      )
-    }
+    const saved = await persistSetting('font-size', { fontSizeScale: value })
+    if (!saved) setFontSizeScale(settings.fontSizeScale)
   }
 
   async function resetScale(): Promise<void> {
@@ -308,7 +328,8 @@ export function SettingsPage({
     setInterfaceScale(100)
     await saveAppearance(
       { interfaceScale: DEFAULT_APP_SETTINGS.interfaceScale },
-      tr('界面比例已恢复默认', 'Interface scale reset to default.', '介面比例已恢復預設')
+      tr('界面比例已恢复默认', 'Interface scale reset to default.', '介面比例已恢復預設'),
+      'interface-scale'
     )
   }
 
@@ -317,72 +338,17 @@ export function SettingsPage({
   }
 
   async function updateCopyShortcut(enabled: boolean): Promise<void> {
-    try {
-      await onSettingsChange({ accountCopyShortcutEnabled: enabled })
-      notify(
-        'success',
-        enabled
-          ? tr('账号复制快捷键已启用', 'Account copy shortcut enabled.', '帳號複製快捷鍵已啟用')
-          : tr('账号复制快捷键已关闭', 'Account copy shortcut disabled.', '帳號複製快捷鍵已關閉')
-      )
-    } catch (error) {
-      notify(
-        'error',
-        error instanceof Error
-          ? error.message
-          : tr('快捷键设置保存失败', 'Could not save shortcut.', '快捷鍵設定儲存失敗')
-      )
-    }
+    await persistSetting('copy-shortcut', { accountCopyShortcutEnabled: enabled })
   }
 
   async function changeDefaultLoginBrowser(
     loginBrowser: AppSettings['defaultLoginBrowser']
   ): Promise<void> {
-    try {
-      await onSettingsChange({ defaultLoginBrowser: loginBrowser })
-      notify(
-        'success',
-        tr(
-          '默认登录方式已更新',
-          'Default sign-in browser updated.',
-          '預設登入方式已更新'
-        )
-      )
-    } catch (error) {
-      notify(
-        'error',
-        error instanceof Error
-          ? error.message
-          : tr('默认登录方式保存失败', 'Could not save the default browser.', '預設登入方式儲存失敗')
-      )
-    }
+    await persistSetting('browser-launch', { defaultLoginBrowser: loginBrowser })
   }
 
   async function changePureBrowserMode(enabled: boolean): Promise<void> {
-    try {
-      await onSettingsChange({ pureBrowserMode: enabled })
-      notify(
-        'success',
-        enabled
-          ? tr(
-              '纯净浏览器模式已开启',
-              'Pure browser mode enabled.',
-              '純淨瀏覽器模式已開啟'
-            )
-          : tr(
-              '纯净浏览器模式已关闭',
-              'Pure browser mode disabled.',
-              '純淨瀏覽器模式已關閉'
-            )
-      )
-    } catch (error) {
-      notify(
-        'error',
-        error instanceof Error
-          ? error.message
-          : tr('浏览器模式保存失败', 'Could not save browser mode.', '瀏覽器模式儲存失敗')
-      )
-    }
+    await persistSetting('browser-launch', { pureBrowserMode: enabled })
   }
 
   async function captureCopyShortcut(
@@ -402,24 +368,7 @@ export function SettingsPage({
       )
       return
     }
-    try {
-      await onSettingsChange({ accountCopyShortcut: shortcut })
-      notify(
-        'success',
-        tr(
-          `账号复制快捷键已设为 ${displayKeyboardShortcut(shortcut)}`,
-          `Account copy shortcut set to ${displayKeyboardShortcut(shortcut)}.`,
-          `帳號複製快捷鍵已設為 ${displayKeyboardShortcut(shortcut)}`
-        )
-      )
-    } catch (error) {
-      notify(
-        'error',
-        error instanceof Error
-          ? error.message
-          : tr('快捷键设置保存失败', 'Could not save shortcut.', '快捷鍵設定儲存失敗')
-      )
-    }
+    await persistSetting('copy-shortcut', { accountCopyShortcut: shortcut })
   }
 
   async function resetAllSettings(): Promise<void> {
@@ -676,46 +625,13 @@ export function SettingsPage({
   async function changeColorMode(colorMode: ColorMode): Promise<void> {
     await saveAppearance(
       { colorMode },
-      tr(
-        colorMode === 'system'
-          ? '外观已跟随系统'
-          : colorMode === 'dark'
-            ? '已切换为暗色外观'
-            : '已切换为亮色外观',
-        colorMode === 'system'
-          ? 'Appearance now follows the system.'
-          : colorMode === 'dark'
-            ? 'Dark appearance enabled.'
-            : 'Light appearance enabled.',
-        colorMode === 'system'
-          ? '外觀已跟隨系統'
-          : colorMode === 'dark'
-            ? '已切換為暗色外觀'
-            : '已切換為亮色外觀'
-      )
+      tr('外观已更新', 'Appearance updated.', '外觀已更新'),
+      'appearance'
     )
   }
 
   async function changeLanguage(language: AppLanguage): Promise<void> {
-    try {
-      await onSettingsChange({ language })
-      notify(
-        'success',
-        translate(
-          language,
-          '界面语言已切换为简体中文',
-          'Language switched to English.',
-          '介面語言已切換為繁體中文'
-        )
-      )
-    } catch (error) {
-      notify(
-        'error',
-        error instanceof Error
-          ? error.message
-          : tr('语言设置保存失败', 'Could not save language.', '語言設定儲存失敗')
-      )
-    }
+    await persistSetting('language', { language })
   }
 
   function updateProxy<K extends keyof ProxySettings>(key: K, value: ProxySettings[K]): void {
@@ -733,18 +649,7 @@ export function SettingsPage({
   async function saveProxy(): Promise<void> {
     setProxySaving(true)
     try {
-      await onSettingsChange({ proxy })
-      notify(
-        'success',
-        tr('网络代理配置已保存', 'Network proxy settings saved.', '網路代理設定已儲存')
-      )
-    } catch (error) {
-      notify(
-        'error',
-        error instanceof Error
-          ? error.message
-          : tr('代理配置保存失败', 'Could not save proxy settings.', '代理設定儲存失敗')
-      )
+      await persistSetting('proxy', { proxy })
     } finally {
       setProxySaving(false)
     }
@@ -1126,6 +1031,7 @@ export function SettingsPage({
                   'Hide vault contents after inactivity while keeping website sessions.',
                   '應用程式閒置後隱藏保險庫內容，網站工作階段會保留。'
                 )}
+                action={<SettingSaveHint state={saveStates['auto-lock']} />}
               />
               <div className="segmented-control segmented-control--wide">
                 {AUTO_LOCK_OPTIONS.map((minutes) => (
@@ -1150,6 +1056,7 @@ export function SettingsPage({
                   'New and imported accounts inherit this browser choice. Pure mode hides extensions and crash-restore prompts.',
                   '新建和匯入帳號預設繼承這裡的登入方式；純淨模式會封鎖擴充功能與當機還原提示。'
                 )}
+                action={<SettingSaveHint state={saveStates['browser-launch']} />}
               />
               <div className="settings-control-row">
                 <span className="settings-control-row__label">
@@ -1249,6 +1156,7 @@ export function SettingsPage({
                     {tr('跟随系统', 'Follow system', '跟隨系統')}
                   </button>
                 </div>
+                <SettingSaveHint state={saveStates['appearance']} />
               </div>
               <div className="settings-control-row">
                 <span className="settings-control-row__label">
@@ -1276,6 +1184,7 @@ export function SettingsPage({
                     </button>
                   ))}
                 </div>
+                <SettingSaveHint state={saveStates['language']} />
               </div>
             </div>
 
@@ -1288,6 +1197,7 @@ export function SettingsPage({
                   'Adjust interface scale for this window. Default is 100%.',
                   '依目前視窗調整介面縮放，預設為 100%。'
                 )}
+                action={<SettingSaveHint state={saveStates['interface-scale']} />}
               />
               <div className="scale-control">
                 <input
@@ -1329,6 +1239,7 @@ export function SettingsPage({
                   'Choose the interface text size without resizing the layout.',
                   '選擇介面文字的顯示比例，不改變視窗和控件的整體尺寸。'
                 )}
+                action={<SettingSaveHint state={saveStates['font-size']} />}
               />
               <div
                 className="font-size-selector"
@@ -1375,6 +1286,7 @@ export function SettingsPage({
                   'Manage AutoLogin shortcuts in one place. System keys remain available by default, and future actions will use the same settings area.',
                   '集中管理 AutoLogin 內部快捷鍵。預設不佔用系統按鍵，後續快捷操作也會在這裡統一設定。'
                 )}
+                action={<SettingSaveHint state={saveStates['copy-shortcut']} />}
               />
               <label className="switch-row shortcut-enable-row">
                 <span>
@@ -1469,6 +1381,18 @@ export function SettingsPage({
                   'Follow system reads the current Windows proxy. A custom proxy applies only to AutoLogin and browsers it launches.',
                   '跟隨系統會自動讀取 Windows 目前代理設定；自訂代理只作用於 AutoLogin 與其啟動的瀏覽器。'
                 )}
+                action={
+                  <span className="settings-card__save-scope">
+                    <span
+                      className={`settings-save-requirement${proxyDirty ? ' is-dirty' : ''}`}
+                    >
+                      {proxyDirty
+                        ? tr('有未保存修改', 'Unsaved changes', '有未儲存修改')
+                        : tr('需点击保存', 'Requires save', '需點擊儲存')}
+                    </span>
+                    <SettingSaveHint state={saveStates['proxy']} />
+                  </span>
+                }
               />
               <div className="proxy-mode-options" role="radiogroup" aria-label={tr('代理模式', 'Proxy mode', '代理模式')}>
                 <label className={`proxy-mode-option${proxy.mode === 'custom' ? ' is-active' : ''}`}>
@@ -1668,6 +1592,11 @@ export function SettingsPage({
                   'The entire vault is re-encrypted with the new key.',
                   '修改後會使用新的金鑰重新加密整個保險庫。'
                 )}
+                action={
+                  <span className="settings-save-requirement">
+                    {tr('需点击保存', 'Requires save', '需點擊儲存')}
+                  </span>
+                }
               />
               <form className="settings-password-form" onSubmit={submitPassword}>
                 <label className="field">
@@ -2461,6 +2390,32 @@ function SettingsPanel({
     <section className="settings-panel">
       <div className="settings-panel__body">{children}</div>
     </section>
+  )
+}
+
+function SettingSaveHint({
+  state
+}: {
+  state?: { phase: SettingSavePhase; message?: string }
+}): React.JSX.Element | null {
+  const { tr } = useI18n()
+  if (!state) return null
+  const text =
+    state.phase === 'saving'
+      ? tr('保存中…', 'Saving…', '儲存中…')
+      : state.phase === 'saved'
+        ? tr('已保存', 'Saved', '已儲存')
+        : tr('保存失败', 'Save failed', '儲存失敗')
+  return (
+    <span
+      className={`setting-save-state is-${state.phase}`}
+      role="status"
+      aria-live="polite"
+      title={state.message || text}
+    >
+      <i aria-hidden="true" />
+      {text}
+    </span>
   )
 }
 

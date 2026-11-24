@@ -9,6 +9,7 @@ import {
   RefreshCw,
   RotateCcw,
   SearchX,
+  Settings,
   TriangleAlert,
   Trash2
 } from 'lucide-react'
@@ -155,6 +156,7 @@ export function AppLogsPage({
     measureKey: visible.map((entry) => entry.id).join('|'),
     menuLabel: tr('软件日志显示列', 'App log columns', '軟體日誌顯示欄位')
   })
+  const lastHeaderKey = tableColumns.visibleOrderedColumns[tableColumns.visibleOrderedColumns.length - 1]
   const visibleSelectedCount = visible.filter((entry) => selectedIds.has(entry.id)).length
   const allPageSelected = visible.length > 0 && visibleSelectedCount === visible.length
   const somePageSelected = visibleSelectedCount > 0 && !allPageSelected
@@ -325,6 +327,21 @@ export function AppLogsPage({
     return (
       <span data-column-key={key} key={key}>
         {label}
+        {key === lastHeaderKey && (
+          <button
+            type="button"
+            className="table-column-settings"
+            onClick={tableColumns.openMenuFromButton}
+            aria-label={tr('列设置', 'Column settings', '欄位設定')}
+            title={tr(
+              '列设置（也可右键表头）',
+              'Column settings (or right-click the header)',
+              '欄位設定（也可右鍵表頭）'
+            )}
+          >
+            <Settings size={13} />
+          </button>
+        )}
         {tableColumns.renderResizer(key, label)}
       </span>
     )

@@ -17,7 +17,11 @@ export default defineConfig({
   server: {
     host: '127.0.0.1',
     port: 5173,
-    strictPort: true
+    strictPort: true,
+    watch: {
+      // 编辑器原子保存会在被监视目录里留下临时目录；Vite 的 watcher 偶发 EBUSY 后整个 dev server 退出。
+      ignored: ['**/*.tmpdir/**', '**/.*.tmpdir/**']
+    }
   },
   build: {
     outDir: resolve('dist'),

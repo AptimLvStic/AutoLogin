@@ -40,6 +40,7 @@ export function useResizableColumns<Key extends string>({
   visibleOrderedColumns: Key[]
   gridTemplateColumns: string
   openMenu: (event: React.MouseEvent<HTMLElement>) => void
+  openMenuFromButton: (event: React.MouseEvent<HTMLElement>) => void
   renderResizer: (key: Key, label: string) => React.JSX.Element
   menu: React.ReactNode
 } {
@@ -280,19 +281,31 @@ export function useResizableColumns<Key extends string>({
 
   useEffect(() => () => resizeCleanupRef.current?.(), [])
 
-  function openMenu(event: React.MouseEvent<HTMLElement>): void {
-    event.preventDefault()
-    event.stopPropagation()
+  function openMenuAt(clientX: number, clientY: number): void {
     const menuWidth = 224
     const menuHeight = 310
     setMenuPosition({
-      left: Math.max(8, Math.min(event.clientX, window.innerWidth - menuWidth - 8)),
+      left: Math.max(8, Math.min(clientX, window.innerWidth - menuWidth - 8)),
       top:
-        event.clientY + menuHeight + 8 <= window.innerHeight
-          ? event.clientY
-          : Math.max(8, event.clientY - menuHeight)
+        clientY + menuHeight + 8 <= window.innerHeight
+          ? clientY
+          : Math.max(8, clientY - menuHeight)
     })
     setMenuOpen(true)
+  }
+
+  function openMenu(event: React.MouseEvent<HTMLElement>): void {
+    event.preventDefault()
+    event.stopPropagation()
+    openMenuAt(event.clientX, event.clientY)
+  }
+
+  // 常驻齿轮按钮：把菜单锚在按钮下方，避免点按钮时菜单跑到点击坐标处。
+  function openMenuFromButton(event: React.MouseEvent<HTMLElement>): void {
+    event.preventDefault()
+    event.stopPropagation()
+    const rect = event.currentTarget.getBoundingClientRect()
+    openMenuAt(rect.right - 224, rect.bottom + 6)
   }
 
   function chooseSizing(next: TableColumnSizing): void {
@@ -470,6 +483,7 @@ export function useResizableColumns<Key extends string>({
     visibleOrderedColumns,
     gridTemplateColumns,
     openMenu,
+    openMenuFromButton,
     renderResizer,
     menu
   }

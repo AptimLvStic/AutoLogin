@@ -128,6 +128,11 @@ export function AccountDrawer({
   const [revealedPassword, setRevealedPassword] = useState('')
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
+  const [fieldErrors, setFieldErrors] = useState<{
+    siteName?: string
+    startUrl?: string
+  }>({})
+  const [discardConfirmOpen, setDiscardConfirmOpen] = useState(false)
   const [credentialHistoryOpen, setCredentialHistoryOpen] = useState(false)
   const [recipes, setRecipes] = useState<AccountRecipe[]>(account?.recipes ?? [])
   const [activeRecipeId, setActiveRecipeId] = useState(account?.activeRecipeId)
@@ -180,6 +185,27 @@ export function AccountDrawer({
   const latestRecipeDetailsRef = useRef<AccountRecipe | null>(null)
   const recipeSaveCountRef = useRef(0)
   const recipeSaveQueueRef = useRef<Promise<void>>(Promise.resolve())
+
+  // 未保存改动判定：只比较真正会随「保存」提交的字段，避免把已即时保存的录制流程算进来。
+  const formSnapshot = JSON.stringify({
+    siteMode,
+    selectedSiteId,
+    siteName,
+    startUrl,
+    siteIcon,
+    autoSubmit,
+    siteGroup,
+    username,
+    password,
+    loginStrategy,
+    loginBrowser,
+    manualSteps
+  })
+  const initialFormSnapshotRef = useRef<string | null>(null)
+  if (initialFormSnapshotRef.current === null) {
+    initialFormSnapshotRef.current = formSnapshot
+  }
+  const hasUnsavedChanges = formSnapshot !== initialFormSnapshotRef.current
 
   const selectedSite = useMemo(
     () => sites.find((site) => site.id === selectedSiteId),
@@ -451,22 +477,25 @@ export function AccountDrawer({
   async function submit(event: React.FormEvent): Promise<void> {
     event.preventDefault()
     setError('')
+    setFieldErrors({})
     const normalizedStartUrl = normalizeOptionalStartUrl(startUrl)
+    const nextFieldErrors: { siteName?: string; startUrl?: string } = {}
     if (!siteName.trim()) {
-      setError(tr('请填写站点名称', 'Enter a site name.', '請填寫站點名稱'))
-      return
-    }
-    if (
-      normalizedStartUrl &&
-      !isValidHttpUrl(normalizedStartUrl)
-    ) {
-      setError(
-        tr(
-          '登录地址需要是有效的 http 或 https 地址',
-          'The sign-in URL must be a valid http or https address.',
-          '登入網址需要是有效的 http 或 https 位址'
-        )
+      nextFieldErrors.siteName = tr(
+        '请填写站点名称',
+        'Enter a site name.',
+        '請填寫站點名稱'
       )
+    }
+    if (normalizedStartUrl && !isValidHttpUrl(normalizedStartUrl)) {
+      nextFieldErrors.startUrl = tr(
+        '登录地址需要是有效的 http 或 https 地址',
+        'The sign-in URL must be a valid http or https address.',
+        '登入網址需要是有效的 http 或 https 位址'
+      )
+    }
+    if (Object.keys(nextFieldErrors).length > 0) {
+      setFieldErrors(nextFieldErrors)
       return
     }
     if (siteMode === 'existing' && !selectedSite) {
@@ -964,7 +993,7 @@ export function AccountDrawer({
     }
   }
 
-  function requestDrawerClose(): void {
+  function closeDrawerNow(): void {
     if (closedRef.current) return
     if (recordingThisAccount) {
       notify(
@@ -977,8 +1006,19 @@ export function AccountDrawer({
       )
     }
     closedRef.current = true
+    setDiscardConfirmOpen(false)
     setRecordingFinishOpen(false)
     onClose()
+  }
+
+  function requestDrawerClose(): void {
+    if (closedRef.current) return
+    // 录制中关闭编辑页是既有流程：录制在后台继续，不做脏检查拦截。
+    if (!recordingThisAccount && hasUnsavedChanges) {
+      setDiscardConfirmOpen(true)
+      return
+    }
+    closeDrawerNow()
   }
 
   async function toggleRecordingPause(): Promise<void> {
@@ -1564,21 +1604,38 @@ export function AccountDrawer({
                 </div>
               )}
 
-              <label className="field">
-                <span className="field__label">{tr('站点名称', 'Site name', '站點名稱')}</span>
+              <label className={`field${fieldErrors.siteName ? ' is-invalid' : ''}`}>
+                <span className="field__label">
+                  {tr('站点名称', 'Site name', '站點名稱')}
+                  <span className="field__badge is-required">
+                    {tr('必填', 'Required', '必填')}
+                  </span>
+                </span>
                 <span className="input-shell">
                   <Globe2 size={17} />
                   <input
                     value={siteName}
-                    onChange={(event) => setSiteName(event.target.value)}
+                    onChange={(event) => {
+                      setSiteName(event.target.value)
+                      if (fieldErrors.siteName) {
+                        setFieldErrors((current) => ({ ...current, siteName: undefined }))
+                      }
+                    }}
                     placeholder={tr('例如：工作台', 'e.g. Workspace', '例如：工作台')}
                     autoFocus={mode === 'edit' && !focusField}
+                    aria-invalid={fieldErrors.siteName ? true : undefined}
                   />
                 </span>
+                {fieldErrors.siteName && (
+                  <p className="field__error" role="alert">
+                    {fieldErrors.siteName}
+                  </p>
+                )}
               </label>
-              <label className="field">
+              <label className={`field${fieldErrors.startUrl ? ' is-invalid' : ''}`}>
                 <span className="field__label">
                   {tr('登录地址', 'Sign-in URL', '登入網址')}
+                  <span className="field__badge">{tr('选填', 'Optional', '選填')}</span>
                   <small>
                     {tr(
                       '可留空，保存后会标记为待补全',
@@ -1592,12 +1649,23 @@ export function AccountDrawer({
                   <input
                     ref={startUrlRef}
                     value={startUrl}
-                    onChange={(event) => setStartUrl(event.target.value)}
+                    onChange={(event) => {
+                      setStartUrl(event.target.value)
+                      if (fieldErrors.startUrl) {
+                        setFieldErrors((current) => ({ ...current, startUrl: undefined }))
+                      }
+                    }}
                     onBlur={deriveSiteName}
                     placeholder="https://example.com/login"
                     spellCheck={false}
+                    aria-invalid={fieldErrors.startUrl ? true : undefined}
                   />
                 </span>
+                {fieldErrors.startUrl && (
+                  <p className="field__error" role="alert">
+                    {fieldErrors.startUrl}
+                  </p>
+                )}
               </label>
 
               <div className="field site-icon-field">
@@ -1796,6 +1864,7 @@ export function AccountDrawer({
                   <label className="field">
                     <span className="field__label">
                       {tr('用户名', 'Username', '使用者名稱')}
+                      <span className="field__badge">{tr('选填', 'Optional', '選填')}</span>
                       <small>
                         {tr(
                           '可留空，保存后会标记为待补全',
@@ -1829,6 +1898,7 @@ export function AccountDrawer({
                   <label className="field">
                     <span className="field__label">
                       {tr('登录密码', 'Login password', '登入密碼')}
+                      <span className="field__badge">{tr('选填', 'Optional', '選填')}</span>
                       {mode === 'edit' ? (
                         <small>{tr('留空则保持不变', 'Leave blank to keep current', '留空則保持不變')}</small>
                       ) : (
@@ -2638,6 +2708,43 @@ export function AccountDrawer({
               '這裡只顯示步驟類型與穩定選擇器，不包含帳號、密碼、驗證碼或頁面輸入的真實內容。'
             )}
           </p>
+        </Modal>
+      )}
+
+      {discardConfirmOpen && (
+        <Modal
+          title={tr(
+            '放弃未保存的修改？',
+            'Discard unsaved changes?',
+            '放棄未儲存的變更？'
+          )}
+          width="460px"
+          onClose={() => setDiscardConfirmOpen(false)}
+        >
+          <p className="modal-description">
+            {tr(
+              '关闭后，本次填写但尚未保存的站点、账号或登录配置会丢失。',
+              'Anything you changed here but have not saved will be lost when you close the editor.',
+              '關閉後，本次填寫但尚未儲存的站點、帳號或登入設定會遺失。'
+            )}
+          </p>
+          <div className="modal-actions">
+            <button
+              type="button"
+              className="button button--primary"
+              onClick={() => setDiscardConfirmOpen(false)}
+              data-autofocus
+            >
+              {tr('继续编辑', 'Keep editing', '繼續編輯')}
+            </button>
+            <button
+              type="button"
+              className="button button--danger-ghost"
+              onClick={closeDrawerNow}
+            >
+              {tr('放弃修改', 'Discard changes', '放棄修改')}
+            </button>
+          </div>
         </Modal>
       )}
 

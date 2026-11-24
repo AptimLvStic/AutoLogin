@@ -5,6 +5,7 @@ import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type {
+  AccountWithSite,
   AutologinApi,
   EmbeddedBrowserNewWindowEvent,
   EmbeddedBrowserTab
@@ -47,8 +48,16 @@ const navigate = vi.fn(async () => tab)
 const activate = vi.fn(async () => undefined)
 const close = vi.fn(async () => undefined)
 const setBounds = vi.fn(async () => undefined)
+const copyUsername = vi.fn(async () => undefined)
+const copyAccount = vi.fn(async () => undefined)
+let loadedTabs: EmbeddedBrowserTab[] = []
+const siteAccounts = [
+  { id: 'account-one', label: 'GitHub', username: 'dev@example.com', siteId: 'site-github' },
+  { id: 'account-two', label: 'GitHub', username: 'ops@example.com', siteId: 'site-github' }
+] as unknown as AccountWithSite[]
 
 beforeEach(() => {
+  loadedTabs = []
   ;(globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean })
     .IS_REACT_ACT_ENVIRONMENT = true
   newWindowListener = null
@@ -65,7 +74,7 @@ beforeEach(() => {
     configurable: true,
     value: {
       browser: {
-        listTabs: async () => [],
+        listTabs: async () => loadedTabs,
         openUrl,
         activate,
         close,
@@ -74,6 +83,11 @@ beforeEach(() => {
         reload,
         setBounds,
         hideAll
+      },
+      accounts: {
+        list: async () => siteAccounts,
+        copyUsername,
+        copy: copyAccount
       },
       events: {
         onBrowserTabs: () => () => undefined,
@@ -244,6 +258,68 @@ describe('BrowserWorkspace', () => {
     // 不再用 --menu-h 把页面顶下去：页面总览接管视图区，原生视图先收起。
     expect(wrap?.getAttribute('style')).toBeNull()
     expect(hideAll).toHaveBeenCalled()
+  })
+
+  it('switches the current account when the site has several accounts', async () => {
+    loadedTabs = [
+      {
+        ...tab,
+        label: 'account-tab',
+        accountId: 'account-one',
+        siteId: 'site-github',
+        accountLabel: 'GitHub'
+      }
+    ]
+
+    act(() => {
+      root.render(
+        React.createElement(
+          I18nProvider,
+          {
+            language: 'zh-CN',
+            children: React.createElement(BrowserWorkspace, {
+              notify: () => undefined,
+              onOpenAccounts: () => undefined
+            })
+          }
+        )
+      )
+    })
+    await flush()
+
+    const trigger = container.querySelector<HTMLButtonElement>(
+      '.browser-workspace__account-trigger'
+    )
+    expect(trigger).not.toBeNull()
+    expect(trigger?.textContent).toContain('GitHub · dev@example.com')
+
+    act(() => trigger?.click())
+    await flush()
+
+    const options = [
+      ...container.querySelectorAll<HTMLButtonElement>('[role="option"]')
+    ]
+    expect(options.map((option) => option.textContent)).toEqual([
+      'GitHub · dev@example.com',
+      'GitHub · ops@example.com'
+    ])
+
+    act(() => options[1]?.click())
+    await flush()
+
+    act(() => {
+      container
+        .querySelector<HTMLButtonElement>('button[aria-label="复制用户名"]')
+        ?.click()
+    })
+    await flush()
+    expect(copyUsername).toHaveBeenCalledWith('account-two')
+
+    act(() => {
+      container.querySelector<HTMLButtonElement>('button[aria-label="复制密码"]')?.click()
+    })
+    await flush()
+    expect(copyAccount).toHaveBeenCalledWith('account-two')
   })
 })
 

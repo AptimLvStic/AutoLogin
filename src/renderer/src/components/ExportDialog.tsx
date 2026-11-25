@@ -72,6 +72,9 @@ export function ExportDialog({
       ? tr('数据库主密码', 'Database master password', '資料庫主密碼')
       : tr('导出密码', 'Export password', '匯出密碼')
   const includePasswords = selected.has('password')
+  const fieldOptions = recordsOnly
+    ? ACCOUNT_EXPORT_FIELDS.filter((item) => item.key !== 'password')
+    : ACCOUNT_EXPORT_FIELDS
 
   const vaultFormats: Array<{
     id: VaultFormat
@@ -348,7 +351,7 @@ export function ExportDialog({
             <div className="export-dialog__section">
               <span className="export-dialog__section-title">{tr('包含字段', 'Fields', '包含欄位')}</span>
               <div className="export-dialog__fields">
-                {ACCOUNT_EXPORT_FIELDS.map((item) => (
+                {fieldOptions.map((item) => (
                   <label key={item.key} className="export-dialog__field">
                     <input
                       type="checkbox"

@@ -21,6 +21,8 @@ import {
   ChevronsUpDown,
   Copy,
   Database,
+  Eye,
+  EyeOff,
   FileClock,
   FolderOpen,
   Globe2,
@@ -72,7 +74,8 @@ import {
   type RecipeStep,
   type SelectorTestResult,
   type Site,
-  type TrashRetentionDays
+  type TrashRetentionDays,
+  type VaultTabState
 } from '@shared/types'
 import { matchesKeyboardShortcut } from '@shared/shortcuts'
 import {
@@ -120,6 +123,7 @@ import {
   normalizeManualSteps,
   selectorTestFieldForAction
 } from './ManualStepEditor'
+import { DatabasePasswordDialog } from './DatabasePasswordDialog'
 import { ConfirmDialog, Modal } from './Modal'
 import { PageActionMenu } from './PageActionMenu'
 import { PageSizePicker } from './PageSizePicker'
@@ -436,6 +440,10 @@ export function LibraryScreen({
   recordingFinishRequest,
   onRefresh,
   onLock,
+  vaultTabs,
+  onUnlockTab,
+  onLockTab,
+  onVaultStatusChange,
   onStartBatch,
   onRecord,
   onRecordingFinishHandled,
@@ -455,6 +463,10 @@ export function LibraryScreen({
   recordingFinishRequest: number
   onRefresh: () => Promise<void>
   onLock: () => Promise<void>
+  vaultTabs: VaultTabState[]
+  onUnlockTab: (tabId: string, password: string) => Promise<void>
+  onLockTab: (tabId: string) => Promise<void>
+  onVaultStatusChange: () => Promise<void>
   onStartBatch: (accountIds: string[]) => Promise<boolean>
   onRecord: (account: AccountWithSite) => Promise<boolean>
   onRecordingFinishHandled: () => void
@@ -474,6 +486,7 @@ export function LibraryScreen({
     () => window.localStorage.getItem(BOOKMARK_ACTIVE_TAB_STORAGE_KEY)?.trim() || ''
   )
   const [importResult, setImportResult] = useState<DataImportResult | null>(null)
+  const [createDatabaseOpen, setCreateDatabaseOpen] = useState(false)
   const [view, setView] = useState<LibraryView>('accounts')
   const activeTabId = view === 'bookmarks' ? bookmarkTabId : accountTabId
   const accountTabs = useMemo(
@@ -492,6 +505,11 @@ export function LibraryScreen({
     () => visibleTabs.find((tab) => tab.id === activeTabId) ?? null,
     [activeTabId, visibleTabs]
   )
+  const lockedTabIds = useMemo(
+    () => new Set(vaultTabs.filter((tab) => tab.locked).map((tab) => tab.id)),
+    [vaultTabs]
+  )
+  const activeTabLocked = Boolean(activeTab && lockedTabIds.has(activeTab.id))
   const isLogView = view === 'loginLogs' || view === 'appLogs'
   const bookmarkTabIds = useMemo(
     () => new Set(bookmarkTabs.map((tab) => tab.id)),
@@ -2154,8 +2172,16 @@ export function LibraryScreen({
     }
   }
 
-  async function createTab(source: 'local' | 'bookmarks' = 'local'): Promise<void> {
-    if (tabBusy) return
+  async function createTab(
+    source: 'local' | 'bookmarks' = 'local',
+    password?: string
+  ): Promise<AccountTab | null> {
+    if (tabBusy) return null
+    // 新数据库要先有自己的密码：先弹密码对话框，再带着密码创建。
+    if (source === 'local' && !password) {
+      setCreateDatabaseOpen(true)
+      return null
+    }
     setTabBusy(true)
     try {
       const tab = await window.autologin.tabs.create(
@@ -2164,9 +2190,12 @@ export function LibraryScreen({
               name: tr('新书签标签', 'New bookmark tab', '新書籤標籤'),
               source
             }
-          : { source }
+          : { source, password }
       )
       setTabs((current) => [...current, tab])
+      if (source === 'local') {
+        await onVaultStatusChange()
+      }
       if (source === 'bookmarks') {
         setBookmarkTabId(tab.id)
         setView('bookmarks')
@@ -2180,6 +2209,7 @@ export function LibraryScreen({
           ? tr('书签标签页已创建', 'Bookmark tab created.', '書籤標籤頁已建立')
           : tr('数据库已创建', 'Database created.', '資料庫已建立')
       )
+      return tab
     } catch (error) {
       notify(
         'error',
@@ -2189,6 +2219,7 @@ export function LibraryScreen({
             ? tr('创建书签标签页失败', 'Could not create bookmark tab.', '建立書籤標籤頁失敗')
             : tr('创建数据库失败', 'Could not create database.', '建立資料庫失敗')
       )
+      return null
     } finally {
       setTabBusy(false)
     }
@@ -4395,6 +4426,21 @@ export function LibraryScreen({
               ? tr('打开标签页所在文件夹', 'Open tab folder', '開啟標籤頁資料夾')
               : tr('打开数据库所在文件夹', 'Open database folder', '開啟資料庫資料夾')}
           </button>
+          {tabMenu.tab.source !== 'bookmarks' &&
+            !lockedTabIds.has(tabMenu.tab.id) && (
+              <button
+                type="button"
+                role="menuitem"
+                onClick={() => {
+                  const target = tabMenu.tab
+                  setTabMenu(null)
+                  void onLockTab(target.id)
+                }}
+              >
+                <LockKeyhole size={14} />
+                {tr('锁定数据库', 'Lock database', '鎖定資料庫')}
+              </button>
+            )}
           <div className="account-context-menu__divider" aria-hidden="true" />
           <button
             type="button"
@@ -5374,6 +5420,8 @@ export function LibraryScreen({
                         <kbd aria-hidden="true">Ctrl F</kbd>
                       )}
                     </div>
+                    {!activeTabLocked && (
+                    <>
                     <button
                       type="button"
                       className="account-tabs__add account-tabs__add--labelled"
@@ -5394,7 +5442,9 @@ export function LibraryScreen({
                     {view === 'accounts' && (
                       <AccountTransferControls
                         tabId={activeTabId}
-                        onCreateTab={() => createTab('local')}
+                        onCreateTab={async () => {
+                          await createTab('local')
+                        }}
                         creatingTab={tabBusy}
                         onImported={(result) => void handleDataImported(result)}
                         onExportRecords={() => {
@@ -5409,10 +5459,14 @@ export function LibraryScreen({
                       <BookmarkTransferControls
                         tabId={activeTabId}
                         creating={tabBusy}
-                        onCreate={() => createTab('bookmarks')}
+                        onCreate={async () => {
+                          await createTab('bookmarks')
+                        }}
                         onImported={(result) => void handleDataImported(result)}
                         notify={notify}
                       />
+                    )}
+                    </>
                     )}
                   </>
                 }
@@ -5422,11 +5476,18 @@ export function LibraryScreen({
               <DatabaseWorkspaceEmptyState
                 bookmarkMode={view === 'bookmarks'}
                 creating={tabBusy}
-                onCreate={() =>
-                  createTab(view === 'bookmarks' ? 'bookmarks' : 'local')
-                }
+                onCreate={async () => {
+                  await createTab(view === 'bookmarks' ? 'bookmarks' : 'local')
+                }}
                 onImported={(result) => void handleDataImported(result)}
                 notify={notify}
+              />
+            ) : activeTabLocked && activeTab ? (
+              <DatabaseLockedState
+                tab={activeTab}
+                notify={notify}
+                onUnlock={(password) => onUnlockTab(activeTab.id, password)}
+                onCreate={() => setCreateDatabaseOpen(true)}
               />
             ) : (
             <div
@@ -7080,6 +7141,8 @@ export function LibraryScreen({
                 await onRefresh()
               }}
               onRefresh={onRefresh}
+              activeTabId={activeTabId}
+              activeTabName={activeTab?.name ?? ''}
               onClearAllData={clearAllData}
               onDownloadUpdate={onDownloadUpdate}
               onCancelUpdate={onCancelUpdate}
@@ -7131,6 +7194,20 @@ export function LibraryScreen({
             setExportRecordsOnly(false)
           }}
           notify={notify}
+        />
+      )}
+      {createDatabaseOpen && (
+        <DatabasePasswordDialog
+          mode="create"
+          onClose={() => {
+            if (!tabBusy) setCreateDatabaseOpen(false)
+          }}
+          onSubmit={async ({ nextPassword }) => {
+            const tab = await createTab('local', nextPassword)
+            // 创建成功才关对话框；失败时 createTab 已经用 toast 说明原因，
+            // 保留对话框让用户直接改密码重试。
+            if (tab) setCreateDatabaseOpen(false)
+          }}
         />
       )}
       {isAccountCollectionView &&
@@ -7786,6 +7863,128 @@ function EmptyState({
       <p>{description}</p>
       {action}
     </div>
+  )
+}
+
+function DatabaseLockedState({
+  tab,
+  notify,
+  onUnlock,
+  onCreate
+}: {
+  tab: AccountTab
+  notify: Notify
+  onUnlock: (password: string) => Promise<void>
+  onCreate: () => void
+}): React.JSX.Element {
+  const { tr } = useI18n()
+  const [password, setPassword] = useState('')
+  const [reveal, setReveal] = useState(false)
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState('')
+
+  async function submit(event: React.FormEvent): Promise<void> {
+    event.preventDefault()
+    if (busy || password.length === 0) return
+    setBusy(true)
+    setError('')
+    try {
+      await onUnlock(password)
+      setPassword('')
+      notify('success', tr('数据库已解锁', 'Database unlocked.', '資料庫已解鎖'))
+    } catch (reason) {
+      setError(
+        reason instanceof Error && reason.message
+          ? reason.message
+          : tr(
+              '数据库密码不正确',
+              'That database password is wrong.',
+              '資料庫密碼不正確'
+            )
+      )
+      setPassword('')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <section
+      className="empty-state library-database-empty-state library-database-locked-state"
+      aria-label={tr('数据库已锁定', 'Database locked', '資料庫已鎖定')}
+    >
+      <div className="empty-state__art" aria-hidden="true">
+        <span />
+        <span />
+        <span>
+          <LockKeyhole size={27} strokeWidth={1.6} />
+        </span>
+      </div>
+      <span className="eyebrow">DATABASE LOCKED</span>
+      <h2>{tab.name}</h2>
+      <p>
+        {tr(
+          '这个数据库已锁定。输入它自己的密码即可继续，其他数据库不受影响。',
+          'This database is locked. Enter its own password to continue; other databases are unaffected.',
+          '這個資料庫已鎖定。輸入它自己的密碼即可繼續，其他資料庫不受影響。'
+        )}
+      </p>
+      <form className="library-database-locked-state__form" onSubmit={(event) => void submit(event)}>
+        <div className={`input-shell${error ? ' is-error' : ''}`}>
+          <LockKeyhole size={16} />
+          <input
+            type={reveal ? 'text' : 'password'}
+            value={password}
+            autoComplete="current-password"
+            data-autofocus
+            placeholder={tr('数据库密码', 'Database password', '資料庫密碼')}
+            aria-label={tr('数据库密码', 'Database password', '資料庫密碼')}
+            aria-invalid={error ? true : undefined}
+            onChange={(event) => setPassword(event.target.value)}
+          />
+          <button
+            type="button"
+            className="input-text-action"
+            aria-label={
+              reveal
+                ? tr('隐藏密码', 'Hide password', '隱藏密碼')
+                : tr('显示密码', 'Show password', '顯示密碼')
+            }
+            onClick={() => setReveal((value) => !value)}
+          >
+            {reveal ? <EyeOff size={16} /> : <Eye size={16} />}
+            <span>
+              {reveal
+                ? tr('隐藏', 'Hide', '隱藏')
+                : tr('显示', 'Show', '顯示')}
+            </span>
+          </button>
+        </div>
+        <button
+          type="submit"
+          className={`button button--primary${busy ? ' is-loading' : ''}`}
+          disabled={busy || password.length === 0}
+          aria-busy={busy}
+        >
+          {busy ? (
+            <LoaderCircle size={16} className="spin" />
+          ) : (
+            <LockKeyhole size={16} />
+          )}
+          {tr('解锁数据库', 'Unlock database', '解鎖資料庫')}
+        </button>
+      </form>
+      {error ? <p className="form-error">{error}</p> : null}
+      <div className="library-database-locked-state__aside">
+        <span>
+          {tr('或改用另一个数据库：', 'Or start another database:', '或改用另一個資料庫：')}
+        </span>
+        <button type="button" className="button button--ghost button--small" onClick={onCreate}>
+          <Plus size={14} />
+          {tr('新建数据库', 'New database', '新增資料庫')}
+        </button>
+      </div>
+    </section>
   )
 }
 

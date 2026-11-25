@@ -80,6 +80,8 @@ export function SettingsPage({
   onModuleChange,
   onSettingsChange,
   onRefresh,
+  activeTabId,
+  activeTabName,
   onClearAllData,
   onDownloadUpdate,
   onCancelUpdate,
@@ -93,6 +95,8 @@ export function SettingsPage({
   onModuleChange: (module: SettingsModule) => void
   onSettingsChange: (patch: AppSettingsPatch) => Promise<void>
   onRefresh: () => Promise<void>
+  activeTabId: string
+  activeTabName: string
   onClearAllData: () => Promise<void>
   onDownloadUpdate: () => Promise<void>
   onCancelUpdate: () => Promise<void>
@@ -420,9 +424,9 @@ export function SettingsPage({
       notify(
         'error',
         tr(
-          '新主密码至少需要 10 个字符',
-          'The new master password needs at least 10 characters.',
-          '新主密碼至少需要 10 個字元'
+          '新数据库密码至少需要 10 个字符',
+          'The new database password needs at least 10 characters.',
+          '新資料庫密碼至少需要 10 個字元'
         )
       )
       return
@@ -431,26 +435,48 @@ export function SettingsPage({
       notify(
         'error',
         tr(
-          '两次输入的新主密码不一致',
-          'The new master passwords do not match.',
-          '兩次輸入的新主密碼不一致'
+          '两次输入的新数据库密码不一致',
+          'The new database passwords do not match.',
+          '兩次輸入的新資料庫密碼不一致'
         )
+      )
+      return
+    }
+    if (!activeTabId) {
+      notify(
+        'error',
+        tr('请先打开一个数据库', 'Open a database first.', '請先開啟一個資料庫')
       )
       return
     }
     setChangingPassword(true)
     try {
-      await window.autologin.vault.changePassword(currentPassword, nextPassword)
+      await window.autologin.vault.changeTabPassword({
+        tabId: activeTabId,
+        currentPassword,
+        nextPassword
+      })
       setCurrentPassword('')
       setNextPassword('')
       setConfirmPassword('')
-      notify('success', tr('主密码已更新', 'Master password updated.', '主密碼已更新'))
+      notify(
+        'success',
+        tr(
+          '数据库密码已更新',
+          'Database password updated.',
+          '資料庫密碼已更新'
+        )
+      )
     } catch (error) {
       notify(
         'error',
         error instanceof Error
           ? error.message
-          : tr('主密码修改失败', 'Could not change master password.', '主密碼修改失敗')
+          : tr(
+              '数据库密码修改失败',
+              'Could not change the database password.',
+              '資料庫密碼修改失敗'
+            )
       )
     } finally {
       setChangingPassword(false)
@@ -1577,21 +1603,29 @@ export function SettingsPage({
         {module === 'security' && (
           <SettingsPanel
             icon={<ShieldCheck size={18} />}
-            title={tr('主密码与本地数据', 'Master password and local data', '主密碼與本機資料')}
+            title={tr('数据库密码与本地数据', 'Database password and local data', '資料庫密碼與本機資料')}
             description={tr(
-              '管理主密码和本机数据的清除操作。',
-              'Manage the master password and local data deletion.',
-              '管理主密碼和本機資料清除操作。'
+              '每个数据库使用自己的密码；这里修改的是当前数据库的密码。',
+              'Each database has its own password; this changes the current one.',
+              '每個資料庫使用自己的密碼；這裡修改的是目前資料庫的密碼。'
             )}
           >
             <div className="settings-card">
               <SettingsCardHeading
                 icon={<KeyRound size={17} />}
-                title={tr('修改主密码', 'Change master password', '修改主密碼')}
+                title={
+                  activeTabName
+                    ? tr(
+                        `修改「${activeTabName}」的密码`,
+                        `Change the password of "${activeTabName}"`,
+                        `修改「${activeTabName}」的密碼`
+                      )
+                    : tr('修改数据库密码', 'Change database password', '修改資料庫密碼')
+                }
                 description={tr(
-                  '修改后会使用新的密钥重新加密整个保险库。',
-                  'The entire vault is re-encrypted with the new key.',
-                  '修改後會使用新的金鑰重新加密整個保險庫。'
+                  '修改后这个数据库会用新密钥重新加密，其他数据库不受影响。',
+                  'This database is re-encrypted with the new key; other databases are unaffected.',
+                  '修改後這個資料庫會用新金鑰重新加密，其他資料庫不受影響。'
                 )}
                 action={
                   <span className="settings-save-requirement">
@@ -1602,7 +1636,7 @@ export function SettingsPage({
               <form className="settings-password-form" onSubmit={submitPassword}>
                 <label className="field">
                   <span className="field__label">
-                    {tr('当前主密码', 'Current master password', '目前主密碼')}
+                    {tr('当前数据库密码', 'Current database password', '目前資料庫密碼')}
                   </span>
                   <span className="input-shell">
                     <input
@@ -1616,7 +1650,7 @@ export function SettingsPage({
                 <div className="field-row">
                   <label className="field">
                     <span className="field__label">
-                      {tr('新主密码', 'New master password', '新主密碼')}
+                      {tr('新数据库密码', 'New database password', '新資料庫密碼')}
                     </span>
                     <span className="input-shell">
                       <input
@@ -1658,7 +1692,7 @@ export function SettingsPage({
                   {changingPassword && <LoaderCircle size={14} className="spin" />}
                   {changingPassword
                     ? tr('正在更新…', 'Updating…', '正在更新…')
-                    : tr('更新主密码', 'Update master password', '更新主密碼')}
+                    : tr('更新数据库密码', 'Update database password', '更新資料庫密碼')}
                 </button>
               </form>
             </div>

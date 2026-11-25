@@ -67,6 +67,8 @@ export interface AccountTabCreateInput {
   name?: string
   color?: string
   source?: 'local' | 'bookmarks'
+  /** 数据库级密码；source 为 bookmarks 时可省略。 */
+  password?: string
 }
 
 export interface AccountTabUpdateInput {
@@ -213,10 +215,29 @@ export interface BookmarkVisitResult {
   reason: string
 }
 
+export interface VaultTabState {
+  id: string
+  locked: boolean
+}
+
 export interface VaultStatus {
   initialized: boolean
   unlocked: boolean
   autoLockMinutes: AutoLockMinutes
+  /** 旧版（主密码）保险库尚未迁移到数据库级密码。 */
+  legacyPasswordRequired: boolean
+  tabs: VaultTabState[]
+}
+
+export interface VaultTabUnlockInput {
+  tabId: string
+  password: string
+}
+
+export interface VaultTabPasswordInput {
+  tabId: string
+  currentPassword: string
+  nextPassword: string
 }
 
 export interface SelectorSpec {
@@ -915,10 +936,12 @@ export interface AppUpdateState {
 export interface AutologinApi {
   vault: {
     status: () => Promise<VaultStatus>
-    create: (masterPassword: string) => Promise<VaultStatus>
+    create: () => Promise<VaultStatus>
     unlock: (masterPassword: string) => Promise<VaultStatus>
     lock: () => Promise<VaultStatus>
-    changePassword: (currentPassword: string, nextPassword: string) => Promise<void>
+    unlockTab: (input: VaultTabUnlockInput) => Promise<VaultStatus>
+    lockTab: (tabId: string) => Promise<VaultStatus>
+    changeTabPassword: (input: VaultTabPasswordInput) => Promise<void>
   }
   sites: {
     list: (tabId?: string) => Promise<Site[]>

@@ -10,7 +10,8 @@ import type {
   AppUpdateState,
   LoginBatchState,
   LoginViewState,
-  Site
+  Site,
+  VaultStatus
 } from '@shared/types'
 import {
   DEFAULT_APP_SETTINGS,
@@ -18,7 +19,7 @@ import {
   resolveThemeColors
 } from '@shared/theme'
 import logoUrl from './assets/app-logo.png'
-import { SetupScreen, UnlockScreen } from './components/AuthScreens'
+import { UnlockScreen } from './components/AuthScreens'
 import { BrandMark } from './components/Brand'
 import { LibraryScreen } from './components/LibraryScreen'
 import { ConfirmDialog } from './components/Modal'
@@ -82,6 +83,7 @@ export default function App(): React.JSX.Element {
   }
 
   const [authState, setAuthState] = useState<AuthState>('boot')
+  const [vaultStatus, setVaultStatus] = useState<VaultStatus | null>(null)
   const [accounts, setAccounts] = useState<AccountWithSite[]>([])
   const [sites, setSites] = useState<Site[]>([])
   const [settings, setSettings] = useState<AppSettings>(DEFAULT_SETTINGS)
@@ -171,18 +173,44 @@ export default function App(): React.JSX.Element {
     setSettings(nextSettings)
   }, [])
 
+  const refreshVaultStatus = useCallback(async (): Promise<void> => {
+    const status = await window.autologin.vault.status()
+    setVaultStatus(status)
+    setSettings((current) => ({ ...current, autoLockMinutes: status.autoLockMinutes }))
+  }, [])
+
+  // 软件本身不再有全局主密码：首次启动直接建立明文外壳并进入主界面，
+  // 每个数据库的密码只在新建 / 解锁 / 修改时输入。
+  const bootstrap = useCallback(async (): Promise<void> => {
+    const [status, version] = await Promise.all([
+      window.autologin.vault.status(),
+      window.autologin.app.getVersion()
+    ])
+    setAppVersion(version)
+    setSettings((current) => ({ ...current, autoLockMinutes: status.autoLockMinutes }))
+    const next = status.initialized ? status : await window.autologin.vault.create()
+    setVaultStatus(next)
+    if (next.legacyPasswordRequired) {
+      setAuthState('unlock')
+      return
+    }
+    await loadData()
+    setBatchState(await window.autologin.login.getBatchState())
+    setAuthState('ready')
+  }, [loadData])
+
   useEffect(() => {
     let cancelled = false
-    void Promise.all([window.autologin.vault.status(), window.autologin.app.getVersion()])
-      .then(([status, version]) => {
-        if (cancelled) return
-        setAppVersion(version)
-        setSettings((current) => ({ ...current, autoLockMinutes: status.autoLockMinutes }))
-        setAuthState(status.initialized ? 'unlock' : 'setup')
-      })
-      .catch(() => {
-        if (!cancelled) setAuthState('setup')
-      })
+    void bootstrap().catch((error: unknown) => {
+      if (cancelled) return
+      setAuthState('boot')
+      notify(
+        'error',
+        error instanceof Error && error.message
+          ? error.message
+          : translate('zh-CN', '无法打开本地数据', 'Could not open local data', '無法開啟本機資料')
+      )
+    })
 
     const unsubscribeLocked = window.autologin.events.onVaultLocked(() => {
       if (!cancelled) {
@@ -190,7 +218,7 @@ export default function App(): React.JSX.Element {
         setBatchState(null)
         setAccounts([])
         setSites([])
-        setAuthState('unlock')
+        void refreshVaultStatus().catch(() => undefined)
       }
     })
     const unsubscribeBatch = window.autologin.events.onLoginBatchState((state) => {
@@ -203,7 +231,7 @@ export default function App(): React.JSX.Element {
       unsubscribeLocked()
       unsubscribeBatch()
     }
-  }, [])
+  }, [bootstrap, notify, refreshVaultStatus])
 
   useEffect(() => {
     let cancelled = false
@@ -442,33 +470,74 @@ export default function App(): React.JSX.Element {
     }
   }, [])
 
-  async function createVault(password: string): Promise<void> {
-    const status = await window.autologin.vault.create(password)
+  async function recreateVault(): Promise<void> {
+    const status = await window.autologin.vault.create()
+    setVaultStatus(status)
+    setSettings((current) => ({ ...current, autoLockMinutes: status.autoLockMinutes }))
+    await loadData()
+    setBatchState(await window.autologin.login.getBatchState())
+    setAuthState('ready')
+  }
+
+  // 旧版单一主密码保险库 → 每库独立密码。迁移时输入一次旧主密码，迁移后所有库直接打开。
+  async function unlockVault(password: string): Promise<void> {
+    const status = await window.autologin.vault.unlock(password)
+    setVaultStatus(status)
     setSettings((current) => ({ ...current, autoLockMinutes: status.autoLockMinutes }))
     await loadData()
     setBatchState(await window.autologin.login.getBatchState())
     setAuthState('ready')
     notify(
       'success',
-      translate(settings.language, '保险库已创建', 'Vault created', '保險庫已建立')
+      translate(
+        settings.language,
+        '旧版保险库已迁移：现在每个数据库使用自己的密码',
+        'Legacy vault migrated. Each database now uses its own password.',
+        '舊版保險庫已遷移：現在每個資料庫使用自己的密碼'
+      )
     )
   }
 
-  async function unlockVault(password: string): Promise<void> {
-    const status = await window.autologin.vault.unlock(password)
-    setSettings((current) => ({ ...current, autoLockMinutes: status.autoLockMinutes }))
-    await loadData()
-    setBatchState(await window.autologin.login.getBatchState())
-    setAuthState('ready')
-  }
-
   async function lockVault(): Promise<void> {
-    await window.autologin.vault.lock()
+    const status = await window.autologin.vault.lock()
+    setVaultStatus(status)
     setLoginState(null)
     setBatchState(null)
     setAccounts([])
     setSites([])
-    setAuthState('unlock')
+  }
+
+  async function unlockTabPassword(tabId: string, password: string): Promise<void> {
+    try {
+      const status = await window.autologin.vault.unlockTab({ tabId, password })
+      setVaultStatus(status)
+      await loadData()
+    } catch (error) {
+      // 主进程会把命令名和耗时拼进错误信息，这里只把用户能看懂的那半句交给界面。
+      const raw = error instanceof Error ? error.message : ''
+      const cleaned = raw.replace(/^[^：]{0,40}失败（耗时[^）]*）：/, '')
+      if (cleaned.includes('密码不正确')) {
+        throw new Error(
+          translate(
+            settings.language,
+            '数据库密码不正确，或数据库文件已损坏',
+            'Incorrect database password, or the database file is damaged.',
+            '資料庫密碼不正確，或資料庫檔案已損壞'
+          )
+        )
+      }
+      throw new Error(cleaned || raw)
+    }
+  }
+
+  async function lockTab(tabId: string): Promise<void> {
+    const status = await window.autologin.vault.lockTab(tabId)
+    setVaultStatus(status)
+    await loadData()
+    notify(
+      'success',
+      translate(settings.language, '数据库已锁定', 'Database locked.', '資料庫已鎖定')
+    )
   }
 
   async function resetVault(): Promise<void> {
@@ -480,14 +549,15 @@ export default function App(): React.JSX.Element {
       setLoginState(null)
       setBatchState(null)
       setResetOpen(false)
-      setAuthState('setup')
+      // 清除后立刻重建一个空外壳，直接回到主界面的「没有打开的数据库」空态。
+      await recreateVault()
       notify(
         'success',
         translate(
           settings.language,
-          '本地数据已清除，可以重新创建保险库',
-          'Local data cleared. You can create a new vault.',
-          '本機資料已清除，可以重新建立保險庫'
+          '本地数据已清除，可以重新创建数据库',
+          'Local data cleared. You can create a new database.',
+          '本機資料已清除，可以重新建立資料庫'
         )
       )
     } catch (error) {
@@ -663,8 +733,6 @@ export default function App(): React.JSX.Element {
         </main>
       )}
 
-      {authState === 'setup' && <SetupScreen onCreate={createVault} />}
-
       {authState === 'unlock' && (
         <>
           <UnlockScreen onUnlock={unlockVault} onForgot={() => setResetOpen(true)} />
@@ -695,6 +763,10 @@ export default function App(): React.JSX.Element {
           onRecordingFinishHandled={() => setRecordingFinishRequest(0)}
           onRefresh={loadData}
           onLock={lockVault}
+          vaultTabs={vaultStatus?.tabs ?? []}
+          onUnlockTab={unlockTabPassword}
+          onLockTab={lockTab}
+          onVaultStatusChange={refreshVaultStatus}
           onStartBatch={startBatch}
           onRecord={openRecording}
           onDownloadUpdate={downloadUpdate}
@@ -703,7 +775,14 @@ export default function App(): React.JSX.Element {
           onCleared={() => {
             setAccounts([])
             setSites([])
-            setAuthState('setup')
+            void recreateVault().catch((error: unknown) => {
+              notify(
+                'error',
+                error instanceof Error && error.message
+                  ? error.message
+                  : translate('zh-CN', '重新建立数据库失败', 'Could not recreate the vault', '重新建立資料庫失敗')
+              )
+            })
           }}
           notify={notify}
         />

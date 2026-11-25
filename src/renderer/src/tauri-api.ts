@@ -25,7 +25,9 @@ const LONG_CALL_TIMEOUT_MS = 10 * 60_000 + 5_000
 const CALL_LABELS: Record<string, string> = {
   'vault:create': '创建保险库',
   'vault:unlock': '解锁保险库',
-  'vault:change-password': '更新主密码',
+  'vault:tab-unlock': '解锁数据库',
+  'vault:tab-lock': '锁定数据库',
+  'vault:tab-password': '更新数据库密码',
   'sites:save': '保存站点信息',
   'sites:delete': '删除站点',
   'accounts:create': '创建账号',
@@ -188,11 +190,12 @@ function subscribe<T>(channel: string, callback: (payload: T) => void): () => vo
 const api: AutologinApi = {
   vault: {
     status: () => call('vault:status'),
-    create: (masterPassword) => call('vault:create', masterPassword),
+    create: () => call('vault:create'),
     unlock: (masterPassword) => call('vault:unlock', masterPassword),
     lock: () => call('vault:lock'),
-    changePassword: (currentPassword, nextPassword) =>
-      call('vault:change-password', { currentPassword, nextPassword })
+    unlockTab: (input) => call('vault:tab-unlock', input),
+    lockTab: (tabId) => call('vault:tab-lock', tabId),
+    changeTabPassword: (input) => call('vault:tab-password', input)
   },
   sites: {
     list: (tabId) => call('sites:list', tabId),

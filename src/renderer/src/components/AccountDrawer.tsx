@@ -2524,6 +2524,23 @@ export function AccountDrawer({
                         </span>
                         <ChevronDown size={14} className="account-otp__chevron" />
                       </button>
+                      <button
+                        type="button"
+                        className="account-otp__info"
+                        title={tr(
+                          '支持 {digits} 位、{period} 秒的 {algorithm} TOTP。密钥只保存在本机加密数据库中，不会上传。',
+                          'Supports {digits}-digit, {period}-second {algorithm} TOTP. The secret stays in the local encrypted vault.',
+                          '支援 {digits} 位、{period} 秒的 {algorithm} TOTP。密鑰只儲存在本機加密資料庫中，不會上傳。',
+                          {
+                            digits: otpConfig.digits,
+                            period: otpConfig.period,
+                            algorithm: otpConfig.algorithm.replace('SHA', 'SHA-')
+                          }
+                        )}
+                        aria-label={tr('TOTP 支持说明', 'TOTP support notes', 'TOTP 支援說明')}
+                      >
+                        <Info size={14} />
+                      </button>
                     </div>
 
                     {otpExpanded && account?.hasOtp && !otpCleared && !otpEditing && (
@@ -2819,23 +2836,6 @@ export function AccountDrawer({
                               {tr('选择图片', 'choose a file', '選擇圖片')}
                             </button>
                           </p>
-                          <button
-                            type="button"
-                            className="account-otp__scan-info"
-                            title={tr(
-                              '支持 {digits} 位、{period} 秒的 {algorithm} TOTP。密钥只保存在本机加密数据库中，不会上传。',
-                              'Supports {digits}-digit, {period}-second {algorithm} TOTP. The secret stays in the local encrypted vault.',
-                              '支援 {digits} 位、{period} 秒的 {algorithm} TOTP。密鑰只儲存在本機加密資料庫中，不會上傳。',
-                              {
-                                digits: otpConfig.digits,
-                                period: otpConfig.period,
-                                algorithm: otpConfig.algorithm.replace('SHA', 'SHA-')
-                              }
-                            )}
-                            aria-label={tr('TOTP 支持说明', 'TOTP support notes', 'TOTP 支援說明')}
-                          >
-                            <Info size={14} />
-                          </button>
                           <input
                             ref={otpImageRef}
                             type="file"

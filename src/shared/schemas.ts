@@ -526,11 +526,17 @@ export const accountMoveInputSchema = z
   })
   .strict()
 
+export const databasePasswordSchema = z
+  .string()
+  .min(10, '数据库密码至少需要 10 个字符')
+  .max(256)
+
 export const accountTabCreateInputSchema = z
   .object({
     name: tabFileSafeNameSchema.optional(),
     color: tabColorSchema.optional(),
-    source: z.enum(['local', 'bookmarks']).optional()
+    source: z.enum(['local', 'bookmarks']).optional(),
+    password: databasePasswordSchema.optional()
   })
   .strict()
   .optional()
@@ -601,6 +607,21 @@ export const changePasswordSchema = z.object({
   currentPassword: z.string().min(1),
   nextPassword: masterPasswordSchema
 })
+
+export const vaultTabUnlockSchema = z
+  .object({
+    tabId: idSchema,
+    password: z.string().min(1).max(256)
+  })
+  .strict()
+
+export const vaultTabPasswordSchema = z
+  .object({
+    tabId: idSchema,
+    currentPassword: z.string().min(1).max(256),
+    nextPassword: databasePasswordSchema
+  })
+  .strict()
 
 export const loginLogQuerySchema = z
   .object({

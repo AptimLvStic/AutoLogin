@@ -25541,7 +25541,23 @@ body.is-dragging-group .account-subnav__group-grip:active {
 }
 
 .account-otp__head {
-  display: block;
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 2px;
+  padding-right: 12px;
+}
+
+/* 头部按内容左对齐收拢：标题、状态徽标、展开箭头与 ⓘ 说明连成一簇，
+   而不是让徽标被推到卡片右缘、说明图标孤零零落在最右侧。 */
+.account-otp__head .account-otp__toggle {
+  flex: 0 1 auto;
+  width: auto;
+  max-width: 100%;
+}
+
+.account-otp__head .account-otp__info {
+  margin-left: 2px;
 }
 
 .account-otp__toggle {
@@ -26257,12 +26273,11 @@ body.is-dragging-group .account-subnav__group-grip:active {
 .account-otp__editor-foot {
   justify-content: flex-end;
 }
-.account-otp__scan-info {
+.account-otp__info {
   display: grid;
   width: 24px;
   height: 24px;
   flex: 0 0 auto;
-  margin-left: auto;
   place-items: center;
   border: 0;
   border-radius: 50%;
@@ -26270,11 +26285,11 @@ body.is-dragging-group .account-subnav__group-grip:active {
   color: var(--ink-faint);
   cursor: help;
 }
-.account-otp__scan-info:hover {
+.account-otp__info:hover {
   background: color-mix(in srgb, var(--accent) 10%, transparent);
   color: var(--accent-strong);
 }
-.account-otp__scan-info:focus-visible {
+.account-otp__info:focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: 1px;
 }
@@ -26331,4 +26346,66 @@ body.is-dragging-group .account-subnav__group-grip:active {
 
 .toast:has(.toast__actions) {
   max-width: 560px;
+}
+
+/* 数据库锁定态：沿用空态的画幅与排版，只把两枚动作按钮换成密码表单。 */
+.library-database-locked-state .empty-state__art span:nth-child(2) {
+  border-color: color-mix(in srgb, var(--accent) 22%, transparent);
+}
+
+.library-database-locked-state__form {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  width: min(420px, 100%);
+  margin-top: 22px;
+}
+
+.library-database-locked-state__form .input-shell {
+  flex: 1 1 220px;
+  min-width: 0;
+}
+
+.library-database-locked-state__form .button {
+  flex: 0 0 auto;
+  margin-top: 0;
+  white-space: nowrap;
+}
+
+.library-database-locked-state > .form-error {
+  max-width: 420px;
+  margin-top: 12px;
+  text-align: center;
+}
+
+@media (max-width: 520px) {
+  .library-database-locked-state__form {
+    width: 100%;
+  }
+
+  .library-database-locked-state__form .input-shell,
+  .library-database-locked-state__form .button {
+    flex: 1 1 100%;
+  }
+}
+
+.library-database-locked-state > p {
+  max-width: 520px;
+}
+
+.library-database-locked-state__aside {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  margin-top: 18px;
+  color: var(--muted);
+  font-size: calc(12px * var(--font-scale, 1));
+}
+
+.library-database-locked-state__aside .button {
+  margin-top: 0;
 }

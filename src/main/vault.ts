@@ -87,12 +87,68 @@ export class VaultError extends Error {
   }
 }
 
+interface VaultTabKey {
+  key: Buffer
+  salt: Buffer
+}
+
+interface VaultShell {
+  schemaVersion: 2
+  tabs: AccountTab[]
+  settings: AppSettings
+  favoriteGroups: string[]
+  tabBlobs: Record<string, string>
+  /** 书签标签页没有密码，内容以明文保存在外壳里。 */
+  plain: TabSlice
+}
+
+type TabSlice = {
+  sites: VaultData['sites']
+  accounts: VaultData['accounts']
+  groupDefinitions: VaultData['groupDefinitions']
+  deletedAccounts: VaultData['deletedAccounts']
+}
+
+function sliceForTab(data: VaultData, tabId: string): TabSlice {
+  return {
+    sites: data.sites.filter((item) => item.tabId === tabId),
+    accounts: data.accounts.filter((item) => item.tabId === tabId),
+    groupDefinitions: data.groupDefinitions.filter((item) => item.tabId === tabId),
+    deletedAccounts: data.deletedAccounts.filter((item) => item.tabId === tabId)
+  }
+}
+
+function parseTabSlice(raw: unknown, tab: AccountTab): TabSlice {
+  const source = (raw ?? {}) as Partial<TabSlice>
+  const candidate: VaultData = {
+    schemaVersion: 1,
+    tabs: [tab],
+    sites: Array.isArray(source.sites) ? source.sites : [],
+    accounts: Array.isArray(source.accounts) ? source.accounts : [],
+    groupDefinitions: Array.isArray(source.groupDefinitions) ? source.groupDefinitions : [],
+    deletedAccounts: Array.isArray(source.deletedAccounts) ? source.deletedAccounts : [],
+    favoriteGroups: [],
+    settings: DEFAULT_APP_SETTINGS
+  }
+  const parsed = vaultDataSchema.safeParse(candidate)
+  if (!parsed.success) {
+    throw new VaultError('数据库内容已损坏', 'CORRUPTED')
+  }
+  return {
+    sites: parsed.data.sites,
+    accounts: parsed.data.accounts,
+    groupDefinitions: parsed.data.groupDefinitions,
+    deletedAccounts: parsed.data.deletedAccounts
+  }
+}
+
 export class VaultManager {
-  private readonly vaultPath: string
+  private readonly shellPath: string
   private readonly backupPath: string
-  private key: Buffer | null = null
-  private salt: Buffer | null = null
+  private readonly legacyPath: string
+  private shell: VaultShell | null = null
   private data: VaultData | null = null
+  private readonly tabKeys = new Map<string, VaultTabKey>()
   private lockTimer: NodeJS.Timeout | null = null
   private autoLockMinutes: AutoLockMinutes = 10
   private beforeSaveListener: ((data: VaultData) => void) | null = null
@@ -100,135 +156,225 @@ export class VaultManager {
     | ((data: VaultData, options?: VaultSaveOptions) => void)
     | null = null
 
-  constructor(
-    userDataPath: string,
-    private readonly onLocked: () => void
-  ) {
+  constructor(userDataPath: string, private readonly onLocked: () => void) {
     mkdirSync(userDataPath, { recursive: true })
-    this.vaultPath = join(userDataPath, 'vault.enc')
-    this.backupPath = join(userDataPath, 'vault.enc.bak')
+    this.shellPath = join(userDataPath, 'vault.json')
+    this.backupPath = join(userDataPath, 'vault.json.bak')
+    this.legacyPath = join(userDataPath, 'vault.enc')
   }
 
+  /** 备份/覆盖安装只认这一个路径：新格式是 vault.json，迁移前是 vault.enc。 */
   get path(): string {
-    return this.vaultPath
+    return existsSync(this.shellPath) ? this.shellPath : this.legacyPath
   }
 
   get backup(): string {
     return this.backupPath
   }
 
+  get legacyPasswordRequired(): boolean {
+    return !existsSync(this.shellPath) && existsSync(this.legacyPath)
+  }
+
   status(): VaultStatus {
+    this.initShell()
     return {
-      initialized: existsSync(this.vaultPath),
-      unlocked: this.data !== null,
-      autoLockMinutes: this.autoLockMinutes
+      initialized: existsSync(this.shellPath) || existsSync(this.legacyPath),
+      unlocked: this.tabKeys.size > 0,
+      autoLockMinutes: this.autoLockMinutes,
+      legacyPasswordRequired: this.legacyPasswordRequired,
+      tabs: (this.shell?.tabs ?? []).map((tab) => ({
+        id: tab.id,
+        locked: this.isTabLocked(tab.id)
+      }))
     }
   }
 
-  async create(masterPassword: string): Promise<VaultStatus> {
-    if (existsSync(this.vaultPath)) {
+  /**
+   * 读取明文外壳（标签页列表、外观设置、各库的加密载荷）。启动、状态查询、
+   * 备份恢复之后都必须走这里，确保内存视图和磁盘一致。
+   */
+  initShell(): boolean {
+    if (this.data) return true
+    if (!existsSync(this.shellPath)) return false
+    try {
+      const raw = JSON.parse(readFileSync(this.shellPath, 'utf8')) as Partial<VaultShell>
+      if (raw.schemaVersion !== 2 || !Array.isArray(raw.tabs) || !raw.settings) {
+        return false
+      }
+      this.shell = {
+        schemaVersion: 2,
+        tabs: raw.tabs,
+        settings: raw.settings,
+        favoriteGroups: Array.isArray(raw.favoriteGroups) ? raw.favoriteGroups : [],
+        tabBlobs:
+          raw.tabBlobs && typeof raw.tabBlobs === 'object' ? { ...raw.tabBlobs } : {},
+        plain: {
+          sites: Array.isArray(raw.plain?.sites) ? raw.plain.sites : [],
+          accounts: Array.isArray(raw.plain?.accounts) ? raw.plain.accounts : [],
+          groupDefinitions: Array.isArray(raw.plain?.groupDefinitions)
+            ? raw.plain.groupDefinitions
+            : [],
+          deletedAccounts: Array.isArray(raw.plain?.deletedAccounts)
+            ? raw.plain.deletedAccounts
+            : []
+        }
+      }
+      this.assembleData()
+      this.autoLockMinutes = this.shell.settings.autoLockMinutes
+      return true
+    } catch {
+      return false
+    }
+  }
+
+  isTabLocked(tabId: string): boolean {
+    const tab = this.shell?.tabs.find((item) => item.id === tabId)
+    if (!tab) return true
+    if (tab.source === 'bookmarks') return false
+    return !this.tabKeys.has(tabId)
+  }
+
+  async create(): Promise<VaultStatus> {
+    if (existsSync(this.shellPath) || existsSync(this.legacyPath)) {
       throw new VaultError('保险库已存在', 'EXISTS')
     }
-
-    const data: VaultData = {
-      schemaVersion: 1,
+    this.shell = {
+      schemaVersion: 2,
       tabs: [],
-      sites: [],
-      accounts: [],
-      groupDefinitions: [],
-      deletedAccounts: [],
+      settings: structuredClone(DEFAULT_APP_SETTINGS),
       favoriteGroups: [],
-      settings: structuredClone(DEFAULT_APP_SETTINGS)
+      tabBlobs: {},
+      plain: { sites: [], accounts: [], groupDefinitions: [], deletedAccounts: [] }
     }
-
-    const salt = randomBytes(SALT_LENGTH)
-    const key = await deriveKey(masterPassword, salt)
-    this.data = data
-    this.key = key
-    this.salt = salt
-    this.autoLockMinutes = data.settings.autoLockMinutes
-    this.writeEncrypted()
+    this.tabKeys.clear()
+    this.assembleData()
+    this.autoLockMinutes = this.shell.settings.autoLockMinutes
+    this.persistShell()
     this.scheduleLock()
     return this.status()
   }
 
-  async unlock(masterPassword: string): Promise<VaultStatus> {
-    if (!existsSync(this.vaultPath)) {
+  /** 旧版单一主密码保险库：迁移成「每个库各自密码」，一次输入即可全部打开。 */
+  async unlock(password: string): Promise<VaultStatus> {
+    return this.unlockLegacy(password)
+  }
+
+  async unlockLegacy(password: string): Promise<VaultStatus> {
+    if (!existsSync(this.legacyPath)) {
       throw new VaultError('保险库尚未创建', 'INVALID')
     }
-
-    try {
-      const decrypted = await this.decryptFile(this.vaultPath, masterPassword)
-      this.applyDecrypted(decrypted)
-    } catch (error) {
-      if (!existsSync(this.backupPath)) {
-        throw normalizeUnlockError(error)
-      }
-
+    const text = readFileSync(this.legacyPath, 'utf8')
+    const envelope = parseEnvelope(text, 'autologin-vault')
+    const decrypted = await decryptEnvelope(envelope, password)
+    const parsed = vaultDataSchema.safeParse(decrypted.data)
+    if (!parsed.success) {
+      decrypted.key.fill(0)
+      throw new VaultError('保险库文件已损坏', 'CORRUPTED')
+    }
+    const data = parsed.data
+    const salt = Buffer.from(envelope.kdf.salt, 'base64')
+    const tabBlobs: Record<string, string> = {}
+    for (const tab of data.tabs) {
+      if (tab.source === 'bookmarks') continue
+      const slice = sliceForTab(data, tab.id)
+      tabBlobs[tab.id] = JSON.stringify(
+        buildEnvelopeFromKey(
+          Buffer.from(JSON.stringify(slice), 'utf8'),
+          decrypted.key,
+          salt,
+          'autologin-vault'
+        )
+      )
+    }
+    const shell: VaultShell = {
+      schemaVersion: 2,
+      tabs: data.tabs,
+      settings: data.settings,
+      favoriteGroups: data.favoriteGroups,
+      tabBlobs,
+      plain: this.plainSlice(data)
+    }
+    this.writeShellFile(shell, false)
+    renameSync(this.legacyPath, this.legacyPath + '.migrated')
+    if (existsSync(this.legacyPath + '.bak')) {
       try {
-        const recovered = await this.decryptFile(this.backupPath, masterPassword)
-        copyFileSync(this.backupPath, this.vaultPath)
-        this.applyDecrypted(recovered)
+        rmSync(this.legacyPath + '.bak', { force: true })
       } catch {
-        throw normalizeUnlockError(error)
+        // 旧备份删不掉不影响迁移，下次清扫再处理。
       }
     }
-
+    this.shell = shell
+    this.data = data
+    this.tabKeys.clear()
+    for (const tab of data.tabs) {
+      if (tab.source === 'bookmarks') continue
+      this.tabKeys.set(tab.id, { key: Buffer.from(decrypted.key), salt: Buffer.from(salt) })
+    }
+    this.autoLockMinutes = data.settings.autoLockMinutes
     this.scheduleLock()
     return this.status()
   }
 
+  /** 关闭全部数据库；外壳与设置仍然可用。 */
   lock(): VaultStatus {
     this.clearLockTimer()
-    if (this.key) {
-      this.key.fill(0)
+    for (const tabId of Array.from(this.tabKeys.keys())) {
+      this.dropTabRows(tabId)
     }
-    this.key = null
-    this.salt = null
-    this.data = null
+    this.tabKeys.clear()
     this.onLocked()
     return this.status()
   }
 
-  touch(): void {
-    if (this.data) {
-      this.scheduleLock()
+  lockTab(tabId: string): VaultStatus {
+    if (this.tabKeys.has(tabId)) {
+      this.dropTabRows(tabId)
+      this.tabKeys.delete(tabId)
     }
+    this.clearLockTimer()
+    this.scheduleLock()
+    this.onLocked()
+    return this.status()
   }
 
-  setSaveListener(
-    listener: ((data: VaultData, options?: VaultSaveOptions) => void) | null
-  ): void {
-    this.saveListener = listener
-  }
-
-  setBeforeSaveListener(listener: ((data: VaultData) => void) | null): void {
-    this.beforeSaveListener = listener
-  }
-
-  requireData(): VaultData {
-    if (!this.data) {
-      throw new VaultError('保险库已锁定', 'LOCKED')
+  async unlockTab(tabId: string, password: string): Promise<VaultStatus> {
+    const shell = this.requireShell()
+    const tab = shell.tabs.find((item) => item.id === tabId)
+    if (!tab) {
+      throw new VaultError('数据库不存在', 'INVALID')
     }
-    this.touch()
-    return this.data
-  }
-
-  /**
-   * 只读访问：不续期自动锁定计时器。OTP 轮询这类每秒发生的读取必须走这里，
-   * 否则自动锁定永远不会触发。
-   */
-  peekData(): VaultData {
-    if (!this.data) {
-      throw new VaultError('保险库已锁定', 'LOCKED')
+    if (tab.source === 'bookmarks') {
+      return this.status()
     }
-    return this.data
+    const existing = shell.tabBlobs[tabId]
+    if (!existing) {
+      const salt = randomBytes(SALT_LENGTH)
+      const key = await deriveKey(password, salt)
+      this.tabKeys.set(tabId, { key, salt })
+      this.save()
+      return this.status()
+    }
+    const envelope = parseEnvelope(existing, 'autologin-vault')
+    const decrypted = await decryptEnvelope(envelope, password)
+    const slice = parseTabSlice(decrypted.data, tab)
+    this.tabKeys.set(tabId, {
+      key: decrypted.key,
+      salt: Buffer.from(envelope.kdf.salt, 'base64')
+    })
+    this.mergeSlice(tabId, slice)
+    this.scheduleLock()
+    return this.status()
   }
 
-  /** 校验主密码，不改变当前解锁状态，也不续期自动锁定。 */
-  async verifyPassword(password: string): Promise<boolean> {
+  async verifyTabPassword(tabId: string, password: string): Promise<boolean> {
+    const shell = this.requireShell()
+    const tab = shell.tabs.find((item) => item.id === tabId)
+    if (tab?.source === 'bookmarks') return true
+    const blob = shell.tabBlobs[tabId]
+    if (!blob) return false
     try {
-      const envelope = this.readEnvelope(this.vaultPath)
+      const envelope = parseEnvelope(blob, 'autologin-vault')
       const decrypted = await decryptEnvelope(envelope, password)
       decrypted.key.fill(0)
       return true
@@ -237,77 +383,228 @@ export class VaultManager {
     }
   }
 
+  async changeTabPassword(tabId: string, currentPassword: string, nextPassword: string): Promise<void> {
+    const shell = this.requireShell()
+    const tab = shell.tabs.find((item) => item.id === tabId)
+    if (!tab) {
+      throw new VaultError('数据库不存在', 'INVALID')
+    }
+    if (tab.source === 'bookmarks') {
+      throw new VaultError('书签数据库不需要密码', 'INVALID')
+    }
+    const blob = shell.tabBlobs[tabId]
+    if (!blob) {
+      const salt = randomBytes(SALT_LENGTH)
+      const key = await deriveKey(nextPassword, salt)
+      this.tabKeys.set(tabId, { key, salt })
+      this.save()
+      return
+    }
+    const envelope = parseEnvelope(blob, 'autologin-vault')
+    const decrypted = await decryptEnvelope(envelope, currentPassword)
+    const slice = this.tabKeys.has(tabId) && this.data
+      ? sliceForTab(this.data, tabId)
+      : parseTabSlice(decrypted.data, tab)
+    decrypted.key.fill(0)
+    const salt = randomBytes(SALT_LENGTH)
+    const key = await deriveKey(nextPassword, salt)
+    this.tabKeys.set(tabId, { key, salt })
+    if (!this.data) {
+      this.assembleData()
+    }
+    this.mergeSlice(tabId, slice)
+    this.save()
+  }
+
+  requireData(): VaultData {
+    if (!this.data) {
+      throw new VaultError('保险库已锁定', 'LOCKED')
+    }
+    return this.data
+  }
+
+  peekData(): VaultData | null {
+    return this.data
+  }
+
+  getSettings(): AppSettings {
+    return this.data?.settings ?? this.shell?.settings ?? DEFAULT_APP_SETTINGS
+  }
+
+  updateSettings(patch: AppSettingsPatch): AppSettings {
+    const data = this.requireData()
+    data.settings = { ...data.settings, ...patch }
+    if (this.shell) this.shell.settings = data.settings
+    this.autoLockMinutes = data.settings.autoLockMinutes
+    this.save()
+    return data.settings
+  }
+
+  setSaveListener(
+    listener: (data: VaultData, options?: VaultSaveOptions) => void
+  ): void {
+    this.saveListener = listener
+  }
+
+  setBeforeSaveListener(listener: (data: VaultData) => void): void {
+    this.beforeSaveListener = listener
+  }
+
   save(options?: VaultSaveOptions): void {
     const data = this.requireData()
     this.beforeSaveListener?.(data)
-    this.writeEncrypted(options)
+    this.persistShell()
+    this.saveListener?.(data, options)
     this.touch()
   }
 
   async saveAsync(options?: VaultSaveOptions): Promise<void> {
     markStage('vault.saveAsync 进入')
-    const data = this.requireData()
-    this.beforeSaveListener?.(data)
-    markStage('vault.saveAsync 序列化与备份')
-    await this.writeEncryptedAsync(options)
+    this.save(options)
     markStage('vault.saveAsync 写盘完成')
-    this.touch()
+    await fsPromises.access(this.shellPath)
   }
 
-  getSettings(): AppSettings {
-    return structuredClone(this.requireData().settings)
-  }
-
-  updateSettings(patch: AppSettingsPatch): AppSettings {
-    const data = this.requireData()
-    data.settings = {
-      ...data.settings,
-      ...patch,
-      ...(patch.proxy ? { proxy: { ...data.settings.proxy, ...patch.proxy } } : {}),
-      ...(patch.customTheme
-        ? { customTheme: { ...data.settings.customTheme, ...patch.customTheme } }
-        : {})
-    }
-    this.autoLockMinutes = data.settings.autoLockMinutes
-    this.save()
+  touch(): void {
+    if (!this.data) return
     this.scheduleLock()
-    return structuredClone(data.settings)
   }
 
-  async changePassword(currentPassword: string, nextPassword: string): Promise<void> {
-    const data = this.requireData()
-    const envelope = this.readEnvelope(this.vaultPath)
+  private scheduleLock(): void {
+    this.clearLockTimer()
+    if (this.autoLockMinutes <= 0) return
+    if (this.tabKeys.size === 0) return
+    const timeout = this.autoLockMinutes * 60 * 1000
+    this.lockTimer = setTimeout(() => {
+      this.lockTimer = null
+      this.lock()
+    }, timeout)
+    this.lockTimer.unref?.()
+  }
 
+  private clearLockTimer(): void {
+    if (this.lockTimer) {
+      clearTimeout(this.lockTimer)
+      this.lockTimer = null
+    }
+  }
+
+  private requireShell(): VaultShell {
+    this.initShell()
+    if (!this.shell) {
+      throw new VaultError('保险库尚未创建', 'LOCKED')
+    }
+    return this.shell
+  }
+
+  private assembleData(): void {
+    const shell = this.shell
+    if (!shell) {
+      this.data = null
+      return
+    }
+    this.data = {
+      schemaVersion: 1,
+      tabs: shell.tabs,
+      sites: [...shell.plain.sites],
+      accounts: [...shell.plain.accounts],
+      groupDefinitions: [...shell.plain.groupDefinitions],
+      deletedAccounts: [...shell.plain.deletedAccounts],
+      favoriteGroups: shell.favoriteGroups,
+      settings: shell.settings
+    }
+  }
+
+  /** 书签库的明文行（无密码库），写外壳时整体保存。 */
+  private plainSlice(data: VaultData): TabSlice {
+    const bookmarkTabIds = new Set(
+      data.tabs.filter((tab) => tab.source === 'bookmarks').map((tab) => tab.id)
+    )
+    const pick = <T extends { tabId: string }>(rows: T[]): T[] =>
+      rows.filter((row) => bookmarkTabIds.has(row.tabId))
+    return {
+      sites: pick(data.sites),
+      accounts: pick(data.accounts),
+      groupDefinitions: pick(data.groupDefinitions),
+      deletedAccounts: pick(data.deletedAccounts)
+    }
+  }
+
+  private dropTabRows(tabId: string): void {
+    const data = this.data
+    if (!data) return
+    data.sites = data.sites.filter((item) => item.tabId !== tabId)
+    data.accounts = data.accounts.filter((item) => item.tabId !== tabId)
+    data.groupDefinitions = data.groupDefinitions.filter((item) => item.tabId !== tabId)
+    data.deletedAccounts = data.deletedAccounts.filter((item) => item.tabId !== tabId)
+  }
+
+  private mergeSlice(tabId: string, slice: TabSlice): void {
+    const data = this.requireData()
+    this.dropTabRows(tabId)
+    data.sites.push(...slice.sites.map((item) => ({ ...item, tabId })))
+    data.accounts.push(...slice.accounts.map((item) => ({ ...item, tabId })))
+    data.groupDefinitions.push(
+      ...slice.groupDefinitions.map((item) => ({ ...item, tabId }))
+    )
+    data.deletedAccounts.push(...slice.deletedAccounts.map((item) => ({ ...item, tabId })))
+  }
+
+  private persistShell(): void {
+    const shell = this.requireShell()
+    const data = this.requireData()
+    const tabBlobs: Record<string, string> = {}
+    for (const tab of data.tabs) {
+      // 书签数据库没有密码，数据以明文保存在外壳的 plain 字段里。
+      if (tab.source === 'bookmarks') continue
+      const tabKey = this.tabKeys.get(tab.id)
+      if (tabKey) {
+        const slice = sliceForTab(data, tab.id)
+        tabBlobs[tab.id] = JSON.stringify(
+          buildEnvelopeFromKey(
+            Buffer.from(JSON.stringify(slice), 'utf8'),
+            tabKey.key,
+            tabKey.salt,
+            'autologin-vault'
+          )
+        )
+      } else {
+        const existing = shell.tabBlobs[tab.id]
+        if (existing) tabBlobs[tab.id] = existing
+      }
+    }
+    const next: VaultShell = {
+      schemaVersion: 2,
+      tabs: data.tabs,
+      settings: data.settings,
+      favoriteGroups: data.favoriteGroups,
+      tabBlobs,
+      plain: this.plainSlice(data)
+    }
+    this.writeShellFile(next, true)
+    this.shell = next
+  }
+
+  private writeShellFile(shell: VaultShell, keepBackup: boolean): void {
+    const serialized = JSON.stringify(shell, null, 2)
+    if (keepBackup && existsSync(this.shellPath)) {
+      try {
+        copyFileSync(this.shellPath, this.backupPath)
+      } catch {
+        // 备份失败不影响主文件写入。
+      }
+    }
+    const tempPath = this.shellPath + '.' + process.pid + '.tmp'
+    const file = openSync(tempPath, 'w', 0o600)
     try {
-      await decryptEnvelope(envelope, currentPassword)
-    } catch {
-      throw new VaultError('当前主密码不正确', 'WRONG_PASSWORD')
+      writeSync(file, serialized)
+      fsyncSync(file)
+    } finally {
+      closeSync(file)
     }
-
-    const nextSalt = randomBytes(SALT_LENGTH)
-    const nextKey = await deriveKey(nextPassword, nextSalt)
-    if (this.key) {
-      this.key.fill(0)
-    }
-    this.key = nextKey
-    this.salt = nextSalt
-    this.data = data
-    this.writeEncrypted()
-    // The previous backup was encrypted with the old password, so replace it
-    // with the newly encrypted vault to prevent the old key from unlocking it.
-    copyFileSync(this.vaultPath, this.backupPath)
-    this.scheduleLock()
+    renameSync(tempPath, this.shellPath)
   }
 
-  copyEncryptedTo(destination: string): void {
-    this.requireData()
-    this.readEnvelope(this.vaultPath)
-    copyFileSync(this.vaultPath, destination)
-  }
-
-  /**
-   * 用调用方指定的密码导出整库快照（与主密码无关），供「数据导出」使用。
-   */
   async exportEncryptedTo(destination: string, password: string): Promise<void> {
     const data = this.requireData()
     const serialized = await encryptBufferWithPassword(
@@ -318,227 +615,94 @@ export class VaultManager {
     writeSerializedEnvelope(destination, serialized)
   }
 
-  async readEncryptedSnapshot(path: string, password: string): Promise<VaultData> {
-    try {
-      const decrypted = await this.decryptFile(path, password)
-      const data = structuredClone(decrypted.data)
-      decrypted.key.fill(0)
-      return data
-    } catch (error) {
-      throw normalizeUnlockError(error)
+  copyEncryptedTo(destination: string): void {
+    copyFileSync(this.path, destination)
+  }
+
+  async readEncryptedSnapshot(sourcePath: string, password: string): Promise<VaultData> {
+    const text = await fsPromises.readFile(sourcePath, 'utf8')
+    const envelope = parseEnvelope(text, 'autologin-vault')
+    const decrypted = await decryptEnvelope(envelope, password)
+    const parsed = vaultDataSchema.safeParse(decrypted.data)
+    decrypted.key.fill(0)
+    if (!parsed.success) {
+      throw new VaultError('保险库文件已损坏', 'CORRUPTED')
     }
+    return parsed.data
+  }
+
+  /** 单库镜像文件：用该库自己的密钥加密，锁定状态下禁止写。 */
+  writeTabSnapshot(destination: string, tabId: string, snapshot: VaultData): void {
+    const tabKey = this.tabKeys.get(tabId)
+    if (!tabKey) {
+      throw new VaultError('数据库已锁定', 'LOCKED')
+    }
+    const envelope = buildEnvelopeFromKey(
+      Buffer.from(JSON.stringify(snapshot), 'utf8'),
+      tabKey.key,
+      tabKey.salt,
+      'autologin-vault'
+    )
+    writeSerializedEnvelope(destination, JSON.stringify(envelope))
   }
 
   writeEncryptedSnapshot(destination: string, snapshot: VaultData): void {
-    this.requireData()
-    this.writeEnvelope(destination, snapshot)
+    const tabId = snapshot.tabs[0]?.id
+    if (!tabId) {
+      throw new VaultError('快照缺少数据库标识', 'INVALID')
+    }
+    this.writeTabSnapshot(destination, tabId, snapshot)
   }
 
-  restoreEncryptedFrom(sourcePath: string): VaultStatus {
-    this.readEnvelope(sourcePath)
-    this.clearLockTimer()
-    if (this.key) {
-      this.key.fill(0)
-    }
-    this.key = null
-    this.salt = null
-    this.data = null
-
-    const tempPath = `${this.vaultPath}.${process.pid}.restore.tmp`
-    mkdirSync(dirname(this.vaultPath), { recursive: true })
-    copyFileSync(sourcePath, tempPath)
+  restoreEncryptedFrom(sourcePath: string): void {
+    const text = readFileSync(sourcePath, 'utf8')
+    let parsed: Partial<VaultShell> | null = null
     try {
-      const file = openSync(tempPath, 'r+')
-      try {
-        fsyncSync(file)
-      } finally {
-        closeSync(file)
-      }
-      if (existsSync(this.vaultPath)) {
-        rmSync(this.vaultPath, { force: true })
-      }
-      renameSync(tempPath, this.vaultPath)
-      copyFileSync(this.vaultPath, this.backupPath)
-    } catch (error) {
-      rmSync(tempPath, { force: true })
-      throw error
+      parsed = JSON.parse(text) as Partial<VaultShell>
+    } catch {
+      parsed = null
     }
-    this.onLocked()
-    return this.status()
+    if (!parsed || parsed.schemaVersion !== 2 || !parsed.tabBlobs) {
+      throw new VaultError(
+        '该备份来自旧版单一主密码保险库，已无法在新版本中直接恢复',
+        'INVALID'
+      )
+    }
+    this.tabKeys.clear()
+    this.clearLockTimer()
+    this.shell = null
+    this.data = null
+    copyFileSync(sourcePath, this.shellPath)
+    if (existsSync(this.backupPath)) {
+      try {
+        rmSync(this.backupPath, { force: true })
+      } catch {
+        // 忽略
+      }
+    }
+    this.initShell()
   }
 
   clearAllFiles(): void {
-    this.lock()
-    for (const filePath of [this.vaultPath, this.backupPath]) {
-      if (existsSync(filePath)) {
-        rmSync(filePath, { force: true })
-      }
-    }
-  }
-
-  private applyDecrypted(decrypted: DecryptedEnvelope): void {
-    if (this.key) {
-      this.key.fill(0)
-    }
-    const normalized = normalizeVaultData(
-      decrypted.data,
-      dirname(this.vaultPath)
-    )
-    this.data = normalized
-    this.key = decrypted.key
-    this.salt = decrypted.salt
-    this.autoLockMinutes = normalized.settings.autoLockMinutes
-    if (JSON.stringify(normalized) !== JSON.stringify(decrypted.data)) {
-      this.writeEncrypted()
-    }
-  }
-
-  private async decryptFile(path: string, password: string): Promise<DecryptedEnvelope> {
-    const envelope = this.readEnvelope(path)
-    const result = await decryptEnvelope(envelope, password)
-    const parsed = vaultDataSchema.safeParse(result.data)
-    if (!parsed.success) {
-      throw new VaultError('保险库数据结构无效', 'CORRUPTED')
-    }
-    return {
-      data: parsed.data as VaultData,
-      key: result.key,
-      salt: Buffer.from(envelope.kdf.salt, 'base64')
-    }
-  }
-
-  private readEnvelope(path: string): VaultEnvelope {
-    let text: string
-    try {
-      text = readFileSync(path, 'utf8')
-    } catch {
-      throw new VaultError('保险库文件已损坏或格式不正确', 'CORRUPTED')
-    }
-    return parseEnvelope(text, 'autologin-vault')
-  }
-
-  private writeEncrypted(options?: VaultSaveOptions): void {
-    if (!this.key || !this.salt || !this.data) {
-      throw new VaultError('保险库已锁定', 'LOCKED')
-    }
-    this.writeEnvelope(this.vaultPath, this.data, true)
-    this.saveListener?.(this.data, options)
-  }
-
-  private async writeEncryptedAsync(options?: VaultSaveOptions): Promise<void> {
-    if (!this.key || !this.salt || !this.data) {
-      throw new VaultError('保险库已锁定', 'LOCKED')
-    }
-    await this.writeEnvelopeAsync(this.vaultPath, this.data, true)
-    this.saveListener?.(this.data, options)
-  }
-
-  private writeEnvelope(
-    destination: string,
-    snapshot: VaultData,
-    updateBackup = false
-  ): void {
-    const envelope = this.buildEnvelope(snapshot)
-    const tempPath = `${destination}.${process.pid}.tmp`
-    mkdirSync(dirname(destination), { recursive: true })
-    const file = openSync(tempPath, 'w', 0o600)
-    try {
-      writeSync(file, JSON.stringify(envelope))
-      fsyncSync(file)
-    } finally {
-      closeSync(file)
-    }
-
-    if (updateBackup && existsSync(this.vaultPath)) {
-      copyFileSync(this.vaultPath, this.backupPath)
-    }
-
-    try {
-      renameSync(tempPath, destination)
-    } catch (error) {
-      const code = (error as NodeJS.ErrnoException).code
-      if (code === 'EEXIST' || code === 'EPERM') {
-        rmSync(destination, { force: true })
-        renameSync(tempPath, destination)
-      } else {
-        rmSync(tempPath, { force: true })
-        throw error
-      }
-    }
-  }
-
-  private async writeEnvelopeAsync(
-    destination: string,
-    snapshot: VaultData,
-    updateBackup = false
-  ): Promise<void> {
-    const envelope = this.buildEnvelope(snapshot)
-    const tempPath = `${destination}.${process.pid}.tmp`
-    await fsPromises.mkdir(dirname(destination), { recursive: true })
-    const file = await fsPromises.open(tempPath, 'w', 0o600)
-    try {
-      await file.writeFile(JSON.stringify(envelope), 'utf8')
-      await Promise.race([
-        file.sync().catch(() => undefined),
-        new Promise<void>((resolve) => {
-          const timer = setTimeout(resolve, ENVELOPE_SYNC_TIMEOUT_MS)
-          timer.unref()
-        })
-      ])
-    } finally {
-      await file.close()
-    }
-
-    if (updateBackup && existsSync(this.vaultPath)) {
-      await fsPromises.copyFile(this.vaultPath, this.backupPath)
-    }
-
-    try {
-      await fsPromises.rename(tempPath, destination)
-    } catch (error) {
-      const code = (error as NodeJS.ErrnoException).code
-      if (code === 'EEXIST' || code === 'EPERM') {
-        await fsPromises.rm(destination, { force: true })
-        await fsPromises.rename(tempPath, destination)
-      } else {
-        await fsPromises.rm(tempPath, { force: true })
-        throw error
-      }
-    }
-  }
-
-  private buildEnvelope(snapshot: VaultData): VaultEnvelope {
-    if (!this.key || !this.salt) {
-      throw new VaultError('保险库已锁定', 'LOCKED')
-    }
-
-    return buildEnvelopeFromKey(
-      Buffer.from(JSON.stringify(snapshot), 'utf8'),
-      this.key,
-      this.salt,
-      'autologin-vault'
-    )
-  }
-
-  private scheduleLock(): void {
+    this.tabKeys.clear()
     this.clearLockTimer()
-    if (!this.data) {
-      return
-    }
-    this.lockTimer = setTimeout(() => {
-      this.lock()
-    }, this.autoLockMinutes * 60 * 1000)
-    this.lockTimer.unref()
-  }
-
-  private clearLockTimer(): void {
-    if (this.lockTimer) {
-      clearTimeout(this.lockTimer)
-      this.lockTimer = null
+    this.shell = null
+    this.data = null
+    for (const target of [
+      this.shellPath,
+      this.backupPath,
+      this.legacyPath,
+      this.legacyPath + '.bak',
+      this.legacyPath + '.migrated'
+    ]) {
+      try {
+        rmSync(target, { force: true })
+      } catch {
+        // 忽略
+      }
     }
   }
 }
-
 async function deriveKey(password: string, salt: Buffer): Promise<Buffer> {
   const key = await argon2id({
     password,
@@ -572,7 +736,7 @@ async function decryptEnvelope(
     return { data: JSON.parse(plaintext.toString('utf8')), key }
   } catch {
     key.fill(0)
-    throw new VaultError('主密码不正确或保险库已损坏', 'WRONG_PASSWORD')
+    throw new VaultError('密码不正确，或加密文件已损坏', 'WRONG_PASSWORD')
   }
 }
 
@@ -719,7 +883,7 @@ function normalizeUnlockError(error: unknown): VaultError {
   if (error instanceof VaultError) {
     return error
   }
-  return new VaultError('主密码不正确或保险库已损坏', 'WRONG_PASSWORD')
+  return new VaultError('密码不正确，或加密文件已损坏', 'WRONG_PASSWORD')
 }
 
 function isBase64OfLength(value: unknown, length: number): boolean {

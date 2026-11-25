@@ -240,11 +240,11 @@ export function UnlockScreen({
       await onUnlock(password)
     } catch (reason) {
       const raw = reason instanceof Error ? reason.message : ''
-      const message = raw.includes('主密码不正确')
+      const message = raw.includes('密码不正确')
         ? tr(
-            '主密码不正确，或保险库文件已损坏',
-            'Incorrect master password, or the vault file is damaged.',
-            '主密碼不正確，或保險庫檔案已損壞'
+            '主密码不正确，或旧版保险库文件已损坏',
+            'Incorrect master password, or the old vault file is damaged.',
+            '主密碼不正確，或舊版保險庫檔案已損壞'
           )
         : raw.includes('主密码至少需要 10 个字符')
           ? tr('主密码至少需要 10 个字符', 'Use at least 10 characters.', '主密碼至少需要 10 個字元')
@@ -261,13 +261,13 @@ export function UnlockScreen({
   return (
     <AuthShell mode="unlock">
       <div className="auth-form-heading">
-        <span className="eyebrow">UNLOCK VAULT</span>
-        <h2>{tr('解锁保险库', 'Unlock your vault', '解鎖保險庫')}</h2>
+        <span className="eyebrow">MIGRATE VAULT</span>
+        <h2>{tr('迁移旧版保险库', 'Migrate your old vault', '遷移舊版保險庫')}</h2>
         <p>
           {tr(
-            '输入主密码继续 · 本机验证，不联网',
-            'Enter your master password · verified locally, never online',
-            '輸入主密碼繼續 · 本機驗證，不連網'
+            '最后一次输入旧版主密码。迁移后每个数据库改用自己的密码。',
+            'Enter the old master password one last time. Each database then gets its own password.',
+            '最後一次輸入舊版主密碼。遷移後每個資料庫改用自己的密碼。'
           )}
         </p>
       </div>

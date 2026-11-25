@@ -43,7 +43,6 @@ import {
   appLogQuerySchema,
   appSettingsPatchSchema,
   autologinSelectionImportSchema,
-  changePasswordSchema,
   clipboardSecretInputSchema,
   csvImportInputSchema,
   csvSelectionImportSchema,
@@ -67,7 +66,9 @@ import {
   proxyTestInputSchema,
   selectorTestInputSchema,
   siteIconFetchInputSchema,
-  siteInputSchema
+  siteInputSchema,
+  vaultTabPasswordSchema,
+  vaultTabUnlockSchema
 } from '@shared/schemas'
 import {
   ACCOUNT_TAB_COLORS,
@@ -508,7 +509,7 @@ function createWindow(): void {
     scheduleStartupUpdateCheck()
   })
 
-  if (vault?.status().unlocked) {
+  if (vault) {
     applyInterfaceScale(vault.getSettings().interfaceScale)
   }
 
@@ -638,6 +639,9 @@ function syncTabSnapshotFiles(data: VaultData, tabIds?: string[]): void {
     const databasePath = tabDatabasePath(tab)
     try {
       if (shouldWriteEncryptedTabSnapshot(tab)) {
+        if (vault.isTabLocked(tab.id)) {
+          continue
+        }
         if (
           !pendingNewDatabaseTabIds.has(tab.id) &&
           !existsSync(databasePath)
@@ -650,7 +654,7 @@ function syncTabSnapshotFiles(data: VaultData, tabIds?: string[]): void {
           dataByTab.get(tab.id),
           getTabGroupOrder(data, tab.id)
         )
-        vault.writeEncryptedSnapshot(databasePath, snapshot)
+        vault.writeTabSnapshot(databasePath, tab.id, snapshot)
         pendingNewDatabaseTabIds.delete(tab.id)
       } else if (tab.source === 'bookmarks') {
         if (
@@ -860,13 +864,9 @@ function registerIpc(): void {
     assertTrustedSender(event)
     return vault.status()
   })
-  ipcMain.handle('vault:create', async (event, password: unknown) => {
+  ipcMain.handle('vault:create', async (event) => {
     assertTrustedSender(event)
-    const parsed = masterPasswordSchema.safeParse(password)
-    if (!parsed.success) {
-      throw new Error(firstIssue(parsed.error))
-    }
-    const status = await vault.create(parsed.data)
+    const status = await vault.create()
     for (const tab of vault.requireData().tabs) {
       if (shouldWriteEncryptedTabSnapshot(tab)) {
         pendingNewDatabaseTabIds.add(tab.id)
@@ -894,7 +894,7 @@ function registerIpc(): void {
     appendAppLog(dataDirectory, {
       level: 'success',
       category: 'vault',
-      message: '保险库已解锁'
+      message: '旧版保险库已迁移为数据库独立密码'
     })
     sessionIndex.replace(vault.requireData().accounts.map((account) => account.id))
     ensureLoginManagers()
@@ -919,13 +919,40 @@ function registerIpc(): void {
     })
     return status
   })
-  ipcMain.handle('vault:change-password', async (event, payload: unknown) => {
+  ipcMain.handle('vault:tab-unlock', async (event, payload: unknown): Promise<VaultStatus> => {
     assertTrustedSender(event)
-    const parsed = changePasswordSchema.safeParse(payload)
+    const parsed = vaultTabUnlockSchema.safeParse(payload)
     if (!parsed.success) {
       throw new Error(firstIssue(parsed.error))
     }
-    await vault.changePassword(parsed.data.currentPassword, parsed.data.nextPassword)
+    const status = await vault.unlockTab(parsed.data.tabId, parsed.data.password)
+    ensureLoginManagers()
+    applyInterfaceScale(vault.getSettings().interfaceScale)
+    sessionIndex.replace(vault.requireData().accounts.map((account) => account.id))
+    return status
+  })
+  ipcMain.handle('vault:tab-lock', (event, tabId: unknown): VaultStatus => {
+    assertTrustedSender(event)
+    const id = requireId(tabId)
+    void closeLoginManagers()
+    return vault.lockTab(id)
+  })
+  ipcMain.handle('vault:tab-password', async (event, payload: unknown): Promise<void> => {
+    assertTrustedSender(event)
+    const parsed = vaultTabPasswordSchema.safeParse(payload)
+    if (!parsed.success) {
+      throw new Error(firstIssue(parsed.error))
+    }
+    await vault.changeTabPassword(
+      parsed.data.tabId,
+      parsed.data.currentPassword,
+      parsed.data.nextPassword
+    )
+    appendAppLog(dataDirectory, {
+      level: 'success',
+      category: 'vault',
+      message: '数据库密码已更新'
+    })
   })
 
   ipcMain.handle('tabs:list', (event): AccountTab[] => {
@@ -941,13 +968,19 @@ function registerIpc(): void {
     }
     return { exists: tabDatabaseFileExists(tab) }
   })
-  ipcMain.handle('tabs:create', (event, payload: unknown): AccountTab => {
+  ipcMain.handle('tabs:create', async (event, payload: unknown): Promise<AccountTab> => {
     assertTrustedSender(event)
     const parsed = accountTabCreateInputSchema.safeParse(payload)
     if (!parsed.success) {
       throw new Error(firstIssue(parsed.error))
     }
-    return createAccountTab(parsed.data)
+    const tab = createAccountTab(parsed.data)
+    if (tab.source !== 'bookmarks' && parsed.data?.password) {
+      await vault.unlockTab(tab.id, parsed.data.password)
+      pendingNewDatabaseTabIds.add(tab.id)
+      syncTabSnapshotFiles(vault.requireData(), [tab.id])
+    }
+    return tab
   })
   ipcMain.handle('tabs:update', (event, tabId: unknown, payload: unknown): AccountTab => {
     assertTrustedSender(event)
@@ -1397,6 +1430,9 @@ function registerIpc(): void {
     assertTrustedSender(event)
     // 只读路径：不能用 requireData()，否则每秒轮询会不断续期自动锁定。
     const data = vault.peekData()
+    if (!data) {
+      throw new Error('保险库已锁定')
+    }
     const account = data.accounts.find((entry) => entry.id === requireId(accountId))
     if (!account) {
       throw new Error('账号不存在')
@@ -2065,14 +2101,6 @@ function registerIpc(): void {
     }
     if (!mainWindow) return { canceled: true }
     const input = parsed.data
-    if (input.includePasswords) {
-      if (!input.masterPassword) {
-        throw new Error('导出密码前需要验证主密码')
-      }
-      if (!(await vault.verifyPassword(input.masterPassword))) {
-        throw new Error('主密码不正确，未导出任何文件')
-      }
-    }
     const data = vault.requireData()
     const allowed = input.accountIds ? new Set(input.accountIds) : null
     const accounts = data.accounts.filter(
@@ -2080,6 +2108,20 @@ function registerIpc(): void {
         (!input.tabId || account.tabId === input.tabId) &&
         (!allowed || allowed.has(account.id))
     )
+    if (input.includePasswords) {
+      if (!input.masterPassword) {
+        throw new Error('导出密码前需要输入数据库密码')
+      }
+      const tabIds = Array.from(new Set(accounts.map((account) => account.tabId)))
+      for (const tabId of tabIds) {
+        if (!(await vault.verifyTabPassword(tabId, input.masterPassword))) {
+          throw new Error('数据库密码不正确，未导出任何文件')
+        }
+      }
+      if (tabIds.length === 0) {
+        throw new Error('没有可导出的数据库')
+      }
+    }
     const sites = new Map(data.sites.map((site) => [site.id, site]))
     const rows: AccountExportRow[] = accounts.map((account) => {
       const site = sites.get(account.siteId)
@@ -2882,8 +2924,7 @@ function registerIpc(): void {
   })
   ipcMain.handle('app:clear-all-data', async (event) => {
     assertTrustedSender(event)
-    const status = vault.status()
-    const data = status.unlocked ? vault.requireData() : null
+    const data = vault.peekData()
     const accountIds = new Set([
       ...sessionIndex.list(),
       ...discoverManagedPartitionIds(dataDirectory),

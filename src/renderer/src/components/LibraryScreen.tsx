@@ -5399,6 +5399,7 @@ export function LibraryScreen({
                 onClose={(tab, anchor) => openTabClosePrompt(tab, anchor)}
                 controls={
                   <>
+                    {!activeTabLocked && (
                     <div
                       ref={searchContainerRef}
                       className={`account-tabs__search search-field search-field--expandable${
@@ -5470,6 +5471,7 @@ export function LibraryScreen({
                         <kbd aria-hidden="true">Ctrl F</kbd>
                       )}
                     </div>
+                    )}
                     {!activeTabLocked && (
                     <>
                     <button

@@ -26619,3 +26619,32 @@ html[data-color-mode='dark'] .settings-db__badge {
     margin-left: 0;
   }
 }
+
+
+/* OTP 头部：整条栏都是可点击区域，ⓘ 收在同一行内，
+   不再让标题簇缩在左侧、右边留下半个空条。 */
+.account-otp__head {
+  position: relative;
+  gap: 0;
+  padding-right: 0;
+}
+
+.account-otp__head .account-otp__toggle {
+  flex: 1 1 auto;
+  width: auto;
+  min-width: 0;
+  padding-right: 46px;
+  border-radius: 11px;
+}
+
+.account-otp__head .account-otp__badge {
+  margin-left: 0;
+}
+
+.account-otp__head .account-otp__info {
+  position: absolute;
+  top: 50%;
+  right: 10px;
+  margin-left: 0;
+  transform: translateY(-50%);
+}

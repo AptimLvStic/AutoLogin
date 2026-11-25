@@ -23402,14 +23402,16 @@ html.recording-hud-window #root {
   color: var(--accent);
 }
 
-/* 2026-11-26 深色气泡的视觉 token 由设置页 InfoTip 与全局 tooltip 层共用，改这里两处一起变。 */
+/* 2026-11-26 气泡视觉 token 由设置页 InfoTip 与全局 tooltip 层共用，改这里两处一起变。
+   颜色跟随主题：浅色下是白卡片 + 深字，暗色下是深卡片 + 浅字，不再是固定深色气泡。 */
 .info-tip__bubble,
 .app-tooltip {
   padding: 9px 11px;
+  border: 1px solid color-mix(in srgb, var(--line-strong) 62%, transparent);
   border-radius: 8px;
-  background: #2b3242;
-  color: #f4f6fb;
-  box-shadow: 0 10px 26px rgba(17, 22, 32, 0.24);
+  background: var(--surface-raised);
+  color: var(--ink);
+  box-shadow: 0 10px 26px rgba(17, 22, 32, 0.18);
   font-size: 12px;
   font-weight: 450;
   line-height: 1.55;
@@ -24480,15 +24482,24 @@ body.is-dragging-group .account-subnav__group-grip:active {
   justify-content: flex-end;
 }
 
+/* 2026-11-26 抽屉遮罩改为毛玻璃：不再用 30% 的 ink 把底下的账号列表整体洗淡（暗色下 ink 是浅色，
+   30% 会让页面明显变亮、产生割裂感），只用很低的同色薄雾 + 高斯模糊保留原本色相与明度。 */
 .account-drawer-backdrop {
   position: absolute;
   inset: 0;
   margin: 0;
   padding: 0;
   border: 0;
-  background: color-mix(in srgb, var(--ink) 30%, transparent);
+  background: color-mix(in srgb, var(--ink) 5%, transparent);
+  -webkit-backdrop-filter: blur(14px) saturate(1.04);
+  backdrop-filter: blur(14px) saturate(1.04);
   cursor: default;
   animation: fade-in 180ms ease both;
+}
+
+/* 暗色下 ink 是 #F2F3F5，用它会提亮；改成极淡的黑色薄雾，只压暗一点点并保持色相。 */
+html[data-color-mode='dark'] .account-drawer-backdrop {
+  background: rgba(8, 9, 12, 0.16);
 }
 
 .account-drawer-layer .account-drawer {

@@ -6,7 +6,8 @@ import { createPortal } from 'react-dom'
  *
  * 全软件里 `title="…"` 一律不再交给系统原生气泡（样式不可控：浅灰方块、字体跟随系统），
  * 而是由这一层接管：悬停 / 键盘聚焦时暂时把 title 从元素上摘掉（抑制原生气泡），
- * 用与设置页 `InfoTip` 完全一致的深色气泡渲染；指针离开或失焦时再把 title 放回去。
+ * 用与设置页 `InfoTip` 完全一致、且跟随主题的气泡渲染；指针离开或失焦时再把 title 放回去。
+ * 右键（pointerdown 非主键或 contextmenu）立即收掉气泡，避免压在右键菜单之上。
  *
  * 元素可以用 `data-tip-placement="right"`（或 left / above）指定气泡方向，默认在下方。
  */
@@ -219,6 +220,12 @@ export function TooltipLayer(): React.JSX.Element | null {
     }
 
     function onPointerDown(event: PointerEvent): void {
+      // 右键按下就要收掉气泡：右键菜单（标签页菜单等）会立刻在气泡位置展开，
+      // 气泡层级比菜单高，不收掉就会浮在菜单之上。
+      if (event.button !== 0) {
+        leave()
+        return
+      }
       const element = anchorRef.current
       if (!element) {
         return
@@ -227,6 +234,12 @@ export function TooltipLayer(): React.JSX.Element | null {
         return
       }
       leave()
+    }
+
+    function onContextMenu(): void {
+      if (anchorRef.current) {
+        leave()
+      }
     }
 
     function onKeyDown(event: KeyboardEvent): void {
@@ -246,6 +259,7 @@ export function TooltipLayer(): React.JSX.Element | null {
     document.addEventListener('focusin', onFocusIn, true)
     document.addEventListener('focusout', onFocusOut, true)
     document.addEventListener('pointerdown', onPointerDown, true)
+    document.addEventListener('contextmenu', onContextMenu, true)
     document.addEventListener('keydown', onKeyDown, true)
     document.addEventListener('scroll', onViewportChange, true)
     document.addEventListener('wheel', onViewportChange, true)
@@ -259,6 +273,7 @@ export function TooltipLayer(): React.JSX.Element | null {
       document.removeEventListener('focusin', onFocusIn, true)
       document.removeEventListener('focusout', onFocusOut, true)
       document.removeEventListener('pointerdown', onPointerDown, true)
+      document.removeEventListener('contextmenu', onContextMenu, true)
       document.removeEventListener('keydown', onKeyDown, true)
       document.removeEventListener('scroll', onViewportChange, true)
       document.removeEventListener('wheel', onViewportChange, true)

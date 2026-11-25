@@ -2273,7 +2273,14 @@ export function SettingsPage({
                   '登入時會重用 AutoLogin 管理的獨立設定並清除擴充功能、當機還原等干擾項。若視窗仍異常，可重設後重新匯入。'
                 )}
               />
-              <div className="settings-inline-actions">
+              <div className="settings-profile-row">
+                <p className="settings-hint settings-hint--danger">
+                  {tr(
+                    '重置会关闭当前外部浏览器，并清除共享配置中的 Cookie 和登录状态；账号密码与保险库不受影响。',
+                    'Reset closes the external browser and clears cookies and sign-in state in the shared profile. Accounts and the vault are unaffected.',
+                    '重設會關閉目前外部瀏覽器，並清除共用設定中的 Cookie 和登入狀態；帳號密碼與保險庫不受影響。'
+                  )}
+                </p>
                 <button
                   type="button"
                   className="button button--danger-ghost"
@@ -2283,13 +2290,6 @@ export function SettingsPage({
                   {tr('重置浏览器配置', 'Reset browser profile', '重設瀏覽器設定')}
                 </button>
               </div>
-              <p className="settings-hint settings-hint--danger">
-                {tr(
-                  '重置会关闭当前外部浏览器，并清除共享配置中的 Cookie 和登录状态；账号密码与保险库不受影响。',
-                  'Reset closes the external browser and clears cookies and sign-in state in the shared profile. Accounts and the vault are unaffected.',
-                  '重設會關閉目前外部瀏覽器，並清除共用設定中的 Cookie 和登入狀態；帳號密碼與保險庫不受影響。'
-                )}
-              </p>
             </div>
 
             <div className="settings-card backup-card">

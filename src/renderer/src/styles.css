@@ -26673,3 +26673,34 @@ html[data-color-mode='dark'] .settings-db__badge {
   font-size: calc(11px * var(--font-scale, 1));
   line-height: 1.6;
 }
+
+/* 2026-11-26 外部浏览器配置：说明在左、按钮在右，同一行垂直居中（原为按钮在上、说明在下）。 */
+.settings-profile-row {
+  display: flex;
+  align-items: center;
+  gap: 18px;
+  margin-top: 12px;
+}
+
+.settings-profile-row .settings-hint {
+  flex: 1 1 auto;
+  max-width: none;
+  margin: 0;
+}
+
+.settings-profile-row > .button {
+  flex: 0 0 auto;
+  margin-left: auto;
+}
+
+@media (max-width: 720px) {
+  .settings-profile-row {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 12px;
+  }
+
+  .settings-profile-row > .button {
+    margin-left: 0;
+  }
+}

@@ -170,6 +170,7 @@ export const siteSchema = z.object({
   autoSubmit: z.boolean(),
   group: groupPathSchema.optional(),
   icon: siteIconDataUrlSchema.optional(),
+  note: z.string().max(2000).optional(),
   recipe: loginRecipeSchema.optional(),
   needsReview: z.boolean().optional(),
   createdAt: z.string(),
@@ -226,6 +227,10 @@ export const storedAccountSchema = z.object({
   manualSteps: z.array(recipeStepSchema).max(30).optional(),
   recipes: z.array(accountRecipeSchema).max(3).default([]),
   activeRecipeId: idSchema.optional(),
+  note: z.string().max(2000).optional(),
+  hasOtp: z.boolean().optional(),
+  otpSecret: z.string().max(512).optional(),
+  otpIssuer: z.string().max(120).optional(),
   lastUsedAt: z.string().optional(),
   sortOrder: z.number().int().min(0).max(1_000_000).optional(),
   createdAt: z.string(),
@@ -435,7 +440,10 @@ export const accountCreateInputSchema = z.object({
   loginStrategy: z.enum(LOGIN_STRATEGIES).optional(),
   loginBrowser: z.enum(LOGIN_BROWSERS).optional(),
   manualSelectors: manualLoginSelectorsSchema.optional(),
-  manualSteps: z.array(recipeStepSchema).max(30).optional()
+  manualSteps: z.array(recipeStepSchema).max(30).optional(),
+  note: z.string().max(2000).optional(),
+  otpSecret: z.string().max(512).optional(),
+  otpIssuer: z.string().max(120).optional()
 })
 
 export const accountUpdateInputSchema = z.object({
@@ -447,7 +455,10 @@ export const accountUpdateInputSchema = z.object({
   loginStrategy: z.enum(LOGIN_STRATEGIES).optional(),
   loginBrowser: z.enum(LOGIN_BROWSERS).optional(),
   manualSelectors: manualLoginSelectorsSchema.optional(),
-  manualSteps: z.array(recipeStepSchema).max(30).optional()
+  manualSteps: z.array(recipeStepSchema).max(30).optional(),
+  note: z.string().max(2000).optional(),
+  otpSecret: z.string().max(512).optional(),
+  otpIssuer: z.string().max(120).optional()
 })
 
 export const accountRecipeUpdateInputSchema = z
@@ -638,7 +649,7 @@ export const exportPasswordSchema = z
 export const dataExportInputSchema = z
   .object({
     tabId: idSchema,
-    format: z.enum(['autologin', 'csv', 'kdbx']).optional(),
+    format: z.enum(['autologin', 'csv', 'csv-plain', 'kdbx']).optional(),
     password: exportPasswordSchema.optional(),
     fileName: z
       .string()

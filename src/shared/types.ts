@@ -297,6 +297,7 @@ export interface Site {
   autoSubmit: boolean
   group?: string
   icon?: string
+  note?: string
   recipe?: LoginRecipe
   needsReview?: boolean
   createdAt: string
@@ -318,6 +319,9 @@ export interface Account {
   manualSteps?: RecipeStep[]
   recipes?: AccountRecipe[]
   activeRecipeId?: string
+  note?: string
+  hasOtp?: boolean
+  otpIssuer?: string
   lastUsedAt?: string
   sortOrder?: number
   createdAt: string
@@ -350,12 +354,14 @@ export interface CredentialHistoryReveal {
 
 export interface StoredAccount extends Account {
   password: string
+  otpSecret?: string
   credentialHistory?: CredentialVersionSnapshot[]
   credentialUpdatedAt?: string
 }
 
 export interface AccountWithSite extends Account {
   site: Site
+  sharesPassword?: boolean
 }
 
 export interface GroupDefinition {
@@ -441,6 +447,7 @@ export interface SiteInput {
   autoSubmit: boolean
   group?: string
   icon?: string
+  note?: string
 }
 
 export interface AccountCreateInput {
@@ -453,6 +460,9 @@ export interface AccountCreateInput {
   loginBrowser?: LoginBrowser
   manualSelectors?: ManualLoginSelectors
   manualSteps?: RecipeStep[]
+  note?: string
+  otpSecret?: string
+  otpIssuer?: string
 }
 
 export interface AccountUpdateInput {
@@ -465,6 +475,9 @@ export interface AccountUpdateInput {
   loginBrowser?: LoginBrowser
   manualSelectors?: ManualLoginSelectors
   manualSteps?: RecipeStep[]
+  note?: string
+  otpSecret?: string
+  otpIssuer?: string
 }
 
 export interface AccountBatchStrategyInput {
@@ -732,7 +745,15 @@ export interface DataExportInput {
   fileName?: string
 }
 
-export type DataExportFormat = 'autologin' | 'csv' | 'kdbx'
+export type DataExportFormat = 'autologin' | 'csv' | 'csv-plain' | 'kdbx'
+
+export interface OtpCode {
+  code: string
+  remaining: number
+  period: number
+  issuer?: string
+  label?: string
+}
 
 export interface ImportSkipDetail {
   rowNumber: number
@@ -919,6 +940,8 @@ export interface AutologinApi {
     deleteCredentialHistory: (accountId: string, historyId: string) => Promise<void>
     clearCredentialHistory: (accountId: string) => Promise<void>
     copyUsername: (accountId: string) => Promise<void>
+    getOtp: (accountId: string) => Promise<OtpCode>
+    previewOtp: (secret: string) => Promise<OtpCode>
     copy: (accountId: string) => Promise<void>
     copyUrl: (accountId: string) => Promise<void>
     setActiveRecipe: (accountId: string, recipeId?: string) => Promise<AccountWithSite>

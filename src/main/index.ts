@@ -134,6 +134,7 @@ import type {
   LoginBatchState,
   LoginViewState,
   EmbeddedBrowserTab,
+  OtpCode,
   PasswordReveal,
   ProxySettings,
   ProxyTestResult,
@@ -148,6 +149,7 @@ import type {
   VaultStatus
 } from '@shared/types'
 import { BackupManager } from './backups'
+import { generateTotp, normalizeOtpSecret } from './totp'
 import {
   appendAppLog,
   clearAppLogs,
@@ -232,7 +234,7 @@ import { encryptBufferWithPassword, VaultManager } from './vault'
 app.setName('AutoLogin')
 app.setAppUserModelId('com.autologin.desktop')
 /** 每次发布前更新，用于在日志里识别 Tauri 后台构建版本。 */
-const BUILD_TAG = '2026-11-24.v1.0.8'
+const BUILD_TAG = '2026-11-24.v1.0.9'
 const backendEntryPath = process.argv[1]
   ? resolve(process.argv[1])
   : 'unknown'
@@ -1382,6 +1384,22 @@ function registerIpc(): void {
     }
     return { password: account.password, expiresAt: Date.now() + 10_000 }
   })
+  ipcMain.handle('accounts:otp', (event, accountId: unknown): OtpCode => {
+    assertTrustedSender(event)
+    const { account } = requireAccountAndSite(requireId(accountId))
+    if (!account.otpSecret) {
+      throw new Error('该账号尚未配置 OTP')
+    }
+    const code = generateTotp(account.otpSecret)
+    return { ...code, issuer: account.otpIssuer ?? code.issuer }
+  })
+  ipcMain.handle('accounts:otp-preview', (event, secret: unknown): OtpCode => {
+    assertTrustedSender(event)
+    if (typeof secret !== 'string' || !secret.trim()) {
+      throw new Error('请输入 OTP 密钥')
+    }
+    return generateTotp(secret)
+  })
   ipcMain.handle(
     'accounts:list-credential-history',
     (event, accountId: unknown): CredentialHistoryEntry[] => {
@@ -1889,13 +1907,15 @@ function registerIpc(): void {
             : 'autologin')
     const filterNames: Record<typeof format, string> = {
       autologin: 'AutoLogin 加密配置',
-      csv: 'CSV 账号文件',
+      csv: 'CSV 账号文件（加密）',
+      'csv-plain': 'CSV 账号文件（明文模板）',
       kdbx: 'KeePass KDBX 数据库',
       html: '浏览器书签 HTML'
     }
     const extensions: Record<typeof format, string> = {
       autologin: 'autologin',
       csv: 'csv',
+      'csv-plain': 'csv',
       kdbx: 'kdbx',
       html: 'html'
     }
@@ -1915,8 +1935,10 @@ function registerIpc(): void {
           : format === 'kdbx'
             ? '导出 KDBX 数据库'
             : format === 'csv'
-              ? '导出 CSV 账号'
-              : '导出浏览器书签',
+              ? '导出加密 CSV 账号'
+              : format === 'csv-plain'
+                ? '导出明文 CSV 账号'
+                : '导出浏览器书签',
       buttonLabel: '导出',
       defaultPath: join(app.getPath('documents'), defaultName),
       filters: [{ name: filterNames[format], extensions: [extensions[format]] }]
@@ -1930,6 +1952,11 @@ function registerIpc(): void {
         throw new Error('导出 AutoLogin 加密配置需要设置导出密码')
       }
       await vault.exportEncryptedTo(selection.filePath, parsed.data.password)
+    } else if (format === 'csv-plain') {
+      writeFileSync(selection.filePath, serializeTabCsv(data, tab.id), {
+        encoding: 'utf8',
+        mode: 0o600
+      })
     } else if (format === 'csv') {
       if (!parsed.data.password) {
         throw new Error('导出 CSV 账号需要设置导出密码')
@@ -1968,8 +1995,10 @@ function registerIpc(): void {
           : format === 'kdbx'
             ? 'KDBX 数据库已导出'
             : format === 'csv'
-              ? 'CSV 账号已导出'
-              : '浏览器书签已导出',
+              ? '加密 CSV 账号已导出'
+              : format === 'csv-plain'
+                ? '明文 CSV 账号已导出'
+                : '浏览器书签已导出',
       details: `${tab.name}；${basename(selection.filePath)}`
     })
     return { canceled: false, fileName: basename(selection.filePath) }
@@ -3255,6 +3284,7 @@ function saveSite(input: SiteInput): Site {
     existing.autoSubmit = input.autoSubmit
     existing.group = input.group?.trim() || undefined
     existing.icon = input.icon
+    existing.note = input.note?.trim() || undefined
     existing.needsReview = startUrl ? undefined : true
     existing.updatedAt = now
     if (previousName !== requestedName) {
@@ -3278,6 +3308,7 @@ function saveSite(input: SiteInput): Site {
     autoSubmit: input.autoSubmit,
     group: input.group?.trim() || undefined,
     icon: input.icon,
+    note: input.note?.trim() || undefined,
     needsReview: startUrl ? undefined : true,
     createdAt: now,
     updatedAt: now
@@ -3301,6 +3332,9 @@ function createAccount(input: {
     submit?: string
   }
   manualSteps?: RecipeStep[]
+  note?: string
+  otpSecret?: string
+  otpIssuer?: string
 }): AccountWithSite {
   const data = vault.requireData()
   const site = data.sites.find((entry) => entry.id === input.siteId)
@@ -3309,8 +3343,8 @@ function createAccount(input: {
   }
   const tab = data.tabs.find((entry) => entry.id === (site.tabId ?? DEFAULT_ACCOUNT_TAB_ID))
   const isBookmark = tab?.source === 'bookmarks'
-  const username = isBookmark ? '' : input.username.trim()
-  const password = isBookmark ? '' : input.password
+  const username = input.username.trim()
+  const password = input.password
   const loginStrategy = input.loginStrategy ?? 'auto'
   const loginBrowser =
     input.loginBrowser ?? vault.getSettings().defaultLoginBrowser ?? 'builtin'
@@ -3320,6 +3354,9 @@ function createAccount(input: {
     : undefined
   assertManualConfiguration(loginStrategy, manualSelectors, manualSteps)
   const now = new Date().toISOString()
+  const otp = input.otpSecret?.trim()
+    ? normalizeOtpSecret(input.otpSecret)
+    : undefined
   const account: StoredAccount = {
     id: randomUUID(),
     tabId: site.tabId,
@@ -3329,6 +3366,9 @@ function createAccount(input: {
     needsUsername: !isBookmark && !username ? true : undefined,
     needsSecret: !isBookmark && !password ? true : undefined,
     password,
+    note: input.note?.trim() || undefined,
+    otpSecret: otp?.secret,
+    otpIssuer: otp?.issuer ?? (input.otpIssuer?.trim() || undefined),
     credentialUpdatedAt: now,
     favorite: input.favorite ?? false,
     loginStrategy,
@@ -3478,6 +3518,9 @@ function updateAccount(
       submit?: string
     }
     manualSteps?: RecipeStep[]
+    note?: string
+    otpSecret?: string
+    otpIssuer?: string
   }
 ): AccountWithSite {
   const data = vault.requireData()
@@ -3504,6 +3547,19 @@ function updateAccount(
   if (patch.password !== undefined) {
     account.password = patch.password
     account.needsSecret = !account.password
+  }
+  if (patch.note !== undefined) account.note = patch.note.trim() || undefined
+  if (patch.otpSecret !== undefined) {
+    if (!patch.otpSecret.trim()) {
+      account.otpSecret = undefined
+      account.otpIssuer = undefined
+    } else {
+      const otp = normalizeOtpSecret(patch.otpSecret)
+      account.otpSecret = otp.secret
+      account.otpIssuer = otp.issuer ?? (patch.otpIssuer?.trim() || account.otpIssuer)
+    }
+  } else if (patch.otpIssuer !== undefined) {
+    account.otpIssuer = patch.otpIssuer.trim() || undefined
   }
   if (patch.favorite !== undefined) account.favorite = patch.favorite
   if (patch.loginStrategy !== undefined) account.loginStrategy = patch.loginStrategy
@@ -3873,9 +3929,20 @@ function moveAccountsToGroup(input: AccountMoveInput): AccountWithSite[] {
 function listAccounts(): AccountWithSite[] {
   const data = vault.requireData()
   const sites = new Map(data.sites.map((site) => [site.id, site]))
+  const passwordCounts = new Map<string, number>()
+  for (const account of data.accounts) {
+    if (!account.password) continue
+    passwordCounts.set(account.password, (passwordCounts.get(account.password) ?? 0) + 1)
+  }
   return data.accounts.flatMap((account) => {
     const site = sites.get(account.siteId)
-    return site ? [toPublicAccount(account, site)] : []
+    if (!site) return []
+    return [
+      {
+        ...toPublicAccount(account, site),
+        sharesPassword: Boolean(account.password) && (passwordCounts.get(account.password) ?? 0) > 1
+      }
+    ]
   })
 }
 
@@ -3895,10 +3962,7 @@ function requireAccountAndSite(accountId: string): {
   return { account, site }
 }
 
-function toPublicAccount(
-  account: Omit<AccountWithSite, 'site'>,
-  site: Site
-): AccountWithSite {
+function toPublicAccount(account: StoredAccount, site: Site): AccountWithSite {
   return {
     id: account.id,
     tabId: account.tabId,
@@ -3914,6 +3978,9 @@ function toPublicAccount(
     manualSteps: structuredClone(account.manualSteps),
     recipes: structuredClone(account.recipes ?? []),
     activeRecipeId: account.activeRecipeId,
+    note: account.note,
+    hasOtp: Boolean(account.otpSecret),
+    otpIssuer: account.otpIssuer,
     lastUsedAt: account.lastUsedAt,
     sortOrder: account.sortOrder,
     createdAt: account.createdAt,

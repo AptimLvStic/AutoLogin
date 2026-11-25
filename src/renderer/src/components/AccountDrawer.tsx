@@ -1,7 +1,9 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import {
+  ArrowRight,
   Check,
   ChevronDown,
+  CircleDot,
   CirclePlay,
   Copy,
   Download,
@@ -20,7 +22,9 @@ import {
   Plus,
   RefreshCw,
   Search,
+  ShieldCheck,
   SlidersHorizontal,
+  StickyNote,
   Trash2,
   Undo2,
   UserRound,
@@ -33,6 +37,7 @@ import type {
   LoginBrowser,
   LoginStrategy,
   LoginViewState,
+  OtpCode,
   RecipeDraftResult,
   RecipeStep,
   RecordingSaveStatus,
@@ -70,6 +75,7 @@ interface AccountDrawerProps {
   account?: AccountWithSite
   defaultLoginBrowser?: LoginBrowser
   focusField?: 'url' | 'username' | 'password'
+  accounts?: AccountWithSite[]
   sites: Site[]
   groups: GroupDefinition[]
   initialSiteId?: string
@@ -90,6 +96,7 @@ export function AccountDrawer({
   account,
   defaultLoginBrowser = 'builtin',
   focusField,
+  accounts = [],
   sites,
   groups,
   initialSiteId,
@@ -123,6 +130,22 @@ export function AccountDrawer({
   const [username, setUsername] = useState(
     account?.needsUsername ? '' : account?.username ?? ''
   )
+  const [note, setNote] = useState(account?.note ?? '')
+  const [otpSecret, setOtpSecret] = useState('')
+  const [otpIssuer, setOtpIssuer] = useState(account?.otpIssuer ?? '')
+  const [otpCode, setOtpCode] = useState<OtpCode | null>(null)
+  const [otpError, setOtpError] = useState('')
+  const [showOtpSecret, setShowOtpSecret] = useState(false)
+  const [otpCleared, setOtpCleared] = useState(false)
+  const [otpExpanded, setOtpExpanded] = useState(Boolean(account?.hasOtp))
+  const [otpEditing, setOtpEditing] = useState(!account?.hasOtp)
+  const [confirmOtpClear, setConfirmOtpClear] = useState(false)
+  const [credentialPickerOpen, setCredentialPickerOpen] = useState(!account)
+  const [credentialQuery, setCredentialQuery] = useState('')
+  const [credentialProvider, setCredentialProvider] = useState('all')
+  const [credentialSearchOpen, setCredentialSearchOpen] = useState(false)
+  const [credentialMode, setCredentialMode] = useState<'copy' | 'username'>('copy')
+  const [credentialBusy, setCredentialBusy] = useState(false)
   const [password, setPassword] = useState('')
   const [showPassword, setShowPassword] = useState(false)
   const [revealedPassword, setRevealedPassword] = useState('')
@@ -187,6 +210,7 @@ export function AccountDrawer({
   const recipeSaveQueueRef = useRef<Promise<void>>(Promise.resolve())
 
   // 未保存改动判定：只比较真正会随「保存」提交的字段，避免把已即时保存的录制流程算进来。
+  // 密码单独比对基线：编辑态打开抽屉时会异步回填密码，若把密码放进快照，一进页面就会被判成「有改动」。
   const formSnapshot = JSON.stringify({
     siteMode,
     selectedSiteId,
@@ -196,7 +220,10 @@ export function AccountDrawer({
     autoSubmit,
     siteGroup,
     username,
-    password,
+    note,
+    otpSecret,
+    otpIssuer,
+    otpCleared,
     loginStrategy,
     loginBrowser,
     manualSteps
@@ -205,7 +232,10 @@ export function AccountDrawer({
   if (initialFormSnapshotRef.current === null) {
     initialFormSnapshotRef.current = formSnapshot
   }
-  const hasUnsavedChanges = formSnapshot !== initialFormSnapshotRef.current
+  const passwordBaselineRef = useRef('')
+  const hasUnsavedChanges =
+    formSnapshot !== initialFormSnapshotRef.current ||
+    password !== passwordBaselineRef.current
 
   const selectedSite = useMemo(
     () => sites.find((site) => site.id === selectedSiteId),
@@ -232,6 +262,32 @@ export function AccountDrawer({
       group.path.toLocaleLowerCase().includes(query)
     )
   }, [groupOptions, groupPickerQuery])
+  const credentialSources = useMemo(
+    () => accounts.filter((entry) => entry.id !== account?.id && entry.username.trim()),
+    [account?.id, accounts]
+  )
+  const credentialProviders = useMemo(() => {
+    const map = new Map<string, { id: string; name: string; count: number }>()
+    for (const entry of credentialSources) {
+      const current = map.get(entry.site.id) ?? { id: entry.site.id, name: entry.site.name, count: 0 }
+      current.count += 1
+      map.set(entry.site.id, current)
+    }
+    return [...map.values()].sort((a, b) => b.count - a.count || a.name.localeCompare(b.name))
+  }, [credentialSources])
+  const credentialOptions = useMemo(() => {
+    const query = credentialQuery.trim().toLocaleLowerCase()
+    return credentialSources
+      .filter((entry) => credentialProvider === 'all' || entry.site.id === credentialProvider)
+      .filter((entry) => {
+        if (!query) return true
+        return [entry.username, entry.label, entry.site.name]
+          .join(' ')
+          .toLocaleLowerCase()
+          .includes(query)
+      })
+      .slice(0, 6)
+  }, [credentialProvider, credentialQuery, credentialSources])
   const recordingThisAccount = Boolean(
     account &&
       loginState?.recording &&
@@ -251,9 +307,10 @@ export function AccountDrawer({
   }, [])
 
   useEffect(() => {
-    if (isBookmark || mode !== 'edit' || !account) return
+    if (mode !== 'edit' || !account) return
     let cancelled = false
     passwordEditedRef.current = false
+    passwordBaselineRef.current = ''
     setPassword('')
     setRevealedPassword('')
     setShowPassword(false)
@@ -261,13 +318,14 @@ export function AccountDrawer({
       .reveal(account.id)
       .then((result) => {
         if (cancelled || passwordEditedRef.current) return
+        passwordBaselineRef.current = result.password
         setPassword(result.password)
       })
       .catch(() => undefined)
     return () => {
       cancelled = true
     }
-  }, [account?.id, isBookmark, mode])
+  }, [account?.id, mode])
 
   useEffect(() => {
     if (!focusField) return
@@ -328,6 +386,47 @@ export function AccountDrawer({
     const timer = window.setInterval(() => setRecordingNow(Date.now()), 1000)
     return () => window.clearInterval(timer)
   }, [recordingThisAccount])
+
+  useEffect(() => {
+    const typed = otpSecret.trim()
+    const active = Boolean(account?.hasOtp) && !otpCleared
+    if (!typed && !active) {
+      setOtpCode(null)
+      setOtpError('')
+      return
+    }
+    if (typed && typed.length < 8) {
+      setOtpCode(null)
+      setOtpError(tr('OTP 密钥至少需要 8 个字符', 'Use at least 8 characters.', 'OTP 密鑰至少需要 8 個字元'))
+      return
+    }
+    let cancelled = false
+    const tick = async (): Promise<void> => {
+      try {
+        const code = typed
+          ? await window.autologin.accounts.previewOtp(typed)
+          : await window.autologin.accounts.getOtp(account!.id)
+        if (!cancelled) {
+          setOtpCode(code)
+          setOtpError('')
+        }
+      } catch (reason) {
+        if (!cancelled) {
+          setOtpError(
+            reason instanceof Error
+              ? reason.message
+              : tr('无法生成 OTP 验证码', 'Could not generate the OTP code.', '無法產生 OTP 驗證碼')
+          )
+        }
+      }
+    }
+    void tick()
+    const timer = window.setInterval(() => void tick(), 1000)
+    return () => {
+      cancelled = true
+      window.clearInterval(timer)
+    }
+  }, [account?.hasOtp, account?.id, otpCleared, otpSecret, tr])
 
   useEffect(() => {
     if (!recordingThisAccount) {
@@ -476,6 +575,11 @@ export function AccountDrawer({
 
   async function submit(event: React.FormEvent): Promise<void> {
     event.preventDefault()
+    // 编辑态未做任何修改时，保存等同于关闭：不写库、不弹「已保存」提示。
+    if (mode === 'edit' && !hasUnsavedChanges) {
+      closeDrawerNow()
+      return
+    }
     setError('')
     setFieldErrors({})
     const normalizedStartUrl = normalizeOptionalStartUrl(startUrl)
@@ -584,19 +688,29 @@ export function AccountDrawer({
         saveStage = isBookmark
           ? tr('写入书签信息', 'Writing bookmark details', '寫入書籤資訊')
           : tr('写入账号信息', 'Writing account details', '寫入帳號資訊')
+        const otpPatch = otpCleared
+          ? { otpSecret: '' }
+          : otpSecret.trim()
+            ? {
+                otpSecret: otpSecret.trim(),
+                otpIssuer: otpIssuer.trim() || undefined
+              }
+            : {}
         saved = await withUiTimeout(
           window.autologin.accounts.update(account.id, {
             label: site.name,
+            username: username.trim(),
+            note: note.trim(),
+            ...(password ? { password } : {}),
             ...(isBookmark
               ? {}
               : {
-                  username: username.trim(),
                   loginStrategy,
                   loginBrowser,
                   manualSteps:
-                    loginStrategy === 'manual' ? normalizeManualSteps(manualSteps) : [],
-                  ...(password ? { password } : {})
-                })
+                    loginStrategy === 'manual' ? normalizeManualSteps(manualSteps) : []
+                }),
+            ...otpPatch
           }),
           20_000,
           tr(
@@ -620,14 +734,23 @@ export function AccountDrawer({
           window.autologin.accounts.create({
             siteId: site.id,
             label: site.name,
-            username: isBookmark ? '' : username.trim(),
-            password: isBookmark ? '' : password,
+            username: username.trim(),
+            password,
+            note: note.trim(),
             loginStrategy: isBookmark ? 'auto' : loginStrategy,
             loginBrowser: isBookmark ? 'standalone' : loginBrowser,
             manualSteps:
               isBookmark || loginStrategy !== 'manual'
                 ? []
-                : normalizeManualSteps(manualSteps)
+                : normalizeManualSteps(manualSteps),
+            ...(otpCleared
+              ? {}
+              : otpSecret.trim()
+                ? {
+                    otpSecret: otpSecret.trim(),
+                    otpIssuer: otpIssuer.trim() || undefined
+                  }
+                : {})
           }),
           20_000,
           tr(
@@ -714,6 +837,48 @@ export function AccountDrawer({
       )
     } catch (reason) {
       notify('error', reason instanceof Error ? reason.message : tr('复制失败', 'Copy failed.', '複製失敗'))
+    }
+  }
+
+  async function copyOtp(): Promise<void> {
+    if (!otpCode) return
+    try {
+      await window.autologin.clipboard.writeSecret(otpCode.code)
+      notify('success', tr('OTP 验证码已复制', 'OTP code copied.', 'OTP 驗證碼已複製'))
+    } catch (reason) {
+      notify('error', reason instanceof Error ? reason.message : tr('复制失败', 'Copy failed.', '複製失敗'))
+    }
+  }
+
+  async function applyCredential(source: AccountWithSite): Promise<void> {
+    setCredentialBusy(true)
+    try {
+      setUsername(source.username)
+      if (credentialMode === 'copy') {
+        const reveal = await window.autologin.accounts.reveal(source.id)
+        setPassword(reveal.password)
+        setShowPassword(true)
+        hideRevealedPassword()
+      }
+      setCredentialPickerOpen(false)
+      notify(
+        'success',
+        credentialMode === 'copy'
+          ? tr(
+              `已填入 ${source.username} 的用户名和密码`,
+              `Filled the credentials for ${source.username}`,
+              `已填入 ${source.username} 的使用者名稱和密碼`
+            )
+          : tr(
+              `已填入 ${source.username}`,
+              `Filled ${source.username}`,
+              `已填入 ${source.username}`
+            )
+      )
+    } catch (reason) {
+      notify('error', reason instanceof Error ? reason.message : tr('读取凭据失败', 'Could not read the credential.', '讀取憑證失敗'))
+    } finally {
+      setCredentialBusy(false)
     }
   }
 
@@ -1429,10 +1594,18 @@ export function AccountDrawer({
 
   return (
     <>
-      <section
-        className="account-editor-page account-drawer"
-        aria-labelledby="account-drawer-title"
-      >
+      <div className="account-drawer-layer">
+        <button
+          type="button"
+          className="account-drawer-backdrop"
+          aria-label={tr('关闭', 'Close', '關閉')}
+          tabIndex={-1}
+          onClick={requestDrawerClose}
+        />
+        <section
+          className="account-editor-page account-drawer"
+          aria-labelledby="account-drawer-title"
+        >
           <header className="details-header account-drawer__header">
             <div className="details-identity">
               <SiteMark
@@ -1859,8 +2032,146 @@ export function AccountDrawer({
                 </div>
               </div>
 
-              {!isBookmark && (
-                <>
+              <>
+
+                  {credentialSources.length > 0 && (
+                    <section className={`reuse-panel${credentialPickerOpen ? ' is-open' : ''}`}>
+                      <header className="reuse-panel__head">
+                        <span className="reuse-panel__title">
+                          <Layers3 size={14} />
+                          <span>
+                            <strong>{tr('复用已有账号', 'Reuse an existing account', '重用既有帳號')}</strong>
+                            <small>{tr('省去重新输入', 'Skip retyping', '省去重新輸入')}</small>
+                          </span>
+                        </span>
+                        <button
+                          type="button"
+                          className="reuse-panel__toggle"
+                          aria-expanded={credentialPickerOpen}
+                          onClick={() => setCredentialPickerOpen((value) => !value)}
+                        >
+                          {credentialPickerOpen
+                            ? tr('收起', 'Hide', '收起')
+                            : tr('展开', 'Show', '展開')}
+                          <ChevronDown size={13} />
+                        </button>
+                      </header>
+                      {credentialPickerOpen && (
+                        <div className="reuse-panel__body">
+                          <div className="reuse-panel__chips">
+                            {credentialProviders.slice(0, 4).map((provider) => (
+                              <button
+                                key={provider.id}
+                                type="button"
+                                className={credentialProvider === provider.id ? 'is-active' : ''}
+                                onClick={() => {
+                                  setCredentialProvider(provider.id)
+                                  setCredentialSearchOpen(false)
+                                  setCredentialQuery('')
+                                }}
+                              >
+                                {provider.name}
+                                <span>{provider.count}</span>
+                              </button>
+                            ))}
+                            <button
+                              type="button"
+                              className={credentialSearchOpen ? 'is-active' : ''}
+                              onClick={() => {
+                                setCredentialSearchOpen((value) => !value)
+                                setCredentialProvider('all')
+                                setCredentialQuery('')
+                              }}
+                            >
+                              <Search size={12} />
+                              {tr('直接搜用户名', 'Search username', '直接搜使用者名稱')}
+                            </button>
+                          </div>
+                          {credentialSearchOpen && (
+                            <span className="input-shell reuse-panel__search">
+                              <Search size={15} />
+                              <input
+                                value={credentialQuery}
+                                onChange={(event) => setCredentialQuery(event.target.value)}
+                                placeholder={tr(
+                                  '输入邮箱或账号',
+                                  'Email or username',
+                                  '輸入電子郵件或帳號'
+                                )}
+                                autoFocus
+                                autoComplete="off"
+                              />
+                            </span>
+                          )}
+                          <div className="reuse-panel__list">
+                            {credentialOptions.length === 0 && (
+                              <p className="reuse-panel__empty">
+                                {tr('没有匹配的账号', 'No matching account', '沒有符合的帳號')}
+                              </p>
+                            )}
+                            {credentialOptions.map((entry) => (
+                              <button
+                                key={entry.id}
+                                type="button"
+                                className="reuse-panel__row"
+                                onClick={() => void applyCredential(entry)}
+                                disabled={credentialBusy}
+                              >
+                                <SiteMark site={entry.site} />
+                                <span className="reuse-panel__identity">
+                                  <strong>{entry.username}</strong>
+                                  <small>
+                                    {entry.site.name}
+                                    {' · '}
+                                    {entry.hasOtp
+                                      ? tr('已录入 OTP', 'OTP saved', '已錄入 OTP')
+                                      : tr('已录入', 'Saved', '已錄入')}
+                                  </small>
+                                </span>
+                                <span className="reuse-panel__fill">
+                                  {credentialBusy ? (
+                                    <LoaderCircle size={14} className="spin" />
+                                  ) : (
+                                    <>
+                                      {tr('填入', 'Fill', '填入')}
+                                      <ArrowRight size={13} />
+                                    </>
+                                  )}
+                                </span>
+                              </button>
+                            ))}
+                          </div>
+                          <div className="reuse-panel__footer">
+                            <span className="reuse-panel__modes" role="group" aria-label={tr('填入方式', 'Fill mode', '填入方式')}>
+                              <button
+                                type="button"
+                                className={credentialMode === 'copy' ? 'is-active' : ''}
+                                onClick={() => setCredentialMode('copy')}
+                              >
+                                <CircleDot size={12} />
+                                {tr('用户名和密码', 'Username + password', '使用者名稱和密碼')}
+                              </button>
+                              <button
+                                type="button"
+                                className={credentialMode === 'username' ? 'is-active' : ''}
+                                onClick={() => setCredentialMode('username')}
+                              >
+                                {tr('只填用户名', 'Username only', '只填使用者名稱')}
+                              </button>
+                            </span>
+                            <small>
+                              {tr(
+                                '填入后仍为独立账号，修改互不影响',
+                                'Filled values stay independent after saving',
+                                '填入後仍為獨立帳號，修改互不影響'
+                              )}
+                            </small>
+                          </div>
+                        </div>
+                      )}
+                    </section>
+                  )}
+
                   <label className="field">
                     <span className="field__label">
                       {tr('用户名', 'Username', '使用者名稱')}
@@ -2015,27 +2326,253 @@ export function AccountDrawer({
                     </span>
                   </label>
 
-                  <div className="form-options account-form__span-2">
-                    <label className="account-editor-check-row">
-                      <input
-                        type="checkbox"
-                        checked={autoSubmit}
-                        onChange={(event) => setAutoSubmit(event.target.checked)}
-                      />
-                      <span>
-                        <strong>{tr('自动提交', 'Auto submit', '自動提交')}</strong>
-                        <small>
-                          {tr(
-                            '检测到验证码时会自动暂停',
-                            'Pauses when a challenge is detected',
-                            '偵測到驗證碼時會自動暫停'
+                  <label className="field account-form__span-2">
+                    <span className="field__label">
+                      {tr('备注', 'Notes', '備註')}
+                      <span className="field__badge">{tr('选填', 'Optional', '選填')}</span>
+                      <small>
+                        {tr(
+                          '记录用途、恢复方式等，最多 2000 字',
+                          'Usage hints, recovery notes, up to 2000 characters',
+                          '記錄用途、復原方式等，最多 2000 字'
+                        )}
+                      </small>
+                    </span>
+                    <textarea
+                      className="account-note-input"
+                      value={note}
+                      onChange={(event) => setNote(event.target.value)}
+                      maxLength={2000}
+                      rows={3}
+                      placeholder={tr(
+                        '例如：工作邮箱，绑定手机尾号 8899',
+                        'For example: work mailbox, phone ending 8899',
+                        '例如：工作信箱，綁定手機末碼 8899'
+                      )}
+                    />
+                  </label>
+
+                  <section className={`account-otp account-form__span-2${otpExpanded ? ' is-open' : ''}`} aria-label="OTP">
+                    <div className="account-otp__head">
+                      <button
+                        type="button"
+                        className="account-otp__toggle"
+                        aria-expanded={otpExpanded}
+                        onClick={() => {
+                          setOtpExpanded((value) => !value)
+                          if (!account?.hasOtp || otpCleared) setOtpEditing(true)
+                        }}
+                      >
+                        <ShieldCheck size={15} />
+                        <span className="account-otp__title">
+                          {tr('两步验证', 'Two-factor authentication', '兩步驗證')}
+                          <small>OTP</small>
+                        </span>
+                        <span className={`account-otp__badge${account?.hasOtp && !otpCleared ? ' is-on' : ''}`}>
+                          {account?.hasOtp && !otpCleared
+                            ? tr('已启用', 'Enabled', '已啟用')
+                            : tr('未配置', 'Not set', '未設定')}
+                        </span>
+                        <ChevronDown size={14} className="account-otp__chevron" />
+                      </button>
+                    </div>
+
+                    {otpExpanded && account?.hasOtp && !otpCleared && !otpEditing && (
+                      <div className="account-otp__configured">
+                        <div className="account-otp__code-row">
+                          <div className="account-otp__digits">
+                            {otpCode ? (
+                              <>
+                                {otpCode.code.split('').map((digit, index) => (
+                                  <span key={index}>{digit}</span>
+                                ))}
+                              </>
+                            ) : (
+                              <span className="account-otp__loading">
+                                {tr('正在生成…', 'Generating…', '正在產生…')}
+                              </span>
+                            )}
+                          </div>
+                          <div className="account-otp__countdown" aria-label={tr('剩余秒数', 'Seconds left', '剩餘秒數')}>
+                            <svg viewBox="0 0 36 36" aria-hidden="true">
+                              <circle cx="18" cy="18" r="15" className="account-otp__ring-track" />
+                              <circle
+                                cx="18"
+                                cy="18"
+                                r="15"
+                                className="account-otp__ring-value"
+                                strokeDasharray="94.25"
+                                strokeDashoffset={
+                                  otpCode
+                                    ? 94.25 * (1 - otpCode.remaining / Math.max(1, otpCode.period))
+                                    : 0
+                                }
+                              />
+                            </svg>
+                            <span>{otpCode?.remaining ?? '--'}</span>
+                          </div>
+                          <button
+                            type="button"
+                            className="button button--ghost button--small account-otp__copy"
+                            onClick={() => void copyOtp()}
+                            disabled={!otpCode}
+                          >
+                            <Copy size={13} />
+                            {tr('复制', 'Copy', '複製')}
+                          </button>
+                        </div>
+                        <dl className="account-otp__meta">
+                          <div>
+                            <dt>{tr('来源', 'Source', '來源')}</dt>
+                            <dd>{otpSecret.trim().startsWith('otpauth://')
+                              ? tr('otpauth 链接', 'otpauth link', 'otpauth 連結')
+                              : tr('手动录入', 'Manual entry', '手動錄入')}</dd>
+                          </div>
+                          <div>
+                            <dt>{tr('算法', 'Algorithm', '演算法')}</dt>
+                            <dd>SHA-1</dd>
+                          </div>
+                          <div>
+                            <dt>{tr('位数', 'Digits', '位數')}</dt>
+                            <dd>6</dd>
+                          </div>
+                          <div>
+                            <dt>{tr('周期', 'Period', '週期')}</dt>
+                            <dd>{otpCode?.period ?? 30}s</dd>
+                          </div>
+                        </dl>
+                        <div className="account-otp__secret">
+                          <span>{tr('密钥', 'Secret', '密鑰')}</span>
+                          <code>••••••••••••</code>
+                          <small>{tr('已加密保存', 'Encrypted locally', '已加密儲存')}</small>
+                        </div>
+                        <div className="account-otp__actions">
+                          <button
+                            type="button"
+                            className="button button--ghost button--small"
+                            onClick={() => {
+                              setOtpEditing(true)
+                              setOtpSecret('')
+                            }}
+                          >
+                            <RefreshCw size={13} />
+                            {tr('更换密钥', 'Replace secret', '更換密鑰')}
+                          </button>
+                          <button
+                            type="button"
+                            className="button button--ghost button--small is-danger"
+                            onClick={() => setConfirmOtpClear(true)}
+                          >
+                            <Trash2 size={13} />
+                            {tr('关闭两步验证', 'Turn off 2FA', '關閉兩步驗證')}
+                          </button>
+                        </div>
+                      </div>
+                    )}
+
+                    {otpExpanded && otpEditing && (
+                      <div className="account-otp__editor">
+                        <div className="account-otp__row">
+                          <span className="input-shell">
+                            <KeyRound size={17} />
+                            <input
+                              type={showOtpSecret ? 'text' : 'password'}
+                              value={otpSecret}
+                              onChange={(event) => {
+                                setOtpSecret(event.target.value)
+                                setOtpCleared(false)
+                              }}
+                              placeholder={
+                                account?.hasOtp && !otpCleared
+                                  ? tr(
+                                      '粘贴新密钥，留空保持不变',
+                                      'Paste a new secret, or leave blank to keep it',
+                                      '貼上新密鑰，留空則保持不變'
+                                    )
+                                  : tr(
+                                      '粘贴 Base32 密钥或 otpauth:// 链接',
+                                      'Paste a Base32 secret or otpauth:// link',
+                                      '貼上 Base32 密鑰或 otpauth:// 連結'
+                                    )
+                              }
+                              autoComplete="off"
+                              spellCheck={false}
+                            />
+                          </span>
+                          <button
+                            type="button"
+                            className="button button--ghost button--small"
+                            onClick={() => setShowOtpSecret((value) => !value)}
+                            aria-label={showOtpSecret ? tr('隐藏密钥', 'Hide secret', '隱藏密鑰') : tr('显示密钥', 'Show secret', '顯示密鑰')}
+                          >
+                            {showOtpSecret ? <EyeOff size={15} /> : <Eye size={15} />}
+                          </button>
+                        </div>
+                        <label className="field">
+                          <span className="field__label">
+                            {tr('发行方或账号标签', 'Issuer or label', '發行方或帳號標籤')}
+                            <span className="field__badge">{tr('选填', 'Optional', '選填')}</span>
+                          </span>
+                          <span className="input-shell">
+                            <StickyNote size={16} />
+                            <input
+                              value={otpIssuer}
+                              onChange={(event) => setOtpIssuer(event.target.value)}
+                              maxLength={120}
+                              placeholder="GitHub / user@example.com"
+                              autoComplete="off"
+                            />
+                          </span>
+                        </label>
+                        {otpError && <p className="form-error">{otpError}</p>}
+                        <div className="account-otp__editor-foot">
+                          <p className="form-hint">
+                            {tr(
+                              '支持 6 位、30 秒的 TOTP。密钥只保存在本机加密数据库中，不会上传。',
+                              'Supports 6-digit, 30-second TOTP. The secret stays in the local encrypted vault.',
+                              '支援 6 位、30 秒的 TOTP。密鑰只儲存在本機加密資料庫中，不會上傳。'
+                            )}
+                          </p>
+                          {account?.hasOtp && !otpCleared && (
+                            <button
+                              type="button"
+                              className="button button--ghost button--small"
+                              onClick={() => {
+                                setOtpEditing(false)
+                                setOtpSecret('')
+                                setOtpError('')
+                              }}
+                            >
+                              {tr('取消', 'Cancel', '取消')}
+                            </button>
                           )}
-                        </small>
-                      </span>
-                    </label>
-                  </div>
+                        </div>
+                      </div>
+                    )}
+                  </section>
+
+                  {!isBookmark && (
+                    <div className="form-options account-form__span-2">
+                      <label className="account-editor-check-row">
+                        <input
+                          type="checkbox"
+                          checked={autoSubmit}
+                          onChange={(event) => setAutoSubmit(event.target.checked)}
+                        />
+                        <span>
+                          <strong>{tr('自动提交', 'Auto submit', '自動提交')}</strong>
+                          <small>
+                            {tr(
+                              '检测到验证码时会自动暂停',
+                              'Pauses when a challenge is detected',
+                              '偵測到驗證碼時會自動暫停'
+                            )}
+                          </small>
+                        </span>
+                      </label>
+                    </div>
+                  )}
                 </>
-              )}
             </div>
 
             {error && <p className="form-error">{error}</p>}
@@ -2477,7 +3014,9 @@ export function AccountDrawer({
               </div>
             </div>
           </form>
-      </section>
+        </section>
+      </div>
+
 
       {credentialHistoryOpen && account && (
         <CredentialHistoryDialog
@@ -2488,6 +3027,27 @@ export function AccountDrawer({
         />
       )}
 
+      {confirmOtpClear && (
+        <ConfirmDialog
+          title={tr('关闭两步验证？', 'Turn off two-factor authentication?', '關閉兩步驗證？')}
+          description={tr(
+            '关闭后账号仍会保留，但下次登录需要到站点侧重新绑定验证器。',
+            'The account stays. You will need to re-bind an authenticator on the site to use codes again.',
+            '關閉後帳號仍會保留，但下次登入需要到站點側重新綁定驗證器。'
+          )}
+          confirmLabel={tr('关闭两步验证', 'Turn off 2FA', '關閉兩步驗證')}
+          danger
+          onConfirm={() => {
+            setOtpSecret('')
+            setOtpCode(null)
+            setOtpCleared(true)
+            setOtpEditing(false)
+            setOtpExpanded(false)
+            setConfirmOtpClear(false)
+          }}
+          onClose={() => setConfirmOtpClear(false)}
+        />
+      )}
       {confirmRecipeDelete && (
         <ConfirmDialog
           title={tr('删除这个录制流程？', 'Delete this recorded flow?', '刪除這個錄製流程？')}

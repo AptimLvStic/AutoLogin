@@ -259,6 +259,8 @@ const api: AutologinApi = {
     clearCredentialHistory: (accountId) =>
       call('accounts:clear-credential-history', accountId),
     copyUsername: (accountId) => call('accounts:copy-username', accountId),
+    getOtp: (accountId) => call('accounts:otp', accountId),
+    previewOtp: (secret) => call('accounts:otp-preview', secret),
     copy: (accountId) => call('accounts:copy', accountId),
     copyUrl: (accountId) => call('accounts:copy-url', accountId),
     setActiveRecipe: (accountId, recipeId) =>

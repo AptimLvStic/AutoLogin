@@ -11,6 +11,7 @@ import { createPortal } from 'react-dom'
 import {
   ArrowUpRight,
   ArchiveRestore,
+  BarChart3,
   Bookmark,
   Check,
   ChevronDown,
@@ -85,6 +86,7 @@ import {
 } from '@shared/tags'
 import { useI18n } from '../i18n'
 import { AccountDrawer } from './AccountDrawer'
+import { AccountInsights } from './AccountInsights'
 import { AccountTabs } from './AccountTabs'
 import { AccountTransferControls } from './AccountTransferControls'
 import { AppLogsPage } from './AppLogsPage'
@@ -125,6 +127,7 @@ import { SiteMark } from './SiteMark'
 type LibraryView =
   | 'accounts'
   | 'bookmarks'
+  | 'insights'
   | 'browser'
   | 'passwordGenerator'
   | 'loginLogs'
@@ -4151,9 +4154,7 @@ export function LibraryScreen({
 
   return (
     <div
-      className={`app-shell${sidebarCollapsed ? ' is-sidebar-collapsed' : ''}${
-        accountEditorOpen ? ' is-account-editor' : ''
-      }`}
+      className={`app-shell${sidebarCollapsed ? ' is-sidebar-collapsed' : ''}`}
     >
       <aside className={`sidebar${sidebarCollapsed ? ' is-collapsed' : ''}`}>
         <nav className="sidebar-nav sidebar-nav--grouped" aria-label={tr('主导航', 'Main navigation', '主導覽')}>
@@ -4175,6 +4176,15 @@ export function LibraryScreen({
             >
               <Bookmark size={17} />
               <span>{tr('书签', 'Bookmarks', '書籤')}</span>
+            </button>
+            <button
+              className={`sidebar-nav__item${view === 'insights' ? ' is-active' : ''}`}
+              onClick={() => switchView('insights')}
+              aria-label={tr('账号统计', 'Account insights', '帳號統計')}
+              title={tr('账号统计', 'Account insights', '帳號統計')}
+            >
+              <BarChart3 size={17} />
+              <span>{tr('统计', 'Insights', '統計')}</span>
             </button>
             <button
               className={`sidebar-nav__item${view === 'browser' ? ' is-active' : ''}`}
@@ -5252,30 +5262,7 @@ export function LibraryScreen({
         />
       )}
 
-      <main
-        className={`library-main${accountEditorOpen ? ' is-account-editor' : ''}`}
-      >
-        {accountEditorOpen && drawer ? (
-          <AccountDrawer
-            tabId={activeTabId}
-            mode={drawer.mode}
-            bookmarkMode={view === 'bookmarks'}
-            account={drawer.mode === 'edit' ? drawerAccount ?? undefined : undefined}
-            defaultLoginBrowser={settings.defaultLoginBrowser}
-            focusField={drawer.mode === 'edit' ? drawer.focusField : undefined}
-            sites={sites}
-            groups={groupDefinitions}
-            initialSiteId={drawer.mode === 'create' ? drawer.siteId : undefined}
-            onClose={() => setDrawer(null)}
-            onSaved={handleSaved}
-            onRecord={drawerAccount ? () => onRecord(drawerAccount) : undefined}
-            onChanged={refreshAll}
-            loginState={loginState}
-            recordingFinishRequest={recordingFinishRequest}
-            onRecordingFinishHandled={onRecordingFinishHandled}
-            notify={notify}
-          />
-        ) : (
+      <main className="library-main">
         <div
           className={`library-content-scroll${
             isAccountCollectionView ? ' library-content-scroll--accounts' : ''
@@ -6543,6 +6530,13 @@ export function LibraryScreen({
             </div>
           )}
 
+          {view === 'insights' && (
+            <AccountInsights
+              accounts={allAccounts}
+              onOpenAccount={(account) => setDrawer({ mode: 'edit', accountId: account.id })}
+            />
+          )}
+
           {view === 'passwordGenerator' && (
             <section className="page-section password-generator-page">
               <PasswordGenerator notify={notify} />
@@ -7036,6 +7030,27 @@ export function LibraryScreen({
             />
           )}
         </div>
+        {accountEditorOpen && drawer && (
+          <AccountDrawer
+            tabId={activeTabId}
+            mode={drawer.mode}
+            bookmarkMode={view === 'bookmarks'}
+            account={drawer.mode === 'edit' ? drawerAccount ?? undefined : undefined}
+            defaultLoginBrowser={settings.defaultLoginBrowser}
+            focusField={drawer.mode === 'edit' ? drawer.focusField : undefined}
+            accounts={accounts}
+            sites={sites}
+            groups={groupDefinitions}
+            initialSiteId={drawer.mode === 'create' ? drawer.siteId : undefined}
+            onClose={() => setDrawer(null)}
+            onSaved={handleSaved}
+            onRecord={drawerAccount ? () => onRecord(drawerAccount) : undefined}
+            onChanged={refreshAll}
+            loginState={loginState}
+            recordingFinishRequest={recordingFinishRequest}
+            onRecordingFinishHandled={onRecordingFinishHandled}
+            notify={notify}
+          />
         )}
       </main>
       {isAccountCollectionView &&

@@ -638,7 +638,29 @@ export function AccountTransferControls({
                 >
                   <FileSpreadsheet size={15} />
                   <span>
-                    {tr('导出 CSV 格式', 'Export CSV format', '匯出 CSV 格式')}
+                    {tr(
+                      '导出加密 CSV（AutoLogin 导入）',
+                      'Export encrypted CSV (AutoLogin import)',
+                      '匯出加密 CSV（AutoLogin 匯入）'
+                    )}
+                  </span>
+                </button>
+                <button
+                  type="button"
+                  role="menuitem"
+                  onClick={() => {
+                    setMenuOpen(false)
+                    void exportTab('csv-plain')
+                  }}
+                  disabled={!tabId}
+                >
+                  <FileSpreadsheet size={15} />
+                  <span>
+                    {tr(
+                      '导出明文 CSV（Excel 可直接打开）',
+                      'Export plain CSV (opens in Excel)',
+                      '匯出明文 CSV（Excel 可直接開啟）'
+                    )}
                   </span>
                 </button>
                 <button

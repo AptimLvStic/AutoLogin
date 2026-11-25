@@ -692,6 +692,7 @@ export function LibraryScreen({
   const accountSort: AccountSortKey = 'recent'
   const [exportOpen, setExportOpen] = useState(false)
   const [exportTargets, setExportTargets] = useState<string[] | null>(null)
+  const [exportRecordsOnly, setExportRecordsOnly] = useState(false)
   const [accountPage, setAccountPage] = useState(1)
   const [drawer, setDrawer] = useState<DrawerState | null>(null)
   const [draggedGroupPath, setDraggedGroupPath] = useState<string | null>(null)
@@ -5397,6 +5398,7 @@ export function LibraryScreen({
                         creatingTab={tabBusy}
                         onImported={(result) => void handleDataImported(result)}
                         onExportRecords={() => {
+                          setExportRecordsOnly(false)
                           setExportTargets(null)
                           setExportOpen(true)
                         }}
@@ -6585,6 +6587,7 @@ export function LibraryScreen({
               bookmarks={bookmarkAccounts}
               onOpenAccount={(account) => setDrawer({ mode: 'edit', accountId: account.id })}
               onExportReport={(list) => {
+                setExportRecordsOnly(true)
                 setExportTargets(list.map((item) => item.id))
                 setExportOpen(true)
               }}
@@ -7121,9 +7124,11 @@ export function LibraryScreen({
           accountIds={exportTargets ?? undefined}
           defaultName={`${activeTab?.name ?? 'AutoLogin 导出'}-${new Date().toISOString().slice(0, 10)}`}
           otpCount={(exportTargets ? accounts.filter((item) => exportTargets.includes(item.id)) : filteredAccounts).filter((item) => item.hasOtp).length}
+          recordsOnly={exportRecordsOnly}
           onClose={() => {
             setExportOpen(false)
             setExportTargets(null)
+            setExportRecordsOnly(false)
           }}
           notify={notify}
         />

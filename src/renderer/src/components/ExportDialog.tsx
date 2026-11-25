@@ -12,7 +12,7 @@ import { Modal } from './Modal'
 import { fileToastActions } from '../toast-actions'
 import { useI18n } from '../i18n'
 
-type VaultFormat = Extract<DataExportFormat, 'autologin' | 'csv' | 'csv-plain' | 'kdbx'>
+type VaultFormat = Extract<DataExportFormat, 'autologin' | 'kdbx'>
 type ExportMode = 'records' | VaultFormat
 
 const RECORD_FORMATS: Array<{
@@ -36,6 +36,7 @@ export function ExportDialog({
   accountIds,
   defaultName,
   otpCount,
+  recordsOnly = false,
   onClose,
   notify
 }: {
@@ -46,6 +47,7 @@ export function ExportDialog({
   accountIds?: string[]
   defaultName: string
   otpCount: number
+  recordsOnly?: boolean
   onClose: () => void
   notify: Notify
 }): React.JSX.Element {
@@ -53,7 +55,6 @@ export function ExportDialog({
   const [mode, setMode] = useState<ExportMode>('records')
   const [recordFormat, setRecordFormat] = useState<AccountExportFormat>('csv')
   const [fields, setFields] = useState<AccountExportField[]>(DEFAULT_EXPORT_FIELDS)
-  const [includePasswords, setIncludePasswords] = useState(false)
   const [masterPassword, setMasterPassword] = useState('')
   const [vaultPassword, setVaultPassword] = useState('')
   const [vaultPasswordConfirm, setVaultPasswordConfirm] = useState('')
@@ -64,12 +65,13 @@ export function ExportDialog({
   const selected = useMemo(() => new Set(fields), [fields])
   const count = accounts.length
   const isVault = mode !== 'records'
-  const needsPassword = isVault && mode !== 'csv-plain'
+  const needsPassword = isVault
   const passwordMinLength = mode === 'kdbx' ? 10 : 8
   const passwordLabel =
     mode === 'kdbx'
       ? tr('数据库主密码', 'Database master password', '資料庫主密碼')
       : tr('导出密码', 'Export password', '匯出密碼')
+  const includePasswords = selected.has('password')
 
   const vaultFormats: Array<{
     id: VaultFormat
@@ -86,20 +88,6 @@ export function ExportDialog({
       disabled: !vaultTabId
     },
     {
-      id: 'csv',
-      label: tr('加密 CSV', 'Encrypted CSV', '加密 CSV'),
-      hint: tr('.csv · 可被 AutoLogin 导入', '.csv · imports back into AutoLogin', '.csv · 可被 AutoLogin 匯入'),
-      icon: FileSpreadsheet,
-      disabled: !vaultTabId
-    },
-    {
-      id: 'csv-plain',
-      label: tr('明文 CSV', 'Plain CSV', '明文 CSV'),
-      hint: tr('.csv · Excel 可直接打开', '.csv · opens in Excel', '.csv · Excel 可直接開啟'),
-      icon: FileSpreadsheet,
-      disabled: !vaultTabId
-    },
-    {
       id: 'kdbx',
       label: tr('KeePassXC 格式', 'KeePassXC format', 'KeePassXC 格式'),
       hint: tr('.kdbx · 通用密码库', '.kdbx · portable vault', '.kdbx · 通用密碼庫'),
@@ -109,9 +97,13 @@ export function ExportDialog({
   ]
 
   function toggleField(id: AccountExportField): void {
-    setFields((current) =>
-      current.includes(id) ? current.filter((item) => item !== id) : [...current, id]
-    )
+    setFields((current) => {
+      if (current.includes(id)) {
+        if (id === 'password') setMasterPassword('')
+        return current.filter((item) => item !== id)
+      }
+      return [...current, id]
+    })
   }
 
   function selectMode(next: ExportMode): void {
@@ -154,9 +146,9 @@ export function ExportDialog({
       if (includePasswords && !masterPassword) {
         setError(
           tr(
-            '包含密码时必须输入主密码',
-            'Enter the master password to include passwords',
-            '包含密碼時必須輸入主密碼'
+            '导出密码需要先输入主密码',
+            'Enter the master password to export passwords',
+            '匯出密碼需要先輸入主密碼'
           )
         )
         return
@@ -269,39 +261,41 @@ export function ExportDialog({
               )}
         </p>
 
-        <div className="export-dialog__section">
-          <span className="export-dialog__section-title">
-            {tr('账号数据（可备份、可迁移）', 'Account data (backup / migration)', '帳號資料（可備份、可移轉）')}
-          </span>
-          <div
-            className="export-dialog__formats export-dialog__formats--vault"
-            role="radiogroup"
-            aria-label={tr('账号数据导出格式', 'Account data format', '帳號資料匯出格式')}
-          >
-            {vaultFormats.map((item) => {
-              const Icon = item.icon
-              return (
-                <button
-                  key={item.id}
-                  type="button"
-                  role="radio"
-                  aria-checked={mode === item.id}
-                  className={'export-dialog__format' + (mode === item.id ? ' is-active' : '')}
-                  onClick={() => selectMode(item.id)}
-                  disabled={busy || item.disabled}
-                >
-                  <Icon size={17} />
-                  <strong>{item.label}</strong>
-                  <small>{item.hint}</small>
-                </button>
-              )
-            })}
+        {!recordsOnly && (
+          <div className="export-dialog__section">
+            <span className="export-dialog__section-title">
+              {tr('账号数据（可备份、可迁移）', 'Account data (backup / migration)', '帳號資料（可備份、可移轉）')}
+            </span>
+            <div
+              className="export-dialog__formats export-dialog__formats--vault"
+              role="radiogroup"
+              aria-label={tr('账号数据导出格式', 'Account data format', '帳號資料匯出格式')}
+            >
+              {vaultFormats.map((item) => {
+                const Icon = item.icon
+                return (
+                  <button
+                    key={item.id}
+                    type="button"
+                    role="radio"
+                    aria-checked={mode === item.id}
+                    className={'export-dialog__format' + (mode === item.id ? ' is-active' : '')}
+                    onClick={() => selectMode(item.id)}
+                    disabled={busy || item.disabled}
+                  >
+                    <Icon size={17} />
+                    <strong>{item.label}</strong>
+                    <small>{item.hint}</small>
+                  </button>
+                )
+              })}
+            </div>
           </div>
-        </div>
+        )}
 
         <div className="export-dialog__section">
           <span className="export-dialog__section-title">
-            {tr('账号记录（不含密码，用于核对）', 'Records (no passwords)', '帳號記錄（不含密碼）')}
+            {tr('账号记录（按需选择字段）', 'Records (pick fields)', '帳號記錄（依需求選擇欄位）')}
           </span>
           <div
             className="export-dialog__formats"
@@ -335,11 +329,17 @@ export function ExportDialog({
 
         {mode === 'records' && otpCount > 0 && recordFormat !== 'json' && (
           <p className="export-dialog__warning">
-            {tr(
-              otpCount + ' 个账号含有 OTP 密钥。记录导出不会写入 OTP 密钥，需要完整备份请选择「AutoLogin 格式」。',
-              otpCount + ' accounts have OTP secrets. Record exports omit them; use the AutoLogin format for a full backup.',
-              otpCount + ' 個帳號含有 OTP 密鑰。記錄匯出不會寫入 OTP 密鑰，需要完整備份請選擇「AutoLogin 格式」。'
-            )}
+            {recordsOnly
+              ? tr(
+                  otpCount + ' 个账号含有 OTP 密钥。记录导出不会写入 OTP 密钥。',
+                  otpCount + ' accounts have OTP secrets. Record exports omit them.',
+                  otpCount + ' 個帳號含有 OTP 密鑰。記錄匯出不會寫入 OTP 密鑰。'
+                )
+              : tr(
+                  otpCount + ' 个账号含有 OTP 密钥。记录导出不会写入 OTP 密钥，需要完整备份请选择「AutoLogin 格式」。',
+                  otpCount + ' accounts have OTP secrets. Record exports omit them; use the AutoLogin format for a full backup.',
+                  otpCount + ' 個帳號含有 OTP 密鑰。記錄匯出不會寫入 OTP 密鑰，需要完整備份請選擇「AutoLogin 格式」。'
+                )}
           </p>
         )}
 
@@ -361,27 +361,6 @@ export function ExportDialog({
                 ))}
               </div>
             </div>
-            <label className="export-dialog__field export-dialog__field--wide">
-              <input
-                type="checkbox"
-                checked={includePasswords}
-                onChange={(event) => {
-                  setIncludePasswords(event.target.checked)
-                  if (!event.target.checked) setMasterPassword('')
-                }}
-                disabled={busy}
-              />
-              <span>
-                {tr('包含密码', 'Include passwords', '包含密碼')}
-                <small>
-                  {tr(
-                    '默认不导出。勾选后需要输入当前保险库主密码。',
-                    'Off by default. Requires the vault master password.',
-                    '預設不匯出。勾選後需要輸入目前保險庫主密碼。'
-                  )}
-                </small>
-              </span>
-            </label>
             {includePasswords && (
               <label className="field">
                 <span className="field__label">{tr('主密码', 'Master password', '主密碼')}</span>
@@ -396,6 +375,15 @@ export function ExportDialog({
                   />
                 </span>
               </label>
+            )}
+            {includePasswords && (
+              <p className="form-hint">
+                {tr(
+                  '导出文件中的密码为明文，仅用于本次导出；需要校验当前保险库主密码。',
+                  'Passwords are written in clear text for this export and require the vault master password.',
+                  '匯出檔案中的密碼為明文，僅用於本次匯出；需要驗證目前保險庫主密碼。'
+                )}
+              </p>
             )}
           </>
         )}

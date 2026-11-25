@@ -67,6 +67,7 @@ import { ConfirmDialog, Modal } from './Modal'
 import { CredentialHistoryDialog } from './CredentialHistoryDialog'
 import { PasswordGeneratorPopover } from './PasswordGenerator'
 import { SiteMark } from './SiteMark'
+import { Markdown } from './UpdateDialog'
 
 interface AccountDrawerProps {
   tabId: string
@@ -131,6 +132,7 @@ export function AccountDrawer({
     account?.needsUsername ? '' : account?.username ?? ''
   )
   const [note, setNote] = useState(account?.note ?? '')
+  const [notePreview, setNotePreview] = useState(false)
   const [otpSecret, setOtpSecret] = useState('')
   const [otpIssuer, setOtpIssuer] = useState(account?.otpIssuer ?? '')
   const [otpCode, setOtpCode] = useState<OtpCode | null>(null)
@@ -2326,31 +2328,54 @@ export function AccountDrawer({
                     </span>
                   </label>
 
-                  <label className="field account-form__span-2">
-                    <span className="field__label">
+                  <div className="field account-form__span-2 account-note-field">
+                    <div className="field__label">
                       {tr('备注', 'Notes', '備註')}
                       <span className="field__badge">{tr('选填', 'Optional', '選填')}</span>
+                      <button
+                        type="button"
+                        className={`account-note__toggle${notePreview ? ' is-active' : ''}`}
+                        onClick={() => setNotePreview((value) => !value)}
+                        aria-pressed={notePreview}
+                      >
+                        {notePreview
+                          ? tr('继续编辑', 'Edit', '繼續編輯')
+                          : tr('预览', 'Preview', '預覽')}
+                      </button>
                       <small>
                         {tr(
-                          '记录用途、恢复方式等，最多 2000 字',
-                          'Usage hints, recovery notes, up to 2000 characters',
-                          '記錄用途、復原方式等，最多 2000 字'
+                          '记录用途、恢复方式等，最多 2000 字，支持 Markdown',
+                          'Usage hints, recovery notes, up to 2000 characters; Markdown supported',
+                          '記錄用途、復原方式等，最多 2000 字，支援 Markdown'
                         )}
                       </small>
-                    </span>
-                    <textarea
-                      className="account-note-input"
-                      value={note}
-                      onChange={(event) => setNote(event.target.value)}
-                      maxLength={2000}
-                      rows={3}
-                      placeholder={tr(
-                        '例如：工作邮箱，绑定手机尾号 8899',
-                        'For example: work mailbox, phone ending 8899',
-                        '例如：工作信箱，綁定手機末碼 8899'
-                      )}
-                    />
-                  </label>
+                    </div>
+                    {notePreview ? (
+                      <div className="account-note__preview markdown-content">
+                        {note.trim() ? (
+                          <Markdown content={note} />
+                        ) : (
+                          <p className="account-note__empty">
+                            {tr('还没有备注内容', 'No notes yet', '還沒有備註內容')}
+                          </p>
+                        )}
+                      </div>
+                    ) : (
+                      <textarea
+                        className="account-note-input"
+                        aria-label={tr('备注', 'Notes', '備註')}
+                        value={note}
+                        onChange={(event) => setNote(event.target.value)}
+                        maxLength={2000}
+                        rows={3}
+                        placeholder={tr(
+                          '支持 Markdown，例如：\n**用途**：工作邮箱\n- 绑定手机尾号 8899\n- [后台](https://example.com)',
+                          'Markdown supported, e.g.\n**Use**: work mailbox\n- phone ending 8899\n- [Admin](https://example.com)',
+                          '支援 Markdown，例如：\n**用途**：工作信箱\n- 綁定手機末碼 8899\n- [後台](https://example.com)'
+                        )}
+                      />
+                    )}
+                  </div>
 
                   <section className={`account-otp account-form__span-2${otpExpanded ? ' is-open' : ''}`} aria-label="OTP">
                     <div className="account-otp__head">

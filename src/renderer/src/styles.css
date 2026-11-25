@@ -24494,7 +24494,11 @@ body.is-dragging-group .account-subnav__group-grip:active {
 /* 账号/书签编辑器：覆盖式抽屉，而不是替换整个工作区 */
 .account-drawer-layer {
   position: fixed;
-  inset: 0;
+  /* 让开 40px 的自定义标题栏，否则抽屉顶部会被标题栏盖住 */
+  top: 40px;
+  right: 0;
+  bottom: 0;
+  left: 0;
   z-index: 140;
   display: flex;
   justify-content: flex-end;
@@ -25776,5 +25780,102 @@ body.is-dragging-group .account-subnav__group-grip:active {
 @media (max-width: 760px) {
   .account-otp__meta {
     grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+/* 1.0.10 · drawer top breathing room and markdown notes */
+.account-drawer.account-editor-page .account-drawer__header {
+  padding-top: 30px;
+}
+.account-note-field .field__label {
+  align-items: center;
+}
+.account-note__toggle {
+  margin-left: auto;
+  padding: 3px 9px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--surface);
+  color: var(--ink-soft);
+  font-size: calc(11px * var(--font-scale, 1));
+  line-height: 1.5;
+  cursor: pointer;
+}
+.account-note__toggle:hover,
+.account-note__toggle.is-active {
+  border-color: color-mix(in srgb, var(--accent) 36%, var(--line));
+  background: color-mix(in srgb, var(--accent) 8%, var(--surface));
+  color: var(--accent-strong);
+}
+.account-note__preview {
+  min-height: 84px;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--surface-2, var(--surface));
+  color: var(--ink);
+  font-size: calc(12px * var(--font-scale, 1));
+  line-height: 1.6;
+  overflow-wrap: anywhere;
+}
+.account-note__preview > .markdown-content > :first-child {
+  margin-top: 0;
+}
+.account-note__preview > .markdown-content > :last-child {
+  margin-bottom: 0;
+}
+.account-note__preview strong {
+  font-weight: 650;
+}
+.account-note__preview p,
+.account-note__preview ul,
+.account-note__preview ol,
+.account-note__preview blockquote,
+.account-note__preview pre {
+  margin: 0 0 6px;
+}
+.account-note__preview h3,
+.account-note__preview h4 {
+  margin: 8px 0 4px;
+  font-size: calc(13px * var(--font-scale, 1));
+}
+.account-note__preview ul,
+.account-note__preview ol {
+  padding-left: 18px;
+}
+.account-note__preview blockquote {
+  padding-left: 9px;
+  border-left: 2px solid var(--line-strong, var(--line));
+  color: var(--ink-soft);
+}
+.account-note__preview code {
+  padding: 1px 4px;
+  border-radius: 4px;
+  background: color-mix(in srgb, var(--ink) 7%, transparent);
+  font-family: var(--font-mono, monospace);
+  font-size: 0.94em;
+}
+.account-note__preview pre {
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--ink) 6%, transparent);
+  overflow-x: auto;
+}
+.account-note__preview pre code {
+  padding: 0;
+  background: none;
+}
+.account-note__preview a {
+  color: var(--accent-strong);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+.account-note__empty {
+  margin: 0;
+  color: var(--ink-muted, var(--ink-soft));
+}
+@media (max-width: 760px) {
+  .account-drawer.account-editor-page .account-drawer__header {
+    padding-top: 24px;
   }
 }

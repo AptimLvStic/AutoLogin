@@ -26433,3 +26433,178 @@ body.is-dragging-group .account-subnav__group-grip:active {
     transform: none;
   }
 }
+/* 2026-11-26 安全与隐私：已打开的数据库卡片列表（SettingsPage） */
+.settings-card .settings-db-list {
+  margin-top: 4px;
+}
+
+.settings-db-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.settings-db {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 14px 16px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--surface);
+}
+
+.settings-db.is-locked {
+  background: color-mix(in srgb, var(--surface) 72%, transparent);
+}
+
+.settings-db__head {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  min-width: 0;
+}
+
+.settings-db__mark {
+  display: grid;
+  place-items: center;
+  flex: 0 0 auto;
+  width: 34px;
+  height: 34px;
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+  color: var(--accent-strong, var(--accent));
+  font-size: 15px;
+  font-weight: 600;
+  line-height: 1;
+}
+
+.settings-db__ident {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+  flex: 1;
+}
+
+.settings-db__title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.settings-db__title strong {
+  font-size: 13.5px;
+  font-weight: 600;
+  color: var(--ink);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.settings-db__badge {
+  flex: 0 0 auto;
+  padding: 2px 7px;
+  border-radius: 999px;
+  background: color-mix(in srgb, #1f9d63 14%, transparent);
+  color: #1f7a4d;
+  font-size: 10.5px;
+  font-weight: 600;
+  line-height: 1.5;
+}
+
+.settings-db__badge.is-locked {
+  background: color-mix(in srgb, var(--ink) 7%, transparent);
+  color: var(--muted);
+}
+
+html[data-color-mode='dark'] .settings-db__badge {
+  background: color-mix(in srgb, #35c98d 20%, transparent);
+  color: #74e0aa;
+}
+
+.settings-db__path {
+  display: block;
+  max-width: 100%;
+  overflow: hidden;
+  color: var(--muted-light);
+  font-size: 11.5px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.settings-db__meta {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px 18px;
+  margin: 0;
+}
+
+.settings-db__meta div {
+  min-width: 0;
+}
+
+.settings-db__meta dt {
+  margin-bottom: 2px;
+  color: var(--muted-light);
+  font-size: 11px;
+  font-weight: 500;
+}
+
+.settings-db__meta dd {
+  margin: 0;
+  color: var(--ink);
+  font-size: 12.5px;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+
+.settings-db__actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.settings-db__remove {
+  margin-left: auto;
+}
+
+.settings-db__editor {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-top: 2px;
+  padding-top: 12px;
+  border-top: 1px solid var(--line);
+}
+
+.settings-db__editor-title {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  margin: 0;
+  color: var(--ink);
+  font-size: 12.5px;
+  font-weight: 600;
+}
+
+.settings-db__editor-title span {
+  color: var(--muted-light);
+  font-size: 11.5px;
+  font-weight: 450;
+}
+
+@media (max-width: 640px) {
+  .settings-db__meta {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .settings-db__remove {
+    margin-left: 0;
+  }
+}

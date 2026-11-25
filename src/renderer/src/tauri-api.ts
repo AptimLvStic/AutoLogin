@@ -205,6 +205,7 @@ const api: AutologinApi = {
   },
   tabs: {
     list: () => call('tabs:list'),
+    info: () => call('tabs:info'),
     create: (input) => call('tabs:create', input),
     update: (tabId, input) => call('tabs:update', tabId, input),
     fileStatus: (tabId) => call('tabs:file-status', tabId),

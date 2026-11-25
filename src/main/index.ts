@@ -117,6 +117,7 @@ import type {
   CredentialHistoryEntry,
   CredentialHistoryReveal,
   CsvFileSelection,
+  DatabaseInfo,
   DataImportResult,
   DataExportFormat,
   DataLocationChoiceResult,
@@ -967,6 +968,48 @@ function registerIpc(): void {
       throw new Error('标签页不存在')
     }
     return { exists: tabDatabaseFileExists(tab) }
+  })
+  ipcMain.handle('tabs:info', (event): DatabaseInfo[] => {
+    assertTrustedSender(event)
+    const data = vault.requireData()
+    const lockedIds = new Set(
+      vault
+        .status()
+        .tabs.filter((entry) => entry.locked)
+        .map((entry) => entry.id)
+    )
+    return data.tabs
+      .filter((tab) => !tab.hidden && tab.source !== 'bookmarks')
+      .map((tab) => {
+        let filePath = tabDatabasePath(tab)
+        let sizeBytes = 0
+        let modifiedAt: string | undefined
+        for (const candidate of [tabDatabasePath(tab), legacyTabDatabasePath(tab)]) {
+          try {
+            const stats = statSync(candidate)
+            if (!stats.isFile()) continue
+            filePath = candidate
+            sizeBytes = stats.size
+            modifiedAt = stats.mtime.toISOString()
+            break
+          } catch {
+            // 文件还没写到新路径时继续尝试旧路径
+          }
+        }
+        return {
+          id: tab.id,
+          name: tab.name,
+          color: tab.color,
+          source: tab.source,
+          filePath,
+          exists: Boolean(modifiedAt) || pendingNewDatabaseTabIds.has(tab.id),
+          sizeBytes,
+          modifiedAt,
+          accountCount: data.accounts.filter((account) => account.tabId === tab.id).length,
+          groupCount: data.groupDefinitions.filter((group) => group.tabId === tab.id).length,
+          locked: lockedIds.has(tab.id)
+        }
+      })
   })
   ipcMain.handle('tabs:create', async (event, payload: unknown): Promise<AccountTab> => {
     assertTrustedSender(event)

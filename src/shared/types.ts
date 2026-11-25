@@ -76,6 +76,21 @@ export interface AccountTabUpdateInput {
   color?: string
 }
 
+/** 设置页「已打开的数据库」卡片所需的元信息。 */
+export interface DatabaseInfo {
+  id: string
+  name: string
+  color: string
+  source: AccountTabSource
+  filePath: string
+  exists: boolean
+  sizeBytes: number
+  modifiedAt?: string
+  accountCount: number
+  groupCount: number
+  locked: boolean
+}
+
 export interface ProxySettings {
   mode: ProxyMode
   enabled: boolean
@@ -951,6 +966,7 @@ export interface AutologinApi {
   }
   tabs: {
     list: () => Promise<AccountTab[]>
+    info: () => Promise<DatabaseInfo[]>
     create: (input?: AccountTabCreateInput) => Promise<AccountTab>
     update: (tabId: string, input: AccountTabUpdateInput) => Promise<AccountTab>
     fileStatus: (tabId: string) => Promise<{ exists: boolean }>

@@ -7180,6 +7180,9 @@ export function LibraryScreen({
               onDownloadUpdate={onDownloadUpdate}
               onCancelUpdate={onCancelUpdate}
               onInstallUpdate={onInstallUpdate}
+              onVaultStatusChange={onVaultStatusChange}
+              onDatabasesChanged={refreshAll}
+              onUnlockDatabase={onUnlockTab}
               notify={notify}
             />
           )}

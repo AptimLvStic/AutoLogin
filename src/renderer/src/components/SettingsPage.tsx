@@ -39,6 +39,7 @@ import {
   type BackupLocationInfo,
   type BackupRecord,
   type ColorMode,
+  type DatabaseInfo,
   type DataLocationConflictAction,
   type DataLocationInfo,
   type ProxySettings,
@@ -60,6 +61,7 @@ import { translate, useI18n } from '../i18n'
 import { ConfirmDialog, Modal } from './Modal'
 import { InfoTip } from './InfoTip'
 import { PasswordStrength } from './PasswordStrength'
+import { DatabasePasswordDialog } from './DatabasePasswordDialog'
 import { UpdateProgress } from './UpdateDialog'
 import { LoadingSpinner } from './LoadingSpinner'
 
@@ -71,6 +73,32 @@ export type SettingsModule =
   | 'about'
 
 type SettingSavePhase = 'saving' | 'saved' | 'error'
+
+type DatabasePasswordEditor = {
+  tabId: string
+  current: string
+  next: string
+  confirm: string
+  busy: boolean
+  error: string
+}
+
+type DatabaseBackupEditor = {
+  tabId: string
+  name: string
+  password: string
+  confirm: string
+  busy: boolean
+  error: string
+}
+
+function formatDatabaseSize(bytes: number): string {
+  if (!Number.isFinite(bytes) || bytes <= 0) return '—'
+  if (bytes < 1024) return `${bytes} B`
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`
+  if (bytes < 1024 * 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
+  return `${(bytes / (1024 * 1024 * 1024)).toFixed(2)} GB`
+}
 
 export function SettingsPage({
   module,
@@ -86,6 +114,9 @@ export function SettingsPage({
   onDownloadUpdate,
   onCancelUpdate,
   onInstallUpdate,
+  onVaultStatusChange,
+  onDatabasesChanged,
+  onUnlockDatabase,
   notify
 }: {
   module: SettingsModule
@@ -101,14 +132,21 @@ export function SettingsPage({
   onDownloadUpdate: () => Promise<void>
   onCancelUpdate: () => Promise<void>
   onInstallUpdate: () => Promise<void>
+  onVaultStatusChange: () => Promise<void>
+  onDatabasesChanged: () => Promise<void>
+  onUnlockDatabase: (tabId: string, password: string) => Promise<void>
   notify: Notify
 }): React.JSX.Element {
   const { tr, formatDate } = useI18n()
   const [autoLock, setAutoLock] = useState<AutoLockMinutes>(settings.autoLockMinutes)
-  const [currentPassword, setCurrentPassword] = useState('')
-  const [nextPassword, setNextPassword] = useState('')
-  const [confirmPassword, setConfirmPassword] = useState('')
-  const [changingPassword, setChangingPassword] = useState(false)
+  const [databases, setDatabases] = useState<DatabaseInfo[] | null>(null)
+  const [databasesError, setDatabasesError] = useState('')
+  const [passwordEditor, setPasswordEditor] = useState<DatabasePasswordEditor | null>(null)
+  const [backupEditor, setBackupEditor] = useState<DatabaseBackupEditor | null>(null)
+  const [removeTarget, setRemoveTarget] = useState<DatabaseInfo | null>(null)
+  const [unlockTarget, setUnlockTarget] = useState<DatabaseInfo | null>(null)
+  const [removingDatabase, setRemovingDatabase] = useState(false)
+  const [lockingTabId, setLockingTabId] = useState('')
   const [clearOpen, setClearOpen] = useState(false)
   const [clearBusy, setClearBusy] = useState(false)
   const [about, setAbout] = useState<AboutInfo | null>(null)
@@ -418,11 +456,50 @@ export function SettingsPage({
     }
   }
 
-  async function submitPassword(event: React.FormEvent): Promise<void> {
+  async function loadDatabases(): Promise<void> {
+    try {
+      const list = await window.autologin.tabs.info()
+      setDatabases(list)
+      setDatabasesError('')
+    } catch (error) {
+      setDatabases([])
+      setDatabasesError(
+        error instanceof Error
+          ? error.message
+          : tr('无法读取数据库列表', 'Could not read the database list.', '無法讀取資料庫清單')
+      )
+    }
+  }
+
+  useEffect(() => {
+    if (module !== 'security') return
+    void loadDatabases()
+  }, [module])
+
+  function openPasswordEditor(tab: DatabaseInfo): void {
+    setPasswordEditor({
+      tabId: tab.id,
+      current: '',
+      next: '',
+      confirm: '',
+      busy: false,
+      error: ''
+    })
+    setBackupEditor(null)
+  }
+
+  async function submitDatabasePassword(
+    event: React.FormEvent,
+    tabId: string
+  ): Promise<void> {
     event.preventDefault()
-    if (nextPassword.length < 10) {
-      notify(
-        'error',
+    const editor = passwordEditor
+    if (!editor || editor.tabId !== tabId) return
+    const fail = (message: string): void => {
+      setPasswordEditor({ ...editor, busy: false, error: message })
+    }
+    if (editor.next.length < 10) {
+      fail(
         tr(
           '新数据库密码至少需要 10 个字符',
           'The new database password needs at least 10 characters.',
@@ -431,9 +508,8 @@ export function SettingsPage({
       )
       return
     }
-    if (nextPassword !== confirmPassword) {
-      notify(
-        'error',
+    if (editor.next !== editor.confirm) {
+      fail(
         tr(
           '两次输入的新数据库密码不一致',
           'The new database passwords do not match.',
@@ -442,34 +518,27 @@ export function SettingsPage({
       )
       return
     }
-    if (!activeTabId) {
-      notify(
-        'error',
-        tr('请先打开一个数据库', 'Open a database first.', '請先開啟一個資料庫')
-      )
+    if (!editor.current) {
+      fail(tr('请输入当前数据库密码', 'Enter the current password.', '請輸入目前資料庫密碼'))
       return
     }
-    setChangingPassword(true)
+    const name = databases?.find((item) => item.id === tabId)?.name ?? ''
+    setPasswordEditor({ ...editor, busy: true, error: '' })
     try {
       await window.autologin.vault.changeTabPassword({
-        tabId: activeTabId,
-        currentPassword,
-        nextPassword
+        tabId,
+        currentPassword: editor.current,
+        nextPassword: editor.next
       })
-      setCurrentPassword('')
-      setNextPassword('')
-      setConfirmPassword('')
+      setPasswordEditor(null)
       notify(
         'success',
-        tr(
-          '数据库密码已更新',
-          'Database password updated.',
-          '資料庫密碼已更新'
-        )
+        name
+          ? tr(`「${name}」的密码已更新`, `Password updated for "${name}".`, `「${name}」的密碼已更新`)
+          : tr('数据库密码已更新', 'Database password updated.', '資料庫密碼已更新')
       )
     } catch (error) {
-      notify(
-        'error',
+      fail(
         error instanceof Error
           ? error.message
           : tr(
@@ -478,8 +547,129 @@ export function SettingsPage({
               '資料庫密碼修改失敗'
             )
       )
+    }
+  }
+
+  async function lockDatabase(tab: DatabaseInfo): Promise<void> {
+    setLockingTabId(tab.id)
+    try {
+      await window.autologin.vault.lockTab(tab.id)
+      await onVaultStatusChange()
+      await loadDatabases()
+      notify(
+        'success',
+        tr(`「${tab.name}」已锁定`, `"${tab.name}" is locked.`, `「${tab.name}」已鎖定`)
+      )
+    } catch (error) {
+      notify(
+        'error',
+        error instanceof Error
+          ? error.message
+          : tr('锁定数据库失败', 'Could not lock the database.', '鎖定資料庫失敗')
+      )
     } finally {
-      setChangingPassword(false)
+      setLockingTabId('')
+    }
+  }
+
+  async function removeDatabase(): Promise<void> {
+    const target = removeTarget
+    if (!target) return
+    setRemovingDatabase(true)
+    try {
+      await window.autologin.tabs.delete(target.id)
+      setRemoveTarget(null)
+      setPasswordEditor(null)
+      setBackupEditor(null)
+      await onDatabasesChanged()
+      await onVaultStatusChange()
+      await loadDatabases()
+      notify(
+        'success',
+        tr(
+          `「${target.name}」已从列表移除`,
+          `"${target.name}" was removed from the list.`,
+          `「${target.name}」已從清單移除`
+        )
+      )
+    } catch (error) {
+      notify(
+        'error',
+        error instanceof Error
+          ? error.message
+          : tr('移除数据库失败', 'Could not remove the database.', '移除資料庫失敗')
+      )
+    } finally {
+      setRemovingDatabase(false)
+    }
+  }
+
+  function openBackupEditor(tab: DatabaseInfo): void {
+    setBackupEditor({
+      tabId: tab.id,
+      name: tab.name,
+      password: '',
+      confirm: '',
+      busy: false,
+      error: ''
+    })
+    setPasswordEditor(null)
+  }
+
+  async function submitBackupExport(event: React.FormEvent): Promise<void> {
+    event.preventDefault()
+    const editor = backupEditor
+    if (!editor) return
+    const fail = (message: string): void => {
+      setBackupEditor({ ...editor, busy: false, error: message })
+    }
+    if (editor.password.length < 8) {
+      fail(
+        tr(
+          '导出密码至少需要 8 个字符',
+          'The export password needs at least 8 characters.',
+          '匯出密碼至少需要 8 個字元'
+        )
+      )
+      return
+    }
+    if (editor.password !== editor.confirm) {
+      fail(
+        tr(
+          '两次输入的导出密码不一致',
+          'The export passwords do not match.',
+          '兩次輸入的匯出密碼不一致'
+        )
+      )
+      return
+    }
+    setBackupEditor({ ...editor, busy: true, error: '' })
+    try {
+      const result = await window.autologin.data.exportTab({
+        tabId: editor.tabId,
+        format: 'autologin',
+        password: editor.password
+      })
+      setBackupEditor(null)
+      if (!result.canceled) {
+        notify(
+          'success',
+          tr(
+            `已导出备份：${result.fileName ?? ''}`,
+            `Backup exported: ${result.fileName ?? ''}`,
+            `已匯出備份：${result.fileName ?? ''}`
+          )
+        )
+      }
+    } catch (error) {
+      setBackupEditor({
+        ...editor,
+        busy: false,
+        error:
+          error instanceof Error
+            ? error.message
+            : tr('导出备份失败', 'Could not export the backup.', '匯出備份失敗')
+      })
     }
   }
 
@@ -1605,96 +1795,281 @@ export function SettingsPage({
             icon={<ShieldCheck size={18} />}
             title={tr('数据库密码与本地数据', 'Database password and local data', '資料庫密碼與本機資料')}
             description={tr(
-              '每个数据库使用自己的密码；这里修改的是当前数据库的密码。',
-              'Each database has its own password; this changes the current one.',
-              '每個資料庫使用自己的密碼；這裡修改的是目前資料庫的密碼。'
+              '每个数据库单独加密、单独设置密码，只在本机校验；忘记密码后无法恢复。',
+              'Each database is encrypted with its own password, verified on this device only; a forgotten password cannot be recovered.',
+              '每個資料庫單獨加密、單獨設定密碼，只在本機驗證；忘記密碼後無法復原。'
             )}
           >
             <div className="settings-card">
               <SettingsCardHeading
-                icon={<KeyRound size={17} />}
-                title={
-                  activeTabName
-                    ? tr(
-                        `修改「${activeTabName}」的密码`,
-                        `Change the password of "${activeTabName}"`,
-                        `修改「${activeTabName}」的密碼`
-                      )
-                    : tr('修改数据库密码', 'Change database password', '修改資料庫密碼')
-                }
+                icon={<Database size={17} />}
+                title={tr('已打开的数据库', 'Open databases', '已開啟的資料庫')}
                 description={tr(
-                  '修改后这个数据库会用新密钥重新加密，其他数据库不受影响。',
-                  'This database is re-encrypted with the new key; other databases are unaffected.',
-                  '修改後這個資料庫會用新金鑰重新加密，其他資料庫不受影響。'
+                  '每个数据库使用自己的密码；在这里修改密码、导出备份或锁定数据库。',
+                  'Each database keeps its own password; change it, export a backup or lock it here.',
+                  '每個資料庫使用自己的密碼；在這裡修改密碼、匯出備份或鎖定資料庫。'
                 )}
-                action={
-                  <span className="settings-save-requirement">
-                    {tr('需点击保存', 'Requires save', '需點擊儲存')}
-                  </span>
-                }
               />
-              <form className="settings-password-form" onSubmit={submitPassword}>
-                <label className="field">
-                  <span className="field__label">
-                    {tr('当前数据库密码', 'Current database password', '目前資料庫密碼')}
-                  </span>
-                  <span className="input-shell">
-                    <input
-                      type="password"
-                      value={currentPassword}
-                      onChange={(event) => setCurrentPassword(event.target.value)}
-                      autoComplete="current-password"
-                    />
-                  </span>
-                </label>
-                <div className="field-row">
-                  <label className="field">
-                    <span className="field__label">
-                      {tr('新数据库密码', 'New database password', '新資料庫密碼')}
-                    </span>
-                    <span className="input-shell">
-                      <input
-                        type="password"
-                        value={nextPassword}
-                        onChange={(event) => setNextPassword(event.target.value)}
-                        autoComplete="new-password"
-                      />
-                    </span>
-                  </label>
-                  <label className="field">
-                    <span className="field__label">
-                      {tr('确认新密码', 'Confirm new password', '確認新密碼')}
-                    </span>
-                    <span className="input-shell">
-                      <input
-                        type="password"
-                        value={confirmPassword}
-                        onChange={(event) => setConfirmPassword(event.target.value)}
-                        autoComplete="new-password"
-                      />
-                    </span>
-                  </label>
+              {databasesError && (
+                <div className="settings-notice settings-notice--error">
+                  <TriangleAlert size={16} />
+                  <span>{databasesError}</span>
+                  <button className="text-button" onClick={() => void loadDatabases()}>
+                    {tr('重试', 'Retry', '重試')}
+                  </button>
                 </div>
-                {nextPassword && <PasswordStrength password={nextPassword} />}
-                <button
-                  className={`button button--soft button--align-self${
-                    changingPassword ? ' is-loading' : ''
-                  }`}
-                  type="submit"
-                  disabled={
-                    changingPassword ||
-                    !currentPassword ||
-                    nextPassword.length < 10 ||
-                    nextPassword !== confirmPassword
-                  }
-                  aria-busy={changingPassword}
-                >
-                  {changingPassword && <LoaderCircle size={14} className="spin" />}
-                  {changingPassword
-                    ? tr('正在更新…', 'Updating…', '正在更新…')
-                    : tr('更新数据库密码', 'Update database password', '更新資料庫密碼')}
-                </button>
-              </form>
+              )}
+              {!databasesError && databases === null && (
+                <p className="form-hint">{tr('正在读取…', 'Loading…', '正在讀取…')}</p>
+              )}
+              {!databasesError && databases && databases.length === 0 && (
+                <p className="form-hint">
+                  {tr(
+                    '还没有打开任何数据库。',
+                    'No database is open yet.',
+                    '還沒有開啟任何資料庫。'
+                  )}
+                </p>
+              )}
+              {databases && databases.length > 0 && (
+                <ul className="settings-db-list">
+                  {databases.map((tab) => {
+                    const editor = passwordEditor?.tabId === tab.id ? passwordEditor : null
+                    const canChangePassword = tab.source !== 'kdbx'
+                    return (
+                      <li key={tab.id} className={`settings-db${tab.locked ? ' is-locked' : ''}`}>
+                        <div className="settings-db__head">
+                          <span className="settings-db__mark" aria-hidden="true">
+                            {Array.from(tab.name)[0] ?? '库'}
+                          </span>
+                          <div className="settings-db__ident">
+                            <div className="settings-db__title">
+                              <strong>{tab.name}</strong>
+                              <span
+                                className={`settings-db__badge${tab.locked ? ' is-locked' : ''}`}
+                              >
+                                {tab.locked
+                                  ? tr('已锁定', 'Locked', '已鎖定')
+                                  : tr('已解锁', 'Unlocked', '已解鎖')}
+                              </span>
+                            </div>
+                            <code className="settings-db__path">{tab.filePath}</code>
+                          </div>
+                        </div>
+                        <dl className="settings-db__meta">
+                          <div>
+                            <dt>{tr('条目', 'Items', '項目')}</dt>
+                            <dd>
+                              {tab.locked
+                                ? '—'
+                                : tr(
+                                    `${tab.accountCount} 账号 · ${tab.groupCount} 分组`,
+                                    `${tab.accountCount} accounts · ${tab.groupCount} groups`,
+                                    `${tab.accountCount} 帳號 · ${tab.groupCount} 分組`
+                                  )}
+                            </dd>
+                          </div>
+                          <div>
+                            <dt>{tr('大小', 'Size', '大小')}</dt>
+                            <dd>
+                              {tab.exists
+                                ? formatDatabaseSize(tab.sizeBytes)
+                                : tr('尚未生成文件', 'No file yet', '尚未產生檔案')}
+                            </dd>
+                          </div>
+                          <div>
+                            <dt>{tr('加密', 'Encryption', '加密')}</dt>
+                            <dd>
+                              {tab.source === 'kdbx'
+                                ? 'KeePass KDBX · AES-256'
+                                : tr(
+                                    'AES-256 · Argon2id 派生',
+                                    'AES-256 · Argon2id',
+                                    'AES-256 · Argon2id 衍生'
+                                  )}
+                            </dd>
+                          </div>
+                          <div>
+                            <dt>{tr('最后修改', 'Last modified', '最後修改')}</dt>
+                            <dd>
+                              {tab.modifiedAt
+                                ? formatDate(tab.modifiedAt, {
+                                    dateStyle: 'medium',
+                                    timeStyle: 'short'
+                                  })
+                                : '—'}
+                            </dd>
+                          </div>
+                        </dl>
+                        <div className="settings-db__actions">
+                          {tab.locked ? (
+                            <button
+                              className="button button--soft button--small"
+                              onClick={() => setUnlockTarget(tab)}
+                            >
+                              <KeyRound size={14} />
+                              {tr('解锁', 'Unlock', '解鎖')}
+                            </button>
+                          ) : (
+                            canChangePassword && (
+                              <button
+                                className="button button--soft button--small"
+                                onClick={() =>
+                                  editor ? setPasswordEditor(null) : openPasswordEditor(tab)
+                                }
+                                aria-expanded={Boolean(editor)}
+                              >
+                                <KeyRound size={14} />
+                                {editor
+                                  ? tr('收起', 'Collapse', '收起')
+                                  : tr('修改密码', 'Change password', '修改密碼')}
+                              </button>
+                            )
+                          )}
+                          <button
+                            className="button button--ghost button--small"
+                            onClick={() => openBackupEditor(tab)}
+                          >
+                            <Download size={14} />
+                            {tr('导出备份', 'Export backup', '匯出備份')}
+                          </button>
+                          <button
+                            className="button button--ghost button--small"
+                            onClick={() => void lockDatabase(tab)}
+                            disabled={tab.locked || lockingTabId === tab.id}
+                            aria-busy={lockingTabId === tab.id}
+                          >
+                            {lockingTabId === tab.id ? (
+                              <LoaderCircle size={14} className="spin" />
+                            ) : (
+                              <LockKeyhole size={14} />
+                            )}
+                            {tab.locked
+                              ? tr('已锁定', 'Locked', '已鎖定')
+                              : tr('立即锁定', 'Lock now', '立即鎖定')}
+                          </button>
+                          <button
+                            className="button button--danger-ghost button--small settings-db__remove"
+                            onClick={() => setRemoveTarget(tab)}
+                          >
+                            <Trash2 size={14} />
+                            {tr('移除…', 'Remove…', '移除…')}
+                          </button>
+                        </div>
+                        {editor && (
+                          <form
+                            className="settings-db__editor"
+                            onSubmit={(event) => void submitDatabasePassword(event, tab.id)}
+                          >
+                            <p className="settings-db__editor-title">
+                              {tr('修改密码', 'Change password', '修改密碼')}
+                              <span>
+                                {tr(
+                                  `只影响「${tab.name}」`,
+                                  `Only affects "${tab.name}"`,
+                                  `只影響「${tab.name}」`
+                                )}
+                              </span>
+                            </p>
+                            <label className="field">
+                              <span className="field__label">
+                                {tr('当前密码', 'Current password', '目前密碼')}
+                              </span>
+                              <span className="input-shell">
+                                <input
+                                  type="password"
+                                  value={editor.current}
+                                  placeholder={tr(
+                                    '输入当前数据库密码',
+                                    'Enter the current password',
+                                    '輸入目前資料庫密碼'
+                                  )}
+                                  onChange={(event) =>
+                                    setPasswordEditor({ ...editor, current: event.target.value })
+                                  }
+                                  autoComplete="current-password"
+                                  data-autofocus
+                                />
+                              </span>
+                            </label>
+                            <div className="field-row">
+                              <label className="field">
+                                <span className="field__label">
+                                  {tr('新密码', 'New password', '新密碼')}
+                                </span>
+                                <span className="input-shell">
+                                  <input
+                                    type="password"
+                                    value={editor.next}
+                                    placeholder={tr(
+                                      '至少 10 个字符',
+                                      'At least 10 characters',
+                                      '至少 10 個字元'
+                                    )}
+                                    onChange={(event) =>
+                                      setPasswordEditor({ ...editor, next: event.target.value })
+                                    }
+                                    autoComplete="new-password"
+                                  />
+                                </span>
+                              </label>
+                              <label className="field">
+                                <span className="field__label">
+                                  {tr('确认', 'Confirm', '確認')}
+                                </span>
+                                <span className="input-shell">
+                                  <input
+                                    type="password"
+                                    value={editor.confirm}
+                                    placeholder={tr('再输一次', 'Type it again', '再輸入一次')}
+                                    onChange={(event) =>
+                                      setPasswordEditor({ ...editor, confirm: event.target.value })
+                                    }
+                                    autoComplete="new-password"
+                                  />
+                                </span>
+                              </label>
+                            </div>
+                            {editor.next && <PasswordStrength password={editor.next} />}
+                            {editor.error && <p className="form-error">{editor.error}</p>}
+                            <p className="form-hint">
+                              {tr(
+                                '修改后旧备份仍然用旧密码，需要单独更新。',
+                                'Existing backups keep the old password; update them separately.',
+                                '修改後舊備份仍然使用舊密碼，需要單獨更新。'
+                              )}
+                            </p>
+                            <div className="settings-inline-actions">
+                              <button
+                                className="button button--soft button--small"
+                                type="submit"
+                                disabled={
+                                  editor.busy ||
+                                  !editor.current ||
+                                  editor.next.length < 10 ||
+                                  editor.next !== editor.confirm
+                                }
+                                aria-busy={editor.busy}
+                              >
+                                {editor.busy && <LoaderCircle size={14} className="spin" />}
+                                {tr('更新密码', 'Update password', '更新密碼')}
+                              </button>
+                              <button
+                                className="button button--ghost button--small"
+                                type="button"
+                                onClick={() => setPasswordEditor(null)}
+                                disabled={editor.busy}
+                              >
+                                {tr('取消', 'Cancel', '取消')}
+                              </button>
+                            </div>
+                          </form>
+                        )}
+                      </li>
+                    )
+                  })}
+                </ul>
+              )}
             </div>
 
             <div className="settings-card settings-card--danger">
@@ -2405,6 +2780,134 @@ export function SettingsPage({
           onConfirm={() => void resetBrowserProfile()}
           onClose={() => {
             if (!resettingBrowserProfile) setResetBrowserProfileConfirm(false)
+          }}
+        />
+      )}
+
+      {backupEditor && (
+        <Modal
+          title={tr('导出数据库备份', 'Export a database backup', '匯出資料庫備份')}
+          width="480px"
+          onClose={() => {
+            if (!backupEditor.busy) setBackupEditor(null)
+          }}
+        >
+          <form
+            className="settings-password-form"
+            onSubmit={(event) => void submitBackupExport(event)}
+          >
+            <p className="modal-description">
+              {tr(
+                `将「${backupEditor.name}」导出为加密的 .autologin 备份，需要为这份文件单独设置导出密码。`,
+                `Export "${backupEditor.name}" as an encrypted .autologin backup and set a password for this file.`,
+                `將「${backupEditor.name}」匯出為加密的 .autologin 備份，需要為這份檔案單獨設定匯出密碼。`
+              )}
+            </p>
+            <label className="field">
+              <span className="field__label">
+                {tr('导出密码', 'Export password', '匯出密碼')}
+              </span>
+              <span className="input-shell">
+                <input
+                  type="password"
+                  value={backupEditor.password}
+                  placeholder={tr('至少 8 个字符', 'At least 8 characters', '至少 8 個字元')}
+                  onChange={(event) =>
+                    setBackupEditor({ ...backupEditor, password: event.target.value })
+                  }
+                  autoComplete="new-password"
+                  data-autofocus
+                />
+              </span>
+            </label>
+            <label className="field">
+              <span className="field__label">
+                {tr('确认导出密码', 'Confirm export password', '確認匯出密碼')}
+              </span>
+              <span className="input-shell">
+                <input
+                  type="password"
+                  value={backupEditor.confirm}
+                  placeholder={tr('再输一次', 'Type it again', '再輸入一次')}
+                  onChange={(event) =>
+                    setBackupEditor({ ...backupEditor, confirm: event.target.value })
+                  }
+                  autoComplete="new-password"
+                />
+              </span>
+            </label>
+            {backupEditor.error && <p className="form-error">{backupEditor.error}</p>}
+            <p className="form-hint">
+              {tr(
+                '备份文件不会自动更新，重新打开时会要求输入这里设置的密码。',
+                'The backup file is not updated automatically; it asks for this password when reopened.',
+                '備份檔案不會自動更新，重新開啟時會要求輸入這裡設定的密碼。'
+              )}
+            </p>
+            <div className="settings-inline-actions">
+              <button
+                className="button button--soft button--small"
+                type="submit"
+                disabled={
+                  backupEditor.busy ||
+                  backupEditor.password.length < 8 ||
+                  backupEditor.password !== backupEditor.confirm
+                }
+                aria-busy={backupEditor.busy}
+              >
+                {backupEditor.busy && <LoaderCircle size={14} className="spin" />}
+                {tr('选择保存位置…', 'Choose location…', '選擇儲存位置…')}
+              </button>
+              <button
+                className="button button--ghost button--small"
+                type="button"
+                onClick={() => setBackupEditor(null)}
+                disabled={backupEditor.busy}
+              >
+                {tr('取消', 'Cancel', '取消')}
+              </button>
+            </div>
+          </form>
+        </Modal>
+      )}
+
+      {unlockTarget && (
+        <DatabasePasswordDialog
+          mode="unlock"
+          databaseName={unlockTarget.name}
+          onClose={() => setUnlockTarget(null)}
+          onSubmit={async ({ nextPassword }) => {
+            const name = unlockTarget.name
+            await onUnlockDatabase(unlockTarget.id, nextPassword)
+            setUnlockTarget(null)
+            await onVaultStatusChange()
+            await loadDatabases()
+            notify(
+              'success',
+              tr(`「${name}」已解锁`, `"${name}" is unlocked.`, `「${name}」已解鎖`)
+            )
+          }}
+        />
+      )}
+
+      {removeTarget && (
+        <ConfirmDialog
+          title={tr(
+            `移除「${removeTarget.name}」？`,
+            `Remove "${removeTarget.name}"?`,
+            `移除「${removeTarget.name}」？`
+          )}
+          description={tr(
+            '移除后这个数据库会从列表隐藏，账号数据和 .autologin 文件仍保留在本地，可以随时重新打开。',
+            'The database is hidden from the list; its accounts and the .autologin file stay on this device and can be reopened later.',
+            '移除後這個資料庫會從清單隱藏，帳號資料和 .autologin 檔案仍保留在本機，可以隨時重新開啟。'
+          )}
+          confirmLabel={tr('移除', 'Remove', '移除')}
+          danger
+          busy={removingDatabase}
+          onConfirm={() => void removeDatabase()}
+          onClose={() => {
+            if (!removingDatabase) setRemoveTarget(null)
           }}
         />
       )}

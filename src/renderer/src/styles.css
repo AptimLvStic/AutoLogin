@@ -26294,6 +26294,32 @@ body.is-dragging-group .account-subnav__group-grip:active {
   outline-offset: 1px;
 }
 
+/* 短对话框不常驻滚动条槽，否则右侧会多出一条 17px 的"假边距" */
+.database-password-dialog {
+  scrollbar-gutter: auto;
+}
+
+/* 数据库密码对话框：form 直接挂在面板上，需要自己撑开左右与底部留白 */
+.database-password-form {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 0 28px 26px;
+}
+
+.database-password-form .modal-description {
+  padding: 0;
+  margin: 0;
+}
+
+.database-password-form .field {
+  margin: 0;
+}
+
+.database-password-form .modal-actions {
+  padding-top: 8px;
+}
+
 /* 侧栏：分组标题与「全部账号」读作同一棵树，不再被分隔线切开 */
 .account-subnav__groups-heading {
   margin-top: 6px;

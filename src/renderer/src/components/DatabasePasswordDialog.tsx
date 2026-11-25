@@ -90,7 +90,13 @@ export function DatabasePasswordDialog({
   }
 
   return (
-    <Modal title={title} eyebrow="DATABASE PASSWORD" width="480px" onClose={onClose}>
+    <Modal
+      title={title}
+      eyebrow="DATABASE PASSWORD"
+      width="480px"
+      className="database-password-dialog"
+      onClose={onClose}
+    >
       <form className="database-password-form" onSubmit={submit}>
         <p className="modal-description">
           {databaseName ? <strong>{databaseName} · </strong> : null}

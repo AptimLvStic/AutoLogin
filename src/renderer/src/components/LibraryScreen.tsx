@@ -2696,10 +2696,16 @@ export function LibraryScreen({
   ): void {
     event.preventDefault()
     event.stopPropagation()
-    const menuWidth = 196
     const pointer = event.nativeEvent
-    const anchorX = pointer.clientX
-    const anchorY = pointer.clientY
+    openAccountMenuAt(account, pointer.clientX, pointer.clientY)
+  }
+
+  function openAccountMenuAt(
+    account: AccountWithSite,
+    anchorX: number,
+    anchorY: number
+  ): void {
+    const menuWidth = 196
     setAccountMenu({
       kind: 'account',
       account,
@@ -6508,6 +6514,7 @@ export function LibraryScreen({
                       onShiftSelect={() => toggleAccountSelection(account.id, true)}
                       onEdit={() => setDrawer({ mode: 'edit', accountId: account.id })}
                       onContextMenu={(event) => openAccountMenu(event, account)}
+                      onKeyboardMenu={(x, y) => openAccountMenuAt(account, x, y)}
                       onMore={(event) => openAccountMenu(event, account)}
                       onLogin={() => void openAccount(account)}
                       onCopyOtp={() => void copyAccountOtp(account)}
@@ -7651,6 +7658,7 @@ function AccountListRow({
   onShiftSelect,
   onEdit,
   onContextMenu,
+  onKeyboardMenu,
   onMore,
   onLogin,
   onCopyOtp,
@@ -7670,6 +7678,7 @@ function AccountListRow({
   onShiftSelect?: () => void
   onEdit: () => void
   onContextMenu: (event: React.MouseEvent<HTMLElement>) => void
+  onKeyboardMenu?: (x: number, y: number) => void
   onMore: (event: React.MouseEvent<HTMLButtonElement>) => void
   onLogin: () => void
   onCopyOtp?: () => void
@@ -7685,6 +7694,53 @@ function AccountListRow({
 
   return (
     <article
+      tabIndex={0}
+      aria-label={tr(
+        `账号 ${account.site.name}${account.username ? ` · ${account.username}` : ''}`,
+        `Account ${account.site.name}${account.username ? ` · ${account.username}` : ''}`,
+        `帳號 ${account.site.name}${account.username ? ` · ${account.username}` : ''}`
+      )}
+      onKeyDown={(event) => {
+        if (event.target !== event.currentTarget) return
+        if (event.key === 'Enter') {
+          event.preventDefault()
+          onEdit()
+          return
+        }
+        if (event.key === ' ') {
+          event.preventDefault()
+          onToggleSelection?.(event.shiftKey)
+          return
+        }
+        if (event.key === 'ContextMenu' || (event.shiftKey && event.key === 'F10')) {
+          event.preventDefault()
+          const rect = event.currentTarget.getBoundingClientRect()
+          onKeyboardMenu?.(rect.left + 24, rect.top + rect.height / 2)
+          return
+        }
+        if (
+          event.key === 'ArrowUp' ||
+          event.key === 'ArrowDown' ||
+          event.key === 'Home' ||
+          event.key === 'End'
+        ) {
+          const list = event.currentTarget.parentElement
+          const rows = Array.from(
+            list?.querySelectorAll<HTMLElement>('.account-row') ?? []
+          )
+          if (rows.length < 2) return
+          const current = rows.indexOf(event.currentTarget)
+          const next =
+            event.key === 'Home'
+              ? rows[0]
+              : event.key === 'End'
+                ? rows[rows.length - 1]
+                : rows[current + (event.key === 'ArrowDown' ? 1 : -1)]
+          if (!next || next === event.currentTarget) return
+          event.preventDefault()
+          next.focus()
+        }
+      }}
       className={`account-row${checked ? ' is-selected' : ''}${
         account.site.needsReview ? ' needs-review' : ''
       }${account.needsSecret ? ' needs-secret' : ''}`}

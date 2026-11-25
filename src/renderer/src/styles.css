@@ -3324,12 +3324,6 @@ p {
     0 3px 10px color-mix(in srgb, var(--ink) 6%, transparent);
 }
 
-@media (max-width: 780px) {
-  .font-size-selector {
-    width: 100%;
-  }
-}
-
 .settings-inline-actions--between {
   justify-content: space-between;
 }
@@ -4864,87 +4858,6 @@ p {
   }
 }
 /* Responsive adjustments within the minimum desktop window */
-@media (max-height: 560px) {
-  .account-drawer__header {
-    padding: 14px 20px 8px;
-  }
-
-  .account-drawer__header .details-identity {
-    gap: 9px;
-  }
-
-  .account-drawer__header .monogram {
-    width: 34px;
-    height: 34px;
-    font-size: calc(15px * var(--font-scale, 1));
-  }
-
-  .account-drawer__header h2 {
-    font-size: calc(18px * var(--font-scale, 1));
-  }
-
-  .account-drawer__header .domain-label {
-    font-size: calc(9px * var(--font-scale, 1));
-  }
-
-  .account-drawer__form {
-    gap: 6px;
-    padding: 0 20px 10px;
-  }
-
-  .account-drawer__form .account-form__grid {
-    gap: 6px 10px;
-  }
-
-  .account-drawer__form .field {
-    gap: 2px;
-  }
-
-  .account-drawer__form .field__label {
-    font-size: calc(9px * var(--font-scale, 1));
-  }
-
-  .account-drawer__form .input-shell {
-    min-height: 32px;
-  }
-
-  .account-drawer__form .input-shell input {
-    height: 29px;
-    font-size: calc(11px * var(--font-scale, 1));
-  }
-
-  .account-drawer__form .site-picker__trigger {
-    min-height: 36px;
-    padding-block: 3px;
-  }
-
-  .account-drawer__form .account-site-summary {
-    min-height: 34px;
-  }
-
-  .account-drawer__form .form-options .switch-row {
-    min-height: 39px;
-    padding: 5px 8px;
-  }
-
-  .account-drawer__form .switch-row small {
-    display: none;
-  }
-
-  .account-drawer__management {
-    gap: 10px;
-  }
-
-  .account-drawer__footer {
-    min-height: 42px;
-    padding-top: 6px;
-  }
-
-  .account-drawer__actions .button {
-    min-height: 33px;
-  }
-}
-
 @media (max-width: 1180px) {
   .app-shell {
     grid-template-columns: 232px minmax(0, 1fr);
@@ -5032,84 +4945,6 @@ p {
   .auth-panel {
     padding-right: 40px;
     padding-left: 40px;
-  }
-}
-
-@media (max-width: 820px) {
-  .app-shell {
-    grid-template-columns: 204px minmax(0, 1fr);
-  }
-
-  .sidebar {
-    padding-right: 12px;
-    padding-left: 12px;
-  }
-
-  .library-content-scroll {
-    padding: 22px 14px 30px 18px;
-  }
-
-  .account-list__header,
-  .account-row {
-    grid-template-columns: 20px minmax(120px, 1.4fr) minmax(74px, 0.8fr) 136px;
-    gap: 8px;
-    padding-right: 10px;
-    padding-left: 10px;
-  }
-
-  .account-row--favorite {
-    grid-template-columns: minmax(120px, 1.4fr) minmax(74px, 0.8fr) 136px;
-  }
-
-  .account-list__header > span:nth-child(4),
-  .account-row > div:nth-child(4),
-  .account-row--favorite > div:nth-child(3) {
-    display: none;
-  }
-
-  .account-actions {
-    gap: 3px;
-  }
-
-  .row-login-button,
-  .row-edit-button {
-    gap: 4px;
-    min-height: 30px;
-    padding: 0 8px;
-  }
-
-  .log-filters {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-    gap: 9px;
-  }
-
-  .log-table__header,
-  .log-table__row {
-    grid-template-columns: 58px minmax(88px, 1fr) minmax(130px, 1.6fr) 94px;
-    gap: 8px;
-    padding-right: 8px;
-    padding-left: 8px;
-  }
-
-  .log-table__header > span:nth-child(3),
-  .log-table__header > span:nth-child(4),
-  .log-table__row > span:nth-child(3),
-  .log-table__row > span:nth-child(4) {
-    display: none;
-  }
-}
-
-@media (max-width: 900px) {
-  .auth-shell {
-    grid-template-columns: 1fr;
-  }
-
-  .auth-story {
-    display: none;
-  }
-
-  .auth-panel {
-    padding: 40px;
   }
 }
 
@@ -6919,37 +6754,6 @@ html[data-color-mode='light'] .auth-feature-strip span {
   }
 }
 
-@media (max-width: 900px) {
-  .proxy-advanced-row {
-    align-items: stretch;
-    flex-direction: column;
-  }
-
-  .proxy-advanced-row > .settings-hint {
-    max-width: none;
-    padding-bottom: 0;
-  }
-}
-
-@media (max-width: 720px) {
-  .log-detail-grid {
-    grid-template-columns: 1fr;
-  }
-
-  .proxy-fields {
-    grid-template-columns: 1fr;
-  }
-
-  .proxy-fields__wide {
-    grid-column: auto;
-  }
-
-  .settings-card--split {
-    align-items: flex-start;
-    flex-direction: column;
-  }
-}
-
 /* v0.4.0 Magpie workspace, native title bar, grouped navigation and data tools */
 :root {
   --sidebar-bg: #f7f8fa;
@@ -8614,25 +8418,6 @@ html[data-color-mode='dark'] .sidebar-nav::-webkit-scrollbar-thumb {
   flex: 1;
 }
 
-@media (max-width: 720px) {
-  .update-dialog__release,
-  .update-dialog__changelog,
-  .update-dialog__progress {
-    margin-right: 18px;
-    margin-left: 18px;
-  }
-
-  .update-dialog__actions {
-    flex-wrap: wrap;
-    padding-right: 18px;
-    padding-left: 18px;
-  }
-
-  .update-dialog__action-spacer {
-    display: none;
-  }
-}
-
 @media (prefers-reduced-motion: reduce) {
   .app-shell,
   .sidebar,
@@ -9072,18 +8857,6 @@ html[data-color-mode='dark'] .sidebar-nav::-webkit-scrollbar-thumb {
     min-height: 56px;
     padding: 10px 20px 12px;
   }
-}
-
-@media (max-width: 760px) {
-  .work-bulk-bar {
-    flex-direction: column;
-    align-items: stretch;
-  }
-
-  .work-bulk-bar > div {
-    justify-content: flex-start;
-  }
-
 }
 
 /* v0.8.0 compact navigation, expandable search and software logs */
@@ -9707,20 +9480,6 @@ html[data-color-mode='dark'] .sidebar-nav::-webkit-scrollbar-thumb {
   }
 }
 
-@media (max-width: 720px) {
-  .app-log-row {
-    grid-template-columns: 58px minmax(0, 1fr);
-  }
-
-  .app-log-row time {
-    grid-column: 2;
-  }
-
-  .library-toolbar__actions {
-    width: 100%;
-  }
-}
-
 @media (prefers-reduced-motion: reduce) {
   .account-subnav__groups-accordion,
   .search-field--expandable,
@@ -10138,13 +9897,6 @@ body.is-resizing-account-subnav .library-view-layout--accounts {
 .shortcut-capture-input:disabled {
   cursor: not-allowed;
   opacity: 0.48;
-}
-
-@media (max-width: 760px) {
-  .shortcut-capture-row {
-    grid-template-columns: minmax(0, 1fr);
-    gap: 7px;
-  }
 }
 
 @container account-main (max-width: 620px) {
@@ -11140,17 +10892,6 @@ body.is-resizing-account-subnav .library-view-layout--accounts {
 @container account-main (max-width: 760px) {
   .library-toolbar__actions {
     justify-content: flex-end;
-  }
-}
-
-@media (max-width: 760px) {
-  .app-log-table__grid {
-    grid-template-columns: 24px 66px minmax(0, 1fr) 112px;
-  }
-
-  .app-log-table__header > :nth-child(3),
-  .app-log-table .app-log-row > :nth-child(3) {
-    display: none;
   }
 }
 
@@ -12314,13 +12055,6 @@ body.is-resizing-account-column {
   font-size: calc(10px * var(--font-scale, 1));
 }
 
-@media (max-width: 760px) {
-  .site-icon-editor {
-    align-items: flex-start;
-    gap: 10px;
-  }
-}
-
 /* v0.9.0 account tabs, drag sorting, recycle bin and table fit-content fixes */
 .library-content-scroll--accounts {
   padding-top: 0;
@@ -12846,22 +12580,6 @@ body.is-resizing-account-column {
   padding: 0;
 }
 
-@media (max-width: 900px) {
-  .account-tab__source {
-    display: none;
-  }
-
-  .trash-list__header,
-  .trash-row {
-    grid-template-columns:
-      20px minmax(130px, 1.4fr) minmax(90px, 0.85fr)
-      minmax(68px, 0.58fr) 124px 76px;
-    gap: 8px;
-    padding-right: 9px;
-    padding-left: 9px;
-  }
-}
-
 @container account-main (max-width: 700px) {
   .account-status-cell .recipe-badge,
   .account-status-cell .recipe-badge.is-recorded {
@@ -13301,24 +13019,6 @@ body.is-resizing-account-column {
   border-top: 1px solid var(--content-divider);
 }
 
-@media (max-width: 760px) {
-  .password-generator__types {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
-
-  .password-generator__strength {
-    grid-template-columns: 1fr auto;
-  }
-
-  .password-generator__strength > span:nth-child(2) {
-    display: none;
-  }
-
-  .password-generator__length {
-    grid-template-columns: auto minmax(80px, 1fr) 66px;
-  }
-}
-
 /* v0.9.0 fixed account tabs with independent left and right scroll regions. */
 .library-content-scroll--accounts {
   display: flex;
@@ -13703,18 +13403,6 @@ body.is-resizing-account-column {
 
 .log-detail-grid__wide {
   grid-column: 1 / -1;
-}
-
-@media (max-width: 760px) {
-  .logs-page .log-filters {
-    gap: 9px;
-  }
-
-  .logs-page .log-filters .field {
-    min-width: 120px;
-    flex-basis: 140px;
-  }
-
 }
 
 /* v0.9.3 interaction, cursor and password generator refinements. */
@@ -14120,22 +13808,6 @@ body.is-resizing-account-column {
   }
 }
 
-@media (max-width: 900px) {
-  .trash-list__header,
-  .trash-row {
-    grid-template-columns:
-      20px minmax(120px, 1.3fr) minmax(86px, 0.76fr) minmax(66px, 0.55fr)
-      minmax(90px, 0.72fr) 128px 76px;
-  }
-
-  .trash-list--bookmarks .trash-list__header,
-  .trash-list--bookmarks .trash-row {
-    grid-template-columns:
-      20px minmax(140px, 1.4fr) minmax(76px, 0.66fr)
-      minmax(90px, 0.72fr) 128px 76px;
-  }
-}
-
 @media (prefers-reduced-motion: reduce) {
   .auth-feature-strip span,
   .auth-orbit__ring,
@@ -14416,17 +14088,6 @@ body.is-resizing-account-column {
   border-radius: 999px;
   background: color-mix(in srgb, var(--muted) 38%, transparent);
   background-clip: padding-box;
-}
-
-@media (max-width: 760px) {
-  .password-generator-popover {
-    width: calc(100vw - 16px);
-  }
-
-  .library-content-scroll--settings {
-    padding-right: 12px;
-    padding-left: 18px;
-  }
 }
 
 /* v0.9.4 tabs, table chrome, recording steps and drag performance. */
@@ -14768,13 +14429,6 @@ html[data-color-mode='dark'] .account-tab.is-active {
 body.is-dragging-password-generator,
 body.is-dragging-password-generator * {
   user-select: none !important;
-}
-
-@media (max-width: 760px) {
-  .manual-step-row {
-    grid-template-columns: 22px minmax(110px, 0.8fr) minmax(150px, 1.4fr) auto 30px;
-    gap: 6px;
-  }
 }
 
 /* v0.9.5 editable recorded flows and flat Chrome-style active tabs. */
@@ -16022,31 +15676,6 @@ body.is-resizing-table-column {
 
 .account-workspace .account-subnav__item--group {
   padding-left: calc(28px + var(--group-depth, 0) * 12px);
-}
-
-@media (max-width: 760px) {
-  .modal-layer--drawer {
-    padding: 0;
-  }
-
-  .modal-panel.batch-strategy-drawer {
-    width: 100%;
-    border-radius: 0;
-  }
-
-  .batch-strategy-drawer .manual-step-row {
-    grid-template-columns: 22px minmax(0, 1fr) 32px;
-  }
-
-  .batch-strategy-drawer .manual-step-row__action,
-  .batch-strategy-drawer .manual-step-row__selector-cell {
-    grid-column: 2 / -1;
-  }
-
-  .batch-strategy-drawer .manual-step-row > .button {
-    grid-column: 2;
-    justify-self: start;
-  }
 }
 
 /* v0.10.6 persistent group search, responsive columns and pointer-based drag. */
@@ -18351,13 +17980,6 @@ html[data-color-mode='dark'] .browser-workspace__tab.is-active {
   }
 }
 
-@media (max-width: 720px) {
-  .browser-workspace__tabs-bar {
-    gap: 6px;
-    padding-left: 16px;
-  }
-}
-
 .browser-workspace__tab-menu {
   position: absolute;
   z-index: 40;
@@ -19627,85 +19249,6 @@ html[data-color-mode='dark'] .batch-status-item.is-manual .batch-status-item__st
   }
 }
 
-@media (max-width: 900px) {
-  .auth-shell {
-    grid-template-columns: minmax(0, 1fr);
-    padding: 10px;
-  }
-
-  .auth-story {
-    display: none;
-  }
-
-  .auth-panel {
-    border-radius: 12px;
-  }
-
-  .account-workspace > .library-view-layout--accounts {
-    grid-template-columns: 0 minmax(0, 1fr);
-  }
-
-  .account-workspace .account-subnav-shell {
-    display: none;
-  }
-}
-
-@media (max-width: 720px) {
-  .sidebar {
-    --sidebar-collapsed-width: 76px;
-  }
-
-  .library-content-scroll--accounts {
-    padding: 8px;
-  }
-
-  .account-workspace {
-    border-radius: 10px;
-  }
-
-  .account-workspace > .account-tabs {
-    height: 54px;
-    flex-basis: 54px;
-    gap: 5px;
-    padding: 8px 8px 0 10px;
-  }
-
-  .account-tabs > .account-tabs__search {
-    width: 38px;
-    min-width: 38px;
-    flex: 0 0 38px;
-  }
-
-  .account-tabs > .account-tabs__search input,
-  .account-tabs > .account-tabs__search kbd {
-    display: none;
-  }
-
-  .account-workspace
-    > .library-view-layout--accounts
-    > .library-view-main {
-    padding: 9px 8px 10px;
-  }
-
-  .selection-dock {
-    width: calc(100% - 24px);
-    max-width: none;
-    overflow-x: auto;
-    padding-left: 12px;
-  }
-
-  .selection-dock__count {
-    display: none;
-  }
-
-  .batch-status-panel {
-    right: 12px;
-    bottom: 12px;
-    width: calc(100vw - 24px);
-    max-height: calc(100vh - 70px);
-  }
-}
-
 /* 2026-11-11 UI revision: fixed icon rail, edge-to-edge workspace and readable settings. */
 .app-shell:not(.is-account-editor),
 .app-shell.is-sidebar-collapsed:not(.is-account-editor) {
@@ -20380,63 +19923,6 @@ html[data-color-mode='dark'] .account-workspace .account-tab:not(.is-active) {
   align-items: center;
 }
 
-@media (max-width: 900px) {
-  .account-workspace > .library-view-layout--accounts {
-    grid-template-columns: 0 minmax(0, 1fr);
-  }
-
-  .account-workspace .account-subnav-shell {
-    display: none;
-  }
-
-  .account-workspace
-    > .library-view-layout--accounts
-    > .library-view-main {
-    padding: 14px 12px 12px;
-  }
-}
-
-@media (max-width: 720px) {
-  .library-content-scroll--accounts {
-    padding: 0;
-  }
-
-  .account-workspace > .account-tabs {
-    height: 52px;
-    flex-basis: 52px;
-    gap: 4px;
-    padding: 8px 8px 2px 0;
-  }
-
-  .account-workspace .account-tabs > .account-tabs__search.is-expanded {
-    position: absolute;
-    z-index: 5;
-    right: 10px;
-    bottom: 4px;
-    width: calc(100% - 20px);
-    min-width: 0;
-    max-width: none;
-    flex-basis: calc(100% - 20px);
-  }
-
-  .library-content-scroll--settings {
-    padding-right: 12px;
-    padding-left: 16px;
-  }
-
-  .settings-page--controlled .settings-page__sticky {
-    margin-right: -12px;
-    margin-left: -16px;
-    padding-right: 12px;
-    padding-left: 16px;
-  }
-
-  .batch-status-launcher {
-    right: 12px;
-    bottom: 12px;
-  }
-}
-
 /* Standalone pill tabs: the selected database reads as a control, not a browser cutout. */
 .account-workspace > .account-tabs,
 .account-workspace > .account-tabs:not(:has(.account-tab:first-child.is-active)) {
@@ -20567,20 +20053,6 @@ html[data-color-mode='dark'] .account-workspace .account-tab.is-active {
   border-color: rgba(255, 255, 255, 0.14);
   background: color-mix(in srgb, var(--card) 86%, white 14%);
   box-shadow: 0 1px 2px rgba(0, 0, 0, 0.24);
-}
-
-@media (max-width: 720px) {
-  .account-workspace > .account-tabs {
-    height: 64px;
-    flex-basis: 64px;
-    gap: 6px;
-    padding: 10px 8px 10px 12px;
-  }
-
-  .account-workspace .account-tab {
-    height: 40px;
-    min-height: 40px;
-  }
 }
 
 /* Final shell and sidebar alignment: the page itself is the auth container. */
@@ -20756,19 +20228,6 @@ html[data-color-mode='dark'] .account-workspace .account-tab.is-active {
   scrollbar-width: thin;
 }
 
-@media (max-width: 720px) {
-  .library-content-scroll--settings {
-    padding: 20px 12px 0 16px;
-  }
-
-  .settings-page--controlled .settings-page__sticky {
-    margin-right: -12px;
-    margin-left: -16px;
-    padding-right: 12px;
-    padding-left: 16px;
-  }
-}
-
 /* 2026-11-11 final page surfaces and database tab identity. */
 .library-content-scroll--logs,
 .library-content-scroll--trash,
@@ -20818,17 +20277,6 @@ html[data-color-mode='dark'] .account-workspace .account-tab.is-active {
 
 .account-workspace .account-tab__source {
   display: inline-flex;
-}
-
-@media (max-width: 720px) {
-  .settings-page--controlled .settings-page__sticky {
-    margin: 0;
-    padding: 16px 16px 10px;
-  }
-
-  .settings-page__body {
-    padding: 16px 16px 28px;
-  }
 }
 
 .library-content-scroll--password-generator {
@@ -21826,34 +21274,6 @@ html[data-color-mode='dark'] .account-workspace .account-tab.is-active {
   }
 }
 
-@media (max-width: 760px) {
-  .collection-page-header__top {
-    align-items: flex-start;
-  }
-
-  .collection-page-header__heading p {
-    white-space: normal;
-  }
-
-  .collection-filter-bar {
-    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) auto;
-  }
-
-  .collection-filter-control--search {
-    grid-column: 1 / -1;
-  }
-
-  .collection-filter-control--search kbd {
-    display: none;
-  }
-
-  .collection-filter-reset {
-    width: 32px;
-    padding: 0;
-    font-size: 0;
-  }
-}
-
 /* Shared form, filter and table-header standards. */
 :root {
   --table-header-divider-width: 1px;
@@ -22095,11 +21515,9 @@ html[data-color-mode='dark'] .account-workspace .account-tab.is-active {
   text-align: center;
 }
 
-@media (min-width: 901px) {
-  .auth-shell {
+.auth-shell {
     grid-template-columns: 65% 35%;
   }
-}
 
 /* Account credential history */
 .account-password-input::-ms-reveal,
@@ -22314,32 +21732,6 @@ html[data-color-mode='dark'] .account-workspace .account-tab.is-active {
 
 .batch-session-action .button {
   flex: 0 0 auto;
-}
-
-@media (max-width: 720px) {
-  .credential-history-modal > :not(.modal-header) {
-    margin-right: 16px;
-    margin-left: 16px;
-  }
-
-  .credential-history-summary {
-    align-items: flex-start;
-    flex-direction: column;
-  }
-
-  .credential-history-summary > small {
-    text-align: left;
-  }
-
-  .credential-history-detail,
-  .credential-history-actions {
-    grid-template-columns: 1fr 1fr;
-  }
-
-  .batch-session-action {
-    align-items: stretch;
-    flex-direction: column;
-  }
 }
 
 /* Keep row selection deliberate and prevent drag-select text inside the table. */
@@ -23049,16 +22441,6 @@ html.recording-hud-window #root {
 .import-preview-dialog__blocked p small {
   margin-left: auto;
   color: var(--danger);
-}
-
-@media (max-width: 720px) {
-  .import-preview-dialog__kpis {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
-
-  .import-preview-row__missing {
-    display: none;
-  }
 }
 
 .account-needs-badge {
@@ -24512,13 +23894,6 @@ html[data-color-mode='dark'] .account-drawer-backdrop {
   animation: drawer-in 220ms cubic-bezier(0.22, 0.8, 0.3, 1) both;
 }
 
-@media (max-width: 760px) {
-  .account-drawer-layer .account-drawer {
-    width: 100%;
-    min-width: 0;
-  }
-}
-
 /* 用户名标签里的「复用已有账号」 */
 .field__inline-action {
   flex-basis: 100%;
@@ -24980,13 +24355,6 @@ html[data-color-mode='dark'] .account-drawer-backdrop {
   justify-self: start;
 }
 
-@media (max-width: 760px) {
-  .account-drawer.account-editor-page {
-    width: 100%;
-    min-width: 0;
-  }
-}
-
 /* 统计页：修掉 40px 图标压住站名、字号层级过碎 */
 .account-insights__card .monogram {
   width: 30px;
@@ -25052,15 +24420,6 @@ html[data-color-mode='dark'] .account-drawer-backdrop {
     padding-right: 28px;
   }
 }
-@media (max-width: 760px) {
-  .account-drawer.account-editor-page .account-drawer__header,
-  .account-drawer.account-editor-page .account-drawer__body,
-  .account-drawer.account-editor-page .account-drawer__footer {
-    padding-left: 20px;
-    padding-right: 20px;
-  }
-}
-
 /* 1.0.9 · inline credential reuse */
 .reuse-panel {
   border: 1px dashed var(--line-strong, var(--line));
@@ -25500,24 +24859,6 @@ html[data-color-mode='dark'] .account-drawer-backdrop {
   font-size: 10px;
   color: var(--ink-muted);
 }
-@media (max-width: 900px) {
-  .account-insights__header {
-    flex-direction: column;
-  }
-  .account-insights__stats {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
-  .insights-identity__head {
-    grid-template-columns: 34px minmax(0, 1fr) 18px;
-  }
-  .insights-identity__badges {
-    display: none;
-  }
-  .insights-identity__sites {
-    padding-left: 14px;
-  }
-}
-
 /* OTP 折叠卡（1.0.9） */
 .account-otp {
   gap: 0;
@@ -25782,12 +25123,6 @@ html[data-color-mode='dark'] .account-drawer-backdrop {
   white-space: nowrap;
 }
 
-@media (max-width: 760px) {
-  .account-otp__meta {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
-}
-
 /* 1.0.10 · drawer top breathing room and markdown notes */
 .account-drawer.account-editor-page .account-drawer__header {
   padding-top: 30px;
@@ -25879,12 +25214,6 @@ html[data-color-mode='dark'] .account-drawer-backdrop {
   margin: 0;
   color: var(--ink-muted, var(--ink-soft));
 }
-@media (max-width: 760px) {
-  .account-drawer.account-editor-page .account-drawer__header {
-    padding-top: 24px;
-  }
-}
-
 /* OTP：参数标签、扫码入口与手动覆盖 */
 .account-otp__chips {
   display: flex;
@@ -26091,11 +25420,6 @@ html[data-color-mode='dark'] .account-drawer-backdrop {
   padding: 14px 0 20px;
   background: var(--surface);
 }
-@media (max-width: 560px) {
-  .export-dialog__formats { grid-template-columns: 1fr; }
-  .export-dialog__fields { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-}
-
 
 
 /* Insights datasets, filters and rows */
@@ -26232,14 +25556,6 @@ html[data-color-mode='dark'] .account-drawer-backdrop {
 .insights-bucket__rows { padding: 4px; }
 .insights-identity__sites { gap: 2px; }
 .insights-identity__sites .insights-row + .insights-row { border-top: 0; border-radius: 9px; }
-@media (max-width: 640px) {
-  .insights-toolbar { flex-direction: column; align-items: stretch; }
-  .insights-search { min-width: 0; }
-  .insights-row { grid-template-columns: 26px minmax(0, 1fr); }
-  .insights-row__tags { grid-column: 1 / -1; flex-wrap: wrap; }
-  .insights-actions { width: 100%; justify-content: space-between; }
-}
-
 /* Search highlight + search count */
 .row-highlight { background: color-mix(in srgb, var(--accent) 22%, transparent); color: inherit; border-radius: 3px; padding: 0 1px; }
 .search-field__count { font-size: 10.5px; color: var(--ink-soft); white-space: nowrap; font-variant-numeric: tabular-nums; }
@@ -26388,17 +25704,6 @@ html[data-color-mode='dark'] .account-drawer-backdrop {
   max-width: 420px;
   margin-top: 12px;
   text-align: center;
-}
-
-@media (max-width: 520px) {
-  .library-database-locked-state__form {
-    width: 100%;
-  }
-
-  .library-database-locked-state__form .input-shell,
-  .library-database-locked-state__form .button {
-    flex: 1 1 100%;
-  }
 }
 
 .library-database-locked-state > p {
@@ -26606,16 +25911,6 @@ html[data-color-mode='dark'] .settings-db__badge {
   font-weight: 450;
 }
 
-@media (max-width: 640px) {
-  .settings-db__meta {
-    grid-template-columns: minmax(0, 1fr);
-  }
-
-  .settings-db__remove {
-    margin-left: 0;
-  }
-}
-
 
 /* OTP 头部：整条栏都是可点击区域，ⓘ 收在同一行内，
    不再让标题簇缩在左侧、右边留下半个空条。 */
@@ -26693,14 +25988,13 @@ html[data-color-mode='dark'] .settings-db__badge {
   margin-left: auto;
 }
 
-@media (max-width: 720px) {
-  .settings-profile-row {
-    flex-direction: column;
-    align-items: flex-start;
-    gap: 12px;
-  }
+/* 2026-11-25 审计：账号行键盘可达。行可 Tab 到，Enter 编辑、空格选中、Shift+F10 打开右键菜单、↑↓/Home/End 在行间移动。 */
+.account-row:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
 
-  .settings-profile-row > .button {
-    margin-left: 0;
-  }
+/* 2026-11-25 审计：弹层内容滚到边界时不把滚动链传给背后的页面。 */
+.modal-panel {
+  overscroll-behavior: contain;
 }

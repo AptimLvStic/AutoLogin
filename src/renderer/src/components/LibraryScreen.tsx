@@ -693,6 +693,7 @@ export function LibraryScreen({
     top: number
   } | null>(null)
   const [renameTabTarget, setRenameTabTarget] = useState<AccountTab | null>(null)
+  const [changePasswordTab, setChangePasswordTab] = useState<AccountTab | null>(null)
   const [renameTabValue, setRenameTabValue] = useState('')
   const [tabBusy, setTabBusy] = useState(false)
   const [missingTabFileTarget, setMissingTabFileTarget] =
@@ -2721,6 +2722,29 @@ export function LibraryScreen({
     }
   }
 
+  async function copyAccountOtp(account: AccountWithSite): Promise<void> {
+    setAccountMenu(null)
+    try {
+      const code = await window.autologin.accounts.getOtp(account.id)
+      await window.autologin.clipboard.writeSecret(code.code)
+      notify(
+        'success',
+        tr(
+          `OTP 验证码已复制，${code.remaining} 秒后失效`,
+          `OTP code copied, valid for ${code.remaining}s.`,
+          `OTP 驗證碼已複製，${code.remaining} 秒後失效`
+        )
+      )
+    } catch (error) {
+      notify(
+        'error',
+        error instanceof Error
+          ? error.message
+          : tr('无法读取 OTP', 'Could not read the OTP code.', '無法讀取 OTP')
+      )
+    }
+  }
+
   async function copyAccountUrl(account: AccountWithSite): Promise<void> {
     setAccountMenu(null)
     try {
@@ -4441,6 +4465,20 @@ export function LibraryScreen({
                 {tr('锁定数据库', 'Lock database', '鎖定資料庫')}
               </button>
             )}
+          {tabMenu.tab.source !== 'bookmarks' && (
+            <button
+              type="button"
+              role="menuitem"
+              onClick={() => {
+                const target = tabMenu.tab
+                setTabMenu(null)
+                setChangePasswordTab(target)
+              }}
+            >
+              <KeyRound size={14} />
+              {tr('更改密码', 'Change password', '變更密碼')}
+            </button>
+          )}
           <div className="account-context-menu__divider" aria-hidden="true" />
           <button
             type="button"
@@ -4668,6 +4706,16 @@ export function LibraryScreen({
                 <KeyRound size={14} />
                 {tr('复制密码', 'Copy password', '複製密碼')}
               </button>
+              {accountMenu.account.hasOtp && (
+                <button
+                  type="button"
+                  role="menuitem"
+                  onClick={() => void copyAccountOtp(accountMenu.account)}
+                >
+                  <ShieldCheck size={14} />
+                  {tr('复制 OTP 验证码', 'Copy OTP code', '複製 OTP 驗證碼')}
+                </button>
+              )}
             </>
           )}
           <button
@@ -6431,27 +6479,7 @@ export function LibraryScreen({
                       onContextMenu={(event) => openAccountMenu(event, account)}
                       onMore={(event) => openAccountMenu(event, account)}
                       onLogin={() => void openAccount(account)}
-                      onCopyOtp={async () => {
-                        try {
-                          const code = await window.autologin.accounts.getOtp(account.id)
-                          await window.autologin.clipboard.writeSecret(code.code)
-                          notify(
-                            'success',
-                            tr(
-                              `OTP 验证码已复制，${code.remaining} 秒后失效`,
-                              `OTP code copied, valid for ${code.remaining}s.`,
-                              `OTP 驗證碼已複製，${code.remaining} 秒後失效`
-                            )
-                          )
-                        } catch (reason) {
-                          notify(
-                            'error',
-                            reason instanceof Error
-                              ? reason.message
-                              : tr('无法读取 OTP', 'Could not read the OTP code.', '無法讀取 OTP')
-                          )
-                        }
-                      }}
+                      onCopyOtp={() => void copyAccountOtp(account)}
                       recorded={workflowStepCount(account) > 0}
                       showCompleteAction={
                         view === 'accounts' &&
@@ -7194,6 +7222,30 @@ export function LibraryScreen({
             setExportRecordsOnly(false)
           }}
           notify={notify}
+        />
+      )}
+      {changePasswordTab && (
+        <DatabasePasswordDialog
+          mode="change"
+          databaseName={changePasswordTab.name}
+          onClose={() => setChangePasswordTab(null)}
+          onSubmit={async ({ currentPassword, nextPassword }) => {
+            const name = changePasswordTab.name
+            await window.autologin.vault.changeTabPassword({
+              tabId: changePasswordTab.id,
+              currentPassword: currentPassword ?? '',
+              nextPassword
+            })
+            setChangePasswordTab(null)
+            notify(
+              'success',
+              tr(
+                `「${name}」的密码已更新`,
+                `Password updated for "${name}".`,
+                `「${name}」的密碼已更新`
+              )
+            )
+          }}
         />
       )}
       {createDatabaseOpen && (

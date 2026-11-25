@@ -5536,6 +5536,7 @@ export function LibraryScreen({
                 notify={notify}
                 onUnlock={(password) => onUnlockTab(activeTab.id, password)}
                 onCreate={() => setCreateDatabaseOpen(true)}
+                onImported={(result) => void handleDataImported(result)}
               />
             ) : (
             <div
@@ -7922,18 +7923,22 @@ function DatabaseLockedState({
   tab,
   notify,
   onUnlock,
-  onCreate
+  onCreate,
+  onImported
 }: {
   tab: AccountTab
   notify: Notify
   onUnlock: (password: string) => Promise<void>
   onCreate: () => void
+  onImported: (result: DataImportResult) => void
 }): React.JSX.Element {
   const { tr } = useI18n()
   const [password, setPassword] = useState('')
   const [reveal, setReveal] = useState(false)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
+  const [openDatabaseRequest, setOpenDatabaseRequest] = useState(0)
+  const [openingDatabase, setOpeningDatabase] = useState(false)
 
   async function submit(event: React.FormEvent): Promise<void> {
     event.preventDefault()
@@ -8029,13 +8034,42 @@ function DatabaseLockedState({
       {error ? <p className="form-error">{error}</p> : null}
       <div className="library-database-locked-state__aside">
         <span>
-          {tr('或改用另一个数据库：', 'Or start another database:', '或改用另一個資料庫：')}
+          {tr('或改用另一个数据库：', 'Or switch to another database:', '或改用另一個資料庫：')}
         </span>
-        <button type="button" className="button button--ghost button--small" onClick={onCreate}>
+        <button
+          type="button"
+          className="button button--ghost button--small"
+          onClick={onCreate}
+        >
           <Plus size={14} />
           {tr('新建数据库', 'New database', '新增資料庫')}
         </button>
+        <button
+          type="button"
+          className="button button--ghost button--small"
+          onClick={() => setOpenDatabaseRequest((value) => value + 1)}
+          disabled={openingDatabase}
+          aria-busy={openingDatabase}
+        >
+          {openingDatabase ? (
+            <LoaderCircle size={14} className="spin" />
+          ) : (
+            <FolderOpen size={14} />
+          )}
+          {openingDatabase
+            ? tr('正在打开…', 'Opening…', '正在開啟…')
+            : tr('打开数据库', 'Open database', '開啟資料庫')}
+        </button>
       </div>
+      <AccountTransferControls
+        tabId=""
+        renderControls={false}
+        openDatabaseRequest={openDatabaseRequest}
+        onDatabaseBusyChange={setOpeningDatabase}
+        onCreateTab={async () => onCreate()}
+        onImported={onImported}
+        notify={notify}
+      />
     </section>
   )
 }

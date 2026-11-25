@@ -5,8 +5,8 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/AptimLvStic/AutoLogin/releases/tag/v1.0.10">
-    <img alt="Version" src="https://img.shields.io/badge/version-1.0.10-5457E5" />
+  <a href="https://github.com/AptimLvStic/AutoLogin/releases/tag/v1.0.11">
+    <img alt="Version" src="https://img.shields.io/badge/version-1.0.11-5457E5" />
   </a>
   <img alt="Platform" src="https://img.shields.io/badge/platform-Windows%2010%2F11-0078D4" />
   <img alt="Tauri" src="https://img.shields.io/badge/Tauri-2-24C8DB" />
@@ -14,7 +14,7 @@
 
 AutoLogin 是一款面向 Windows 10/11 x64 的本地优先登录工作台。它不只保存密码，还会记住你在某个站点上的完整登录流程，下次点一下即可重放。
 
-当前版本为 `1.0.10`。桌面外壳使用 Tauri 2，账号、密码、配置、书签和日志都保存在本机；没有 AutoLogin 云账号、云同步或遥测。软件不会绕过验证码、短信验证、二次验证或网站风控。
+当前版本为 `1.0.11`。桌面外壳使用 Tauri 2，账号、密码、配置、书签和日志都保存在本机；没有 AutoLogin 云账号、云同步或遥测。软件不会绕过验证码、短信验证、二次验证或网站风控。
 
 ## 为什么还要一个密码管理器
 
@@ -55,10 +55,10 @@ AutoLogin 的做法是：把一次成功的登录过程完整演一遍，记录�
 
 | 环节 | 实现 |
 | --- | --- |
-| 主密码派生 | Argon2id，64 MiB 内存、3 次迭代、并行度 1 |
-| 保险库加密 | AES-256-GCM，使用随机 16 字节盐和 12 字节 nonce |
+| 数据库密码派生 | Argon2id，64 MiB 内存、3 次迭代、并行度 1，每个数据库独立盐值 |
+| 数据库加密 | 每个数据库单独 AES-256-GCM 加密，使用随机 16 字节盐和 12 字节 nonce |
 | 落盘方式 | 临时文件 → `fsync` → 原子替换，失败时回滚 |
-| 主密码 | 只在本地 sidecar 内存中使用，不写入磁盘，锁定时清理 |
+| 数据库密码 | 只在本地 sidecar 内存中使用，不写入磁盘；锁定或闲置超时后清理 |
 | 启动备份 | 加密快照滚动保留最新 3 份 |
 | 浏览器自动化 | 通过仅绑定 `127.0.0.1` 的随机 CDP 端口连接 Chrome / Edge 或内置 WebView2 |
 | 页面隔离 | 自动填充代码运行在独立的 `autologin-agent` world |
@@ -94,11 +94,11 @@ AutoLogin 提供内置浏览器和独立浏览器两种启动方式，默认使�
 
 ## 下载安装
 
-- 最新版本：[AutoLogin v1.0.10](https://github.com/AptimLvStic/AutoLogin/releases/tag/v1.0.10)
-- 当前安装包：`AutoLogin_1.0.10_x64-setup.exe`
+- 最新版本：[AutoLogin v1.0.11](https://github.com/AptimLvStic/AutoLogin/releases/tag/v1.0.11)
+- 当前安装包：`AutoLogin_1.0.11_x64-setup.exe`
 - 安装包尚未配置 Authenticode 代码签名，Windows SmartScreen 可能显示“未知发布者”提示。
 
-首次启动会要求创建主密码。主密码无法找回，也没有后门；忘记后只能清除本机数据并重新创建保险库。
+启动软件本身不需要密码；每个数据库有自己的密码，新建数据库时设置，之后可在数据库标签右键或“设置 → 安全与隐私”中修改。数据库密码无法找回，也没有后门；忘记后只能清除该数据库或本机数据重新创建。书签数据库不设密码。
 
 安装版支持应用内更新。更新源优先使用项目 CDN，CDN 不可用时回退到 GitHub Releases。
 
@@ -120,8 +120,8 @@ AutoLogin 提供内置浏览器和独立浏览器两种启动方式，默认使�
 
 ```text
 AutoLogin-Data\
-├─ vault.enc
-├─ vault.enc.bak
+├─ vault.json                # 外壳：数据库列表、应用设置、各库加密载荷
+├─ vault.json.bak
 ├─ backups\                 # 自动备份默认位置
 ├─ tabs\
 │  ├─ autologin\<数据库名>.autologin
@@ -146,9 +146,10 @@ AutoLogin-Data\
 ```
 
 - 关闭数据库标签页只隐藏页面，不会删除对应的磁盘文件。
-- 本地库和 AutoLogin 导出库使用 AES-256-GCM 加密。
+- 本地库和 AutoLogin 导出库使用 AES-256-GCM 加密；`vault.json` 外壳中的数据库列表与设置是明文，账号和密码等内容都在各自数据库的加密载荷里。
+- 从 1.0.10 及更早版本升级时，旧的 `vault.enc` 会自动迁移为 `vault.json`，原文件重命名为 `vault.enc.migrated`；原主密码成为每个已有数据库的初始密码。
 - KDBX、CSV 和书签文件按原格式保存在各自目录中。
-- 网站 Cookie、缓存和本地存储由 Windows 默认浏览器及用户级机制保护，不受保险库主密码直接加密。
+- 网站 Cookie、缓存和本地存储由 Windows 默认浏览器及用户级机制保护，不受数据库密码直接加密。
 - 卸载程序默认保留用户数据；如需彻底删除，请先在设置中执行“清除全部本地数据”。
 
 ## 技术架构

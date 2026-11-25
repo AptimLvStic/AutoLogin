@@ -26223,7 +26223,8 @@ body.is-dragging-group .account-subnav__group-grip:active {
 .insights-bucket__head small, .insights-cross__host small { display: block; margin-top: 1px; font-size: 10.5px; color: var(--ink-faint); }
 .insights-cross__host { min-width: 0; }
 .insights-bucket__rows { padding: 4px; }
-.insights-identity__sites .insights-row + .insights-row { border-top: 1px solid color-mix(in srgb, var(--line) 60%, transparent); border-radius: 0; }
+.insights-identity__sites { gap: 2px; }
+.insights-identity__sites .insights-row + .insights-row { border-top: 0; border-radius: 9px; }
 @media (max-width: 640px) {
   .insights-toolbar { flex-direction: column; align-items: stretch; }
   .insights-search { min-width: 0; }

@@ -9109,35 +9109,7 @@ html[data-color-mode='dark'] .sidebar-nav::-webkit-scrollbar-thumb {
   color: var(--ink);
 }
 
-.sidebar-action--icon::after {
-  position: absolute;
-  z-index: 320;
-  top: 50%;
-  left: calc(100% + 10px);
-  padding: 6px 9px;
-  border: 1px solid var(--card-border);
-  border-radius: 7px;
-  background: var(--card);
-  box-shadow: 0 8px 24px rgba(31, 35, 40, 0.14);
-  color: var(--ink);
-  content: attr(data-tooltip);
-  font-size: calc(10px * var(--font-scale, 1));
-  font-weight: 600;
-  line-height: 1;
-  opacity: 0;
-  pointer-events: none;
-  transform: translate(3px, -50%);
-  transition:
-    opacity 150ms ease,
-    transform 150ms ease;
-  white-space: nowrap;
-}
-
-.sidebar-action--icon:hover::after,
-.sidebar-action--icon:focus-visible::after {
-  opacity: 1;
-  transform: translate(0, -50%);
-}
+/* 2026-11-26 侧栏锁定/设置的自制气泡改走全局 tooltip 层（title + data-tip-placement） */
 
 .sidebar.is-collapsed .sidebar-actions {
   display: grid;
@@ -9752,8 +9724,7 @@ html[data-color-mode='dark'] .sidebar-nav::-webkit-scrollbar-thumb {
 @media (prefers-reduced-motion: reduce) {
   .account-subnav__groups-accordion,
   .search-field--expandable,
-  .search-field--expandable input,
-  .sidebar-action--icon::after {
+  .search-field--expandable input {
     transition-duration: 0.01ms;
   }
 }
@@ -23431,13 +23402,9 @@ html.recording-hud-window #root {
   color: var(--accent);
 }
 
-.info-tip__bubble {
-  position: absolute;
-  z-index: 80;
-  top: calc(100% + 6px);
-  left: 0;
-  width: 220px;
-  max-width: calc(100vw - 32px);
+/* 2026-11-26 深色气泡的视觉 token 由设置页 InfoTip 与全局 tooltip 层共用，改这里两处一起变。 */
+.info-tip__bubble,
+.app-tooltip {
   padding: 9px 11px;
   border-radius: 8px;
   background: #2b3242;
@@ -23447,6 +23414,15 @@ html.recording-hud-window #root {
   font-weight: 450;
   line-height: 1.55;
   white-space: normal;
+}
+
+.info-tip__bubble {
+  position: absolute;
+  z-index: 80;
+  top: calc(100% + 6px);
+  left: 0;
+  width: 220px;
+  max-width: calc(100vw - 32px);
 }
 
 .info-tip__bubble.is-align-right {
@@ -26434,4 +26410,25 @@ body.is-dragging-group .account-subnav__group-grip:active {
 
 .library-database-locked-state__aside .button {
   margin-top: 0;
+}
+/* 2026-11-26 全局统一 tooltip：title 属性接管层（components/TooltipLayer.tsx） */
+.app-tooltip {
+  position: fixed;
+  z-index: 3000;
+  width: max-content;
+  max-width: min(260px, calc(100vw - 20px));
+  pointer-events: none;
+  animation: app-tooltip-in 120ms ease both;
+}
+
+@keyframes app-tooltip-in {
+  from {
+    opacity: 0;
+    transform: translateY(-2px);
+  }
+
+  to {
+    opacity: 1;
+    transform: none;
+  }
 }

@@ -4377,7 +4377,8 @@ export function LibraryScreen({
               className="sidebar-action sidebar-action--icon"
               onClick={() => void onLock()}
               aria-label={tr('立即锁定', 'Lock now', '立即鎖定')}
-              data-tooltip={tr('立即锁定', 'Lock now', '立即鎖定')}
+              title={tr('立即锁定', 'Lock now', '立即鎖定')}
+              data-tip-placement="right"
             >
               <LockKeyhole size={17} />
               <span>{tr('锁定', 'Lock', '鎖定')}</span>
@@ -4389,7 +4390,8 @@ export function LibraryScreen({
               }`}
               onClick={openSettings}
               aria-label={tr('设置', 'Settings', '設定')}
-              data-tooltip={tr('设置', 'Settings', '設定')}
+              title={tr('设置', 'Settings', '設定')}
+              data-tip-placement="right"
             >
               <Settings size={17} />
               <span>{tr('设置', 'Settings', '設定')}</span>

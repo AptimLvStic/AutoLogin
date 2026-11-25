@@ -25,6 +25,7 @@ import { LibraryScreen } from './components/LibraryScreen'
 import { ConfirmDialog } from './components/Modal'
 import { RecordingHud } from './components/RecordingHud'
 import { Toast, type Notify, type ToastKind, type ToastState } from './components/Toast'
+import { TooltipLayer } from './components/TooltipLayer'
 import { UpdateDialog } from './components/UpdateDialog'
 import { I18nProvider, translate } from './i18n'
 
@@ -809,6 +810,8 @@ export default function App(): React.JSX.Element {
           Local-first · No telemetry
         </div>
       )}
+
+      <TooltipLayer />
     </>
     </I18nProvider>
   )

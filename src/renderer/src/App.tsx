@@ -23,7 +23,7 @@ import { BrandMark } from './components/Brand'
 import { LibraryScreen } from './components/LibraryScreen'
 import { ConfirmDialog } from './components/Modal'
 import { RecordingHud } from './components/RecordingHud'
-import { Toast, type ToastKind, type ToastState } from './components/Toast'
+import { Toast, type Notify, type ToastKind, type ToastState } from './components/Toast'
 import { UpdateDialog } from './components/UpdateDialog'
 import { I18nProvider, translate } from './i18n'
 
@@ -102,12 +102,15 @@ export default function App(): React.JSX.Element {
   const tr = (zhCN: string, en: string, zhTW: string): string =>
     translate(settings.language, zhCN, en, zhTW)
 
-  const notify = useCallback((kind: ToastKind, message: string): void => {
+  const notify = useCallback<Notify>((kind, message, actions) => {
     if (toastTimer.current) {
       window.clearTimeout(toastTimer.current)
     }
-    setToast({ id: Date.now(), kind, message })
-    toastTimer.current = window.setTimeout(() => setToast(null), 4200)
+    setToast({ id: Date.now(), kind, message, actions })
+    toastTimer.current = window.setTimeout(
+      () => setToast(null),
+      actions && actions.length > 0 ? 9000 : 4200
+    )
   }, [])
 
   useEffect(() => {

@@ -260,7 +260,7 @@ const api: AutologinApi = {
       call('accounts:clear-credential-history', accountId),
     copyUsername: (accountId) => call('accounts:copy-username', accountId),
     getOtp: (accountId) => call('accounts:otp', accountId),
-    previewOtp: (secret) => call('accounts:otp-preview', secret),
+    previewOtp: (secret, config) => call('accounts:otp-preview', { secret, config }),
     copy: (accountId) => call('accounts:copy', accountId),
     copyUrl: (accountId) => call('accounts:copy-url', accountId),
     setActiveRecipe: (accountId, recipeId) =>
@@ -350,6 +350,10 @@ const api: AutologinApi = {
   },
   data: {
     exportTab: (input) => call('data:export-vault', input),
+    exportRecords: (input) => call('data:export-records', input),
+    saveText: (input) => call('export:save-text', input),
+    openExportPath: (path) => call('data:open-path', { path }),
+    revealExportPath: (path) => call('data:reveal-export-path', { path }),
     exportCsvTemplate: () => call('data:export-csv-template'),
     chooseCsv: (input) => call('data:choose-csv', input),
     importCsv: (input) => call('data:import-csv', input),

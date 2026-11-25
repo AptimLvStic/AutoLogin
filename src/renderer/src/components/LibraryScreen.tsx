@@ -7,6 +7,7 @@ import {
   useRef,
   useState
 } from 'react'
+import type { Notify } from './Toast'
 import { createPortal } from 'react-dom'
 import {
   ArrowUpRight,
@@ -41,6 +42,7 @@ import {
   RotateCcw,
   Search,
   Settings,
+  ShieldCheck,
   SlidersHorizontal,
   Sparkles,
   Trash2,
@@ -90,6 +92,7 @@ import { AccountInsights } from './AccountInsights'
 import { AccountTabs } from './AccountTabs'
 import { AccountTransferControls } from './AccountTransferControls'
 import { AppLogsPage } from './AppLogsPage'
+import { ExportDialog } from './ExportDialog'
 import { BrowserWorkspace } from './BrowserWorkspace'
 import {
   BookmarkImportButton,
@@ -459,7 +462,7 @@ export function LibraryScreen({
   onCancelUpdate: () => Promise<void>
   onInstallUpdate: () => Promise<void>
   onCleared: () => void
-  notify: (kind: 'success' | 'error' | 'info', message: string) => void
+  notify: Notify
 }): React.JSX.Element {
   const { tr, language, formatDate } = useI18n()
   const [tabs, setTabs] = useState<AccountTab[]>([])
@@ -686,6 +689,9 @@ export function LibraryScreen({
   const [trashRetentionOpen, setTrashRetentionOpen] = useState(false)
   const [selectedIds, setSelectedIds] = useState<Set<string>>(() => new Set())
   const [accountPageSize, setAccountPageSize] = useState<AccountPageSize>(20)
+  const accountSort: AccountSortKey = 'recent'
+  const [exportOpen, setExportOpen] = useState(false)
+  const [exportTargets, setExportTargets] = useState<string[] | null>(null)
   const [accountPage, setAccountPage] = useState(1)
   const [drawer, setDrawer] = useState<DrawerState | null>(null)
   const [draggedGroupPath, setDraggedGroupPath] = useState<string | null>(null)
@@ -970,8 +976,15 @@ export function LibraryScreen({
           .toLocaleLowerCase(language)
           .includes(query)
       })
-      .sort(compareAccounts)
-  }, [accounts, groupFilter, language, search])
+      .sort((left, right) => {
+        if (query) {
+          const leftScore = accountSearchScore(left, query)
+          const rightScore = accountSearchScore(right, query)
+          if (leftScore !== rightScore) return leftScore - rightScore
+        }
+        return compareAccountsBy(left, right, accountSort)
+      })
+  }, [accountSort, accounts, groupFilter, language, search])
   const accountStatusTags = useMemo(() => {
     const tagsByAccount = new Map<string, AccountFilterTag[]>()
     if (view !== 'accounts') return tagsByAccount
@@ -5347,7 +5360,18 @@ export function LibraryScreen({
                           }
                         }}
                       />
-                      <kbd aria-hidden="true">Ctrl F</kbd>
+                      {search ? (
+                        <span className="search-field__count" role="status">
+                          {tr(
+                            '找到 {match} / 共 {total}',
+                            '{match} of {total}',
+                            '找到 {match} / 共 {total}',
+                            { match: filteredAccounts.length, total: accounts.length }
+                          )}
+                        </span>
+                      ) : (
+                        <kbd aria-hidden="true">Ctrl F</kbd>
+                      )}
                     </div>
                     <button
                       type="button"
@@ -5372,6 +5396,10 @@ export function LibraryScreen({
                         onCreateTab={() => createTab('local')}
                         creatingTab={tabBusy}
                         onImported={(result) => void handleDataImported(result)}
+                        onExportRecords={() => {
+                          setExportTargets(null)
+                          setExportOpen(true)
+                        }}
                         notify={notify}
                       />
                     )}
@@ -5435,6 +5463,35 @@ export function LibraryScreen({
                       aria-label={tr('筛选分组', 'Filter groups', '篩選分組')}
                     />
                   </div>
+                  <div className="account-subnav__groups-heading">
+                    <span className="account-subnav__groups-heading-label">
+                      <span>{tr('分组', 'Groups', '分組')}</span>
+                      <small>{namedGroups.length}</small>
+                    </span>
+                    <div
+                      className="account-subnav__groups-heading-actions"
+                      role="toolbar"
+                      aria-label={tr('分组展开控制', 'Group expansion controls', '分組展開控制')}
+                    >
+                      <button
+                        type="button"
+                        onClick={() => setAllGroupsExpanded(allGroupsCollapsed)}
+                        disabled={groupsWithChildren.size === 0}
+                        aria-label={
+                          allGroupsCollapsed
+                            ? tr('全部展开分组', 'Expand all groups', '全部展開分組')
+                            : tr('全部收缩分组', 'Collapse all groups', '全部收合分組')
+                        }
+                        title={
+                          allGroupsCollapsed
+                            ? tr('全部展开分组', 'Expand all groups', '全部展開分組')
+                            : tr('全部收缩分组', 'Collapse all groups', '全部收合分組')
+                        }
+                      >
+                        <ChevronsUpDown size={14} />
+                      </button>
+                    </div>
+                  </div>
                   <div className="account-subnav__all-row">
                     <button
                       type="button"
@@ -5473,7 +5530,6 @@ export function LibraryScreen({
                       </span>
                     </button>
                   </div>
-                  <div className="account-subnav__view-divider" aria-hidden="true" />
                   <div
                     className={`account-subnav__groups-accordion${
                       accountGroupTreeExpanded ? ' is-expanded' : ''
@@ -5481,35 +5537,6 @@ export function LibraryScreen({
                     aria-hidden={!accountGroupTreeExpanded}
                   >
                     <div className="account-subnav__groups-inner">
-                      <div className="account-subnav__groups-heading">
-                        <span className="account-subnav__groups-heading-label">
-                          <span>{tr('分组', 'Groups', '分組')}</span>
-                          <small>{namedGroups.length}</small>
-                        </span>
-                        <div
-                          className="account-subnav__groups-heading-actions"
-                          role="toolbar"
-                          aria-label={tr('分组展开控制', 'Group expansion controls', '分組展開控制')}
-                        >
-                          <button
-                            type="button"
-                            onClick={() => setAllGroupsExpanded(allGroupsCollapsed)}
-                            disabled={groupsWithChildren.size === 0}
-                            aria-label={
-                              allGroupsCollapsed
-                                ? tr('全部展开分组', 'Expand all groups', '全部展開分組')
-                                : tr('全部收缩分组', 'Collapse all groups', '全部收合分組')
-                            }
-                            title={
-                              allGroupsCollapsed
-                                ? tr('全部展开分组', 'Expand all groups', '全部展開分組')
-                                : tr('全部收缩分组', 'Collapse all groups', '全部收合分組')
-                            }
-                          >
-                            <ChevronsUpDown size={14} />
-                          </button>
-                        </div>
-                      </div>
                       <section className="account-subnav__groups">
                         <div className="account-subnav__group-list">
                           {visibleTreeGroups.map((group) => {
@@ -6329,6 +6356,7 @@ export function LibraryScreen({
                       checked={selectedIds.has(account.id)}
                       index={index}
                       tr={tr}
+                      query={search}
                       visibleColumns={effectiveVisibleAccountColumns}
                       columnOrder={accountColumnOrder}
                       formatLastUsed={(value) => formatLastUsed(value, tr, formatDate)}
@@ -6340,6 +6368,27 @@ export function LibraryScreen({
                       onContextMenu={(event) => openAccountMenu(event, account)}
                       onMore={(event) => openAccountMenu(event, account)}
                       onLogin={() => void openAccount(account)}
+                      onCopyOtp={async () => {
+                        try {
+                          const code = await window.autologin.accounts.getOtp(account.id)
+                          await window.autologin.clipboard.writeSecret(code.code)
+                          notify(
+                            'success',
+                            tr(
+                              `OTP 验证码已复制，${code.remaining} 秒后失效`,
+                              `OTP code copied, valid for ${code.remaining}s.`,
+                              `OTP 驗證碼已複製，${code.remaining} 秒後失效`
+                            )
+                          )
+                        } catch (reason) {
+                          notify(
+                            'error',
+                            reason instanceof Error
+                              ? reason.message
+                              : tr('无法读取 OTP', 'Could not read the OTP code.', '無法讀取 OTP')
+                          )
+                        }
+                      }}
                       recorded={workflowStepCount(account) > 0}
                       showCompleteAction={
                         view === 'accounts' &&
@@ -6532,8 +6581,14 @@ export function LibraryScreen({
 
           {view === 'insights' && (
             <AccountInsights
-              accounts={allAccounts}
+              accounts={allAccounts.filter((item) => !bookmarkTabIds.has(item.tabId))}
+              bookmarks={bookmarkAccounts}
               onOpenAccount={(account) => setDrawer({ mode: 'edit', accountId: account.id })}
+              onExportReport={(list) => {
+                setExportTargets(list.map((item) => item.id))
+                setExportOpen(true)
+              }}
+              notify={notify}
             />
           )}
 
@@ -7053,6 +7108,26 @@ export function LibraryScreen({
           />
         )}
       </main>
+      {exportOpen && (
+        <ExportDialog
+          accounts={exportTargets ? accounts.filter((item) => exportTargets.includes(item.id)) : filteredAccounts}
+          scopeLabel={
+            exportTargets
+              ? tr(`已选择的 ${exportTargets.length} 个账号`, `${exportTargets.length} selected accounts`, `已選擇的 ${exportTargets.length} 個帳號`)
+              : tr('当前筛选结果', 'Current results', '目前篩選結果')
+          }
+          tabId={exportTargets ? undefined : activeTabId}
+          vaultTabId={activeTabId}
+          accountIds={exportTargets ?? undefined}
+          defaultName={`${activeTab?.name ?? 'AutoLogin 导出'}-${new Date().toISOString().slice(0, 10)}`}
+          otpCount={(exportTargets ? accounts.filter((item) => exportTargets.includes(item.id)) : filteredAccounts).filter((item) => item.hasOtp).length}
+          onClose={() => {
+            setExportOpen(false)
+            setExportTargets(null)
+          }}
+          notify={notify}
+        />
+      )}
       {isAccountCollectionView &&
         !showDatabaseEmptyState &&
         !accountEditorOpen &&
@@ -7380,12 +7455,27 @@ function GroupParentPicker({
   )
 }
 
+function RowHighlight({ text, query }: { text: string; query: string }): React.JSX.Element {
+  const needle = query.trim().toLowerCase()
+  if (!needle) return <>{text}</>
+  const index = text.toLowerCase().indexOf(needle)
+  if (index < 0) return <>{text}</>
+  return (
+    <>
+      {text.slice(0, index)}
+      <mark className="row-highlight">{text.slice(index, index + needle.length)}</mark>
+      {text.slice(index + needle.length)}
+    </>
+  )
+}
+
 function AccountListRow({
   account,
   bookmark,
   checked,
   index,
   tr,
+  query = '',
   visibleColumns,
   columnOrder,
   formatLastUsed,
@@ -7395,6 +7485,7 @@ function AccountListRow({
   onContextMenu,
   onMore,
   onLogin,
+  onCopyOtp,
   recorded = false,
   showCompleteAction = false
 }: {
@@ -7403,6 +7494,7 @@ function AccountListRow({
   checked: boolean
   index: number
   tr: Translate
+  query?: string
   visibleColumns: Set<AccountColumnKey>
   columnOrder: AccountColumnKey[]
   formatLastUsed: (value?: string) => string
@@ -7412,6 +7504,7 @@ function AccountListRow({
   onContextMenu: (event: React.MouseEvent<HTMLElement>) => void
   onMore: (event: React.MouseEvent<HTMLButtonElement>) => void
   onLogin: () => void
+  onCopyOtp?: () => void
   recorded?: boolean
   showCompleteAction?: boolean
 }): React.JSX.Element {
@@ -7477,7 +7570,9 @@ function AccountListRow({
         <SiteMark site={account.site} />
         <div>
           <div className="account-name-line">
-            <strong>{account.site.name}</strong>
+            <strong>
+              <RowHighlight text={account.site.name} query={query} />
+            </strong>
             {account.site.needsReview && (
               <span className="account-needs-badge">
                 {tr('待补全', 'Needs review', '待補全')}
@@ -7492,6 +7587,25 @@ function AccountListRow({
               <span className="account-needs-badge is-secret">
                 {tr('缺密码', 'No password', '缺密碼')}
               </span>
+            )}
+            {account.hasOtp && onCopyOtp && (
+              <button
+                type="button"
+                className="account-otp-badge"
+                title={tr(
+                  '已配置两步验证，点击复制验证码',
+                  'Two-factor authentication is on. Click to copy the code.',
+                  '已設定兩步驗證，點擊複製驗證碼'
+                )}
+                aria-label={tr('复制 OTP 验证码', 'Copy OTP code', '複製 OTP 驗證碼')}
+                onClick={(event) => {
+                  event.stopPropagation()
+                  onCopyOtp()
+                }}
+              >
+                <ShieldCheck size={10} aria-hidden="true" />
+                2FA
+              </button>
             )}
             {recorded && (
               <span
@@ -7522,7 +7636,11 @@ function AccountListRow({
         style={{ order: accountColumnOrderStyle(columnOrder, 'username') }}
       >
         <strong className={account.needsUsername ? 'is-placeholder' : ''}>
-          {account.needsUsername ? '—' : account.username}
+          {account.needsUsername ? (
+            '—'
+          ) : (
+            <RowHighlight text={account.username} query={query} />
+          )}
         </strong>
       </div>
       <div
@@ -7677,7 +7795,7 @@ function DatabaseWorkspaceEmptyState({
   creating: boolean
   onCreate: () => Promise<void>
   onImported: (result: DataImportResult) => void
-  notify: (kind: 'success' | 'error' | 'info', message: string) => void
+  notify: Notify
 }): React.JSX.Element {
   const { tr } = useI18n()
   const [openDatabaseRequest, setOpenDatabaseRequest] = useState(0)
@@ -7830,6 +7948,56 @@ function compareAccounts(left: AccountWithSite, right: AccountWithSite): number 
     new Date(right.lastUsedAt ?? right.updatedAt).getTime() -
     new Date(left.lastUsedAt ?? left.updatedAt).getTime()
   )
+}
+
+type AccountSortKey = 'recent' | 'site' | 'group' | 'status'
+
+function accountSearchScore(account: AccountWithSite, query: string): number {
+  const fields = [
+    account.site.name,
+    account.username,
+    account.label,
+    account.site.group ?? '',
+    account.site.startUrl ?? ''
+  ]
+  let best = Number.POSITIVE_INFINITY
+  for (const field of fields) {
+    const index = field.toLocaleLowerCase().indexOf(query)
+    if (index >= 0) best = Math.min(best, index)
+  }
+  return best
+}
+
+function accountStatusRank(account: AccountWithSite): number {
+  return (
+    (account.site.needsReview ? 8 : 0) +
+    (account.needsSecret ? 4 : 0) +
+    (account.needsUsername ? 2 : 0)
+  )
+}
+
+function compareAccountsBy(
+  left: AccountWithSite,
+  right: AccountWithSite,
+  key: AccountSortKey
+): number {
+  if (key === 'site') {
+    return (
+      left.site.name.localeCompare(right.site.name, 'zh-Hans-CN') ||
+      left.username.localeCompare(right.username, 'zh-Hans-CN') ||
+      compareAccounts(left, right)
+    )
+  }
+  if (key === 'group') {
+    return (
+      groupKeyFor(left).localeCompare(groupKeyFor(right), 'zh-Hans-CN') ||
+      left.site.name.localeCompare(right.site.name, 'zh-Hans-CN')
+    )
+  }
+  if (key === 'status') {
+    return accountStatusRank(right) - accountStatusRank(left) || compareAccounts(left, right)
+  }
+  return compareAccounts(left, right)
 }
 
 function groupKeyFor(account: AccountWithSite): string {

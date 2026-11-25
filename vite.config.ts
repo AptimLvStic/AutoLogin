@@ -11,7 +11,14 @@ export default defineConfig({
   },
   optimizeDeps: {
     noDiscovery: true,
-    include: ['react', 'react-dom/client', 'lucide-react', '@tauri-apps/api/core', '@tauri-apps/api/event']
+    include: [
+      'react',
+      'react-dom/client',
+      'lucide-react',
+      '@tauri-apps/api/core',
+      '@tauri-apps/api/event',
+      'jsqr'
+    ]
   },
   plugins: [react()],
   server: {

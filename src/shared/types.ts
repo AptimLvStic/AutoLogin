@@ -304,6 +304,24 @@ export interface Site {
   updatedAt: string
 }
 
+export type OtpAlgorithm = 'SHA1' | 'SHA256' | 'SHA512'
+export type OtpDigits = 6 | 7 | 8
+export type OtpPeriod = 15 | 30 | 60
+
+export interface OtpConfig {
+  algorithm: OtpAlgorithm
+  digits: OtpDigits
+  period: OtpPeriod
+  type: 'totp'
+}
+
+export const DEFAULT_OTP_CONFIG: OtpConfig = {
+  algorithm: 'SHA1',
+  digits: 6,
+  period: 30,
+  type: 'totp'
+}
+
 export interface Account {
   id: string
   tabId: string
@@ -322,6 +340,7 @@ export interface Account {
   note?: string
   hasOtp?: boolean
   otpIssuer?: string
+  otpConfig?: OtpConfig
   lastUsedAt?: string
   sortOrder?: number
   createdAt: string
@@ -463,6 +482,7 @@ export interface AccountCreateInput {
   note?: string
   otpSecret?: string
   otpIssuer?: string
+  otpConfig?: OtpConfig
 }
 
 export interface AccountUpdateInput {
@@ -478,6 +498,7 @@ export interface AccountUpdateInput {
   note?: string
   otpSecret?: string
   otpIssuer?: string
+  otpConfig?: OtpConfig
 }
 
 export interface AccountBatchStrategyInput {
@@ -688,6 +709,7 @@ export type DataLocationChoiceResult =
 export interface FileOperationResult {
   canceled: boolean
   fileName?: string
+  filePath?: string
 }
 
 export interface KdbxSelection {
@@ -747,12 +769,25 @@ export interface DataExportInput {
 
 export type DataExportFormat = 'autologin' | 'csv' | 'csv-plain' | 'kdbx'
 
+export interface AccountExportInput {
+  tabId?: string
+  accountIds?: string[]
+  format: 'csv' | 'json' | 'md'
+  fields: Array<
+    'site' | 'url' | 'group' | 'username' | 'password' | 'note' | 'otp' | 'lastUsedAt'
+  >
+  includePasswords?: boolean
+  masterPassword?: string
+  fileName?: string
+}
+
 export interface OtpCode {
   code: string
   remaining: number
   period: number
   issuer?: string
   label?: string
+  config?: OtpConfig
 }
 
 export interface ImportSkipDetail {
@@ -941,7 +976,7 @@ export interface AutologinApi {
     clearCredentialHistory: (accountId: string) => Promise<void>
     copyUsername: (accountId: string) => Promise<void>
     getOtp: (accountId: string) => Promise<OtpCode>
-    previewOtp: (secret: string) => Promise<OtpCode>
+    previewOtp: (secret: string, config?: OtpConfig) => Promise<OtpCode>
     copy: (accountId: string) => Promise<void>
     copyUrl: (accountId: string) => Promise<void>
     setActiveRecipe: (accountId: string, recipeId?: string) => Promise<AccountWithSite>
@@ -1030,6 +1065,14 @@ export interface AutologinApi {
   }
   data: {
     exportTab: (input: DataExportInput) => Promise<FileOperationResult>
+    exportRecords: (input: AccountExportInput) => Promise<FileOperationResult>
+    saveText: (input: {
+      content: string
+      fileName?: string
+      extension?: 'csv' | 'json' | 'md'
+    }) => Promise<FileOperationResult>
+    openExportPath: (path: string) => Promise<void>
+    revealExportPath: (path: string) => Promise<void>
     exportCsvTemplate: () => Promise<FileOperationResult>
     chooseCsv: (input: CsvImportInput) => Promise<CsvFileSelection | null>
     importCsv: (input: CsvImportSelectionInput) => Promise<ImportPreview | null>

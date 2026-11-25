@@ -22,8 +22,31 @@ describe('totp', () => {
     expect(info).toEqual({
       secret: 'JBSWY3DPEHPK3PXP',
       issuer: 'GitHub',
-      label: 'GitHub:dev@example.com'
+      label: 'GitHub:dev@example.com',
+      config: { algorithm: 'SHA1', digits: 6, period: 30, type: 'totp' }
     })
+  })
+
+  it('honours algorithm, digits and period', () => {
+    const config = { algorithm: 'SHA256', digits: 8, period: 60 } as const
+    const code = generateTotp(RFC_SECRET, 59_000, config)
+    expect(code.code).toMatch(/^\d{8}$/)
+    expect(code.period).toBe(60)
+    expect(code.remaining).toBe(1)
+    expect(code.config).toMatchObject(config)
+  })
+
+  it('parses and rejects unsupported otpauth parameters', () => {
+    const sha256 = normalizeOtpSecret(
+      'otpauth://totp/Example:dev?secret=JBSWY3DPEHPK3PXP&issuer=GitHub&algorithm=SHA256&digits=8&period=60'
+    )
+    expect(sha256.config).toEqual({ algorithm: 'SHA256', digits: 8, period: 60, type: 'totp' })
+    expect(() =>
+      normalizeOtpSecret('otpauth://hotp/Example:dev?secret=JBSWY3DPEHPK3PXP&issuer=GitHub&counter=1')
+    ).toThrow('HOTP')
+    expect(() =>
+      normalizeOtpSecret('otpauth://totp/Example:dev?secret=JBSWY3DPEHPK3PXP&issuer=GitHub&algorithm=MD5')
+    ).toThrow('OTP 算法')
   })
 
   it('rejects empty, short and non-Base32 secrets', () => {

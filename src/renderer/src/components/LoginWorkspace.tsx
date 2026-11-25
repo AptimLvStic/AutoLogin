@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
+import type { Notify } from './Toast'
 import {
   ArrowLeft,
   Check,
@@ -57,7 +58,7 @@ export function LoginWorkspace({
   mode: LoginMode
   onClose: () => void
   onDataChanged: () => Promise<void>
-  notify: (kind: 'success' | 'error' | 'info', message: string) => void
+  notify: Notify
 }): React.JSX.Element {
   const { tr, language } = useI18n()
   const [state, setState] = useState<LoginViewState>({

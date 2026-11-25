@@ -198,6 +198,13 @@ export const manualLoginSelectorsSchema = z
   })
   .strict()
 
+export const otpConfigSchema = z.object({
+  algorithm: z.enum(['SHA1', 'SHA256', 'SHA512']),
+  digits: z.union([z.literal(6), z.literal(7), z.literal(8)]),
+  period: z.union([z.literal(15), z.literal(30), z.literal(60)]),
+  type: z.literal('totp')
+})
+
 export const storedAccountSchema = z.object({
   id: idSchema,
   tabId: tabIdSchema,
@@ -231,6 +238,7 @@ export const storedAccountSchema = z.object({
   hasOtp: z.boolean().optional(),
   otpSecret: z.string().max(512).optional(),
   otpIssuer: z.string().max(120).optional(),
+  otpConfig: otpConfigSchema.optional(),
   lastUsedAt: z.string().optional(),
   sortOrder: z.number().int().min(0).max(1_000_000).optional(),
   createdAt: z.string(),
@@ -443,7 +451,8 @@ export const accountCreateInputSchema = z.object({
   manualSteps: z.array(recipeStepSchema).max(30).optional(),
   note: z.string().max(2000).optional(),
   otpSecret: z.string().max(512).optional(),
-  otpIssuer: z.string().max(120).optional()
+  otpIssuer: z.string().max(120).optional(),
+  otpConfig: otpConfigSchema.optional()
 })
 
 export const accountUpdateInputSchema = z.object({
@@ -458,7 +467,8 @@ export const accountUpdateInputSchema = z.object({
   manualSteps: z.array(recipeStepSchema).max(30).optional(),
   note: z.string().max(2000).optional(),
   otpSecret: z.string().max(512).optional(),
-  otpIssuer: z.string().max(120).optional()
+  otpIssuer: z.string().max(120).optional(),
+  otpConfig: otpConfigSchema.optional()
 })
 
 export const accountRecipeUpdateInputSchema = z
@@ -651,6 +661,27 @@ export const dataExportInputSchema = z
     tabId: idSchema,
     format: z.enum(['autologin', 'csv', 'csv-plain', 'kdbx']).optional(),
     password: exportPasswordSchema.optional(),
+    fileName: z
+      .string()
+      .trim()
+      .max(80, '文件名不能超过 80 个字符')
+      .regex(/^[^<>:"/\\|?*\u0000-\u001f]*$/, '文件名不能包含 \\ / : * ? " < > |')
+      .optional()
+  })
+  .strict()
+
+export const accountExportInputSchema = z
+  .object({
+    tabId: idSchema.optional(),
+    accountIds: z.array(idSchema).max(5000).optional(),
+    format: z.enum(['csv', 'json', 'md']),
+    fields: z
+      .array(
+        z.enum(['site', 'url', 'group', 'username', 'password', 'note', 'otp', 'lastUsedAt'])
+      )
+      .min(1, '至少选择一个导出字段'),
+    includePasswords: z.boolean().default(false),
+    masterPassword: z.string().max(256).optional(),
     fileName: z
       .string()
       .trim()

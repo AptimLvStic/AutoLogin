@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
+import type { Notify } from './Toast'
 import { Bookmark, Download, LoaderCircle, MoreHorizontal, Plus } from 'lucide-react'
 import type { DataImportResult } from '@shared/types'
 import { useI18n } from '../i18n'
@@ -10,7 +11,7 @@ export function BookmarkImportButton({
   buttonClassName
 }: {
   onImported: (result: DataImportResult) => void
-  notify: (kind: 'success' | 'error' | 'info', message: string) => void
+  notify: Notify
   showLabel?: boolean
   buttonClassName?: string
 }): React.JSX.Element {
@@ -72,7 +73,7 @@ export function BookmarkExportButton({
   showLabel = false
 }: {
   tabId: string
-  notify: (kind: 'success' | 'error' | 'info', message: string) => void
+  notify: Notify
   showLabel?: boolean
 }): React.JSX.Element {
   const { tr } = useI18n()
@@ -138,7 +139,7 @@ export function BookmarkTransferControls({
   creating: boolean
   onCreate: () => Promise<void>
   onImported: (result: DataImportResult) => void
-  notify: (kind: 'success' | 'error' | 'info', message: string) => void
+  notify: Notify
 }): React.JSX.Element {
   const { tr } = useI18n()
   const [menuOpen, setMenuOpen] = useState(false)

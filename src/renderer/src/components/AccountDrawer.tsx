@@ -1,4 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
+import type { Notify } from './Toast'
+import jsQR from 'jsqr'
 import {
   ArrowRight,
   Check,
@@ -13,6 +15,7 @@ import {
   GripVertical,
   History,
   ImagePlus,
+  Info,
   KeyRound,
   Layers3,
   ListChecks,
@@ -20,6 +23,7 @@ import {
   Pause,
   Play,
   Plus,
+  QrCode,
   RefreshCw,
   Search,
   ShieldCheck,
@@ -38,6 +42,7 @@ import type {
   LoginStrategy,
   LoginViewState,
   OtpCode,
+  OtpConfig,
   RecipeDraftResult,
   RecipeStep,
   RecordingSaveStatus,
@@ -45,6 +50,7 @@ import type {
   SelectorTestResult,
   Site
 } from '@shared/types'
+import { DEFAULT_OTP_CONFIG } from '@shared/types'
 import { useI18n } from '../i18n'
 import {
   ManualStepEditor,
@@ -87,7 +93,7 @@ interface AccountDrawerProps {
   loginState: LoginViewState | null
   recordingFinishRequest: number
   onRecordingFinishHandled: () => void
-  notify: (kind: 'success' | 'error' | 'info', message: string) => void
+  notify: Notify
 }
 
 export function AccountDrawer({
@@ -135,6 +141,10 @@ export function AccountDrawer({
   const [notePreview, setNotePreview] = useState(false)
   const [otpSecret, setOtpSecret] = useState('')
   const [otpIssuer, setOtpIssuer] = useState(account?.otpIssuer ?? '')
+  const [otpConfig, setOtpConfig] = useState<OtpConfig>(
+    account?.otpConfig ?? DEFAULT_OTP_CONFIG
+  )
+  const [otpConfigTouched, setOtpConfigTouched] = useState(false)
   const [otpCode, setOtpCode] = useState<OtpCode | null>(null)
   const [otpError, setOtpError] = useState('')
   const [showOtpSecret, setShowOtpSecret] = useState(false)
@@ -203,6 +213,7 @@ export function AccountDrawer({
   const sitePickerRef = useRef<HTMLDivElement>(null)
   const groupPickerRef = useRef<HTMLDivElement>(null)
   const iconFileRef = useRef<HTMLInputElement>(null)
+  const otpImageRef = useRef<HTMLInputElement>(null)
   const startUrlRef = useRef<HTMLInputElement>(null)
   const usernameRef = useRef<HTMLInputElement>(null)
   const passwordRef = useRef<HTMLInputElement>(null)
@@ -225,6 +236,7 @@ export function AccountDrawer({
     note,
     otpSecret,
     otpIssuer,
+    otpConfig,
     otpCleared,
     loginStrategy,
     loginBrowser,
@@ -389,7 +401,14 @@ export function AccountDrawer({
     return () => window.clearInterval(timer)
   }, [recordingThisAccount])
 
+  const otpConfigKey = JSON.stringify(otpConfig)
+
   useEffect(() => {
+    // 折叠时不轮询，避免后台每秒读取；已配置的账号只在展开后取码。
+    if (!otpExpanded) {
+      setOtpCode(null)
+      return
+    }
     const typed = otpSecret.trim()
     const active = Boolean(account?.hasOtp) && !otpCleared
     if (!typed && !active) {
@@ -403,14 +422,25 @@ export function AccountDrawer({
       return
     }
     let cancelled = false
+    let expiresAt = 0
+    let timer = 0
     const tick = async (): Promise<void> => {
       try {
         const code = typed
-          ? await window.autologin.accounts.previewOtp(typed)
+          ? await window.autologin.accounts.previewOtp(typed, otpConfig)
           : await window.autologin.accounts.getOtp(account!.id)
-        if (!cancelled) {
-          setOtpCode(code)
-          setOtpError('')
+        if (cancelled) return
+        expiresAt = Date.now() + code.remaining * 1000
+        setOtpCode((previous) => {
+          if (previous && previous.code === code.code && previous.remaining === code.remaining) {
+            return previous
+          }
+          return code
+        })
+        setOtpError('')
+        if (code.config && !otpConfigTouched) {
+          const nextKey = JSON.stringify(code.config)
+          setOtpConfig((current) => (JSON.stringify(current) === nextKey ? current : code.config!))
         }
       } catch (reason) {
         if (!cancelled) {
@@ -422,13 +452,32 @@ export function AccountDrawer({
         }
       }
     }
+    // 本地每秒自减，只在周期边界（或剩余归零）才再走一次 IPC。
+    const localTick = (): void => {
+      if (!expiresAt) return
+      const remaining = Math.max(0, Math.ceil((expiresAt - Date.now()) / 1000))
+      setOtpCode((previous) =>
+        previous && previous.remaining !== remaining ? { ...previous, remaining } : previous
+      )
+      if (remaining <= 0) {
+        expiresAt = 0
+        void tick()
+      }
+    }
     void tick()
-    const timer = window.setInterval(() => void tick(), 1000)
+    const interval = window.setInterval(localTick, 1000)
+    timer = interval
     return () => {
       cancelled = true
       window.clearInterval(timer)
     }
-  }, [account?.hasOtp, account?.id, otpCleared, otpSecret, tr])
+  }, [account?.hasOtp, account?.id, otpCleared, otpConfigKey, otpConfigTouched, otpExpanded, otpSecret, tr])
+
+  useEffect(() => {
+    if (!showOtpSecret) return
+    const timer = window.setTimeout(() => setShowOtpSecret(false), 5000)
+    return () => window.clearTimeout(timer)
+  }, [showOtpSecret])
 
   useEffect(() => {
     if (!recordingThisAccount) {
@@ -695,9 +744,12 @@ export function AccountDrawer({
           : otpSecret.trim()
             ? {
                 otpSecret: otpSecret.trim(),
-                otpIssuer: otpIssuer.trim() || undefined
+                otpIssuer: otpIssuer.trim() || undefined,
+                otpConfig
               }
-            : {}
+            : otpConfigTouched
+              ? { otpConfig }
+              : {}
         saved = await withUiTimeout(
           window.autologin.accounts.update(account.id, {
             label: site.name,
@@ -750,7 +802,8 @@ export function AccountDrawer({
               : otpSecret.trim()
                 ? {
                     otpSecret: otpSecret.trim(),
-                    otpIssuer: otpIssuer.trim() || undefined
+                    otpIssuer: otpIssuer.trim() || undefined,
+                    otpConfig
                   }
                 : {})
           }),
@@ -846,9 +899,80 @@ export function AccountDrawer({
     if (!otpCode) return
     try {
       await window.autologin.clipboard.writeSecret(otpCode.code)
-      notify('success', tr('OTP 验证码已复制', 'OTP code copied.', 'OTP 驗證碼已複製'))
+      notify(
+        'success',
+        tr(
+          `OTP 验证码已复制，${otpCode.remaining} 秒后失效`,
+          `OTP code copied, valid for ${otpCode.remaining}s.`,
+          `OTP 驗證碼已複製，${otpCode.remaining} 秒後失效`
+        )
+      )
     } catch (reason) {
       notify('error', reason instanceof Error ? reason.message : tr('复制失败', 'Copy failed.', '複製失敗'))
+    }
+  }
+
+  function overrideOtpConfig(patch: Partial<OtpConfig>): void {
+    setOtpConfigTouched(true)
+    setOtpConfig((current) => ({ ...current, ...patch }))
+  }
+
+  async function importOtpImage(file: File): Promise<void> {
+    try {
+      if (!file.type.startsWith('image/')) {
+        throw new Error(tr('请选择图片文件', 'Choose an image file.', '請選擇圖片檔案'))
+      }
+      const bitmap = await createImageBitmap(file)
+      const decode = (scale: number): string | null => {
+        const canvas = document.createElement('canvas')
+        canvas.width = Math.max(1, Math.round(bitmap.width * scale))
+        canvas.height = Math.max(1, Math.round(bitmap.height * scale))
+        const context = canvas.getContext('2d', { willReadFrequently: true })
+        if (!context) return null
+        context.drawImage(bitmap, 0, 0, canvas.width, canvas.height)
+        const image = context.getImageData(0, 0, canvas.width, canvas.height)
+        const result = jsQR(image.data, image.width, image.height, {
+          inversionAttempts: 'attemptBoth'
+        })
+        return result?.data ?? null
+      }
+      const decoded = decode(1) ?? decode(2)
+      bitmap.close()
+      if (!decoded) {
+        throw new Error(
+          tr(
+            '没有在图片中识别到二维码，请换一张更清晰的截图',
+            'No QR code found in this image. Try a sharper screenshot.',
+            '沒有在圖片中辨識到 QR code，請換一張更清晰的截圖'
+          )
+        )
+      }
+      if (!/^otpauth:\/\//i.test(decoded)) {
+        throw new Error(
+          tr(
+            '这个二维码不是 OTP 绑定链接（otpauth://）',
+            'This QR code is not an otpauth:// link.',
+            '這個 QR code 不是 OTP 綁定連結（otpauth://）'
+          )
+        )
+      }
+      setOtpSecret(decoded)
+      setOtpConfigTouched(false)
+      setOtpCleared(false)
+      setOtpExpanded(true)
+      setOtpEditing(true)
+      setOtpError('')
+      notify(
+        'success',
+        tr('已从二维码读取 OTP 链接', 'OTP link read from the QR code.', '已從 QR code 讀取 OTP 連結')
+      )
+    } catch (reason) {
+      const message =
+        reason instanceof Error
+          ? reason.message
+          : tr('无法读取二维码', 'Could not read the QR code.', '無法讀取 QR code')
+      setOtpError(message)
+      notify('error', message)
     }
   }
 
@@ -2405,7 +2529,10 @@ export function AccountDrawer({
                     {otpExpanded && account?.hasOtp && !otpCleared && !otpEditing && (
                       <div className="account-otp__configured">
                         <div className="account-otp__code-row">
-                          <div className="account-otp__digits">
+                          <div
+                            className="account-otp__digits"
+                            aria-label={otpCode ? otpCode.code.split('').join(' ') : undefined}
+                          >
                             {otpCode ? (
                               <>
                                 {otpCode.code.split('').map((digit, index) => (
@@ -2418,7 +2545,10 @@ export function AccountDrawer({
                               </span>
                             )}
                           </div>
-                          <div className="account-otp__countdown" aria-label={tr('剩余秒数', 'Seconds left', '剩餘秒數')}>
+                          <div
+                            className={`account-otp__countdown${otpCode && otpCode.remaining <= 5 ? ' is-expiring' : ''}`}
+                            aria-label={tr('剩余秒数', 'Seconds left', '剩餘秒數')}
+                          >
                             <svg viewBox="0 0 36 36" aria-hidden="true">
                               <circle cx="18" cy="18" r="15" className="account-otp__ring-track" />
                               <circle
@@ -2426,10 +2556,10 @@ export function AccountDrawer({
                                 cy="18"
                                 r="15"
                                 className="account-otp__ring-value"
-                                strokeDasharray="94.25"
+                                strokeDasharray={String(2 * Math.PI * 15)}
                                 strokeDashoffset={
                                   otpCode
-                                    ? 94.25 * (1 - otpCode.remaining / Math.max(1, otpCode.period))
+                                    ? 2 * Math.PI * 15 * (1 - otpCode.remaining / Math.max(1, otpCode.period))
                                     : 0
                                 }
                               />
@@ -2449,23 +2579,75 @@ export function AccountDrawer({
                         <dl className="account-otp__meta">
                           <div>
                             <dt>{tr('来源', 'Source', '來源')}</dt>
-                            <dd>{otpSecret.trim().startsWith('otpauth://')
-                              ? tr('otpauth 链接', 'otpauth link', 'otpauth 連結')
-                              : tr('手动录入', 'Manual entry', '手動錄入')}</dd>
+                            <dd>{
+                              otpSecret.trim().startsWith('otpauth://')
+                                ? tr('otpauth 链接', 'otpauth link', 'otpauth 連結')
+                                : account?.hasOtp && !otpSecret.trim()
+                                  ? tr('已保存的密钥', 'Saved secret', '已儲存的密鑰')
+                                  : tr('手动录入', 'Manual entry', '手動錄入')
+                            }</dd>
                           </div>
                           <div>
                             <dt>{tr('算法', 'Algorithm', '演算法')}</dt>
-                            <dd>SHA-1</dd>
+                            <dd>{(otpCode?.config ?? otpConfig).algorithm.replace('SHA', 'SHA-')}</dd>
                           </div>
                           <div>
                             <dt>{tr('位数', 'Digits', '位數')}</dt>
-                            <dd>6</dd>
+                            <dd>{(otpCode?.config ?? otpConfig).digits}</dd>
                           </div>
                           <div>
                             <dt>{tr('周期', 'Period', '週期')}</dt>
-                            <dd>{otpCode?.period ?? 30}s</dd>
+                            <dd>{(otpCode?.config ?? otpConfig).period}s</dd>
                           </div>
                         </dl>
+                        <div className="account-otp__chips">
+                          <button
+                            type="button"
+                            className="account-otp__chip"
+                            title={tr('点击切换算法', 'Click to change algorithm', '點擊切換演算法')}
+                            onClick={() =>
+                              overrideOtpConfig({
+                                algorithm:
+                                  otpConfig.algorithm === 'SHA1'
+                                    ? 'SHA256'
+                                    : otpConfig.algorithm === 'SHA256'
+                                      ? 'SHA512'
+                                      : 'SHA1'
+                              })
+                            }
+                          >
+                            {otpConfig.algorithm.replace('SHA', 'SHA-')}
+                          </button>
+                          <button
+                            type="button"
+                            className="account-otp__chip"
+                            title={tr('点击切换位数', 'Click to change digits', '點擊切換位數')}
+                            onClick={() =>
+                              overrideOtpConfig({
+                                digits: otpConfig.digits === 6 ? 7 : otpConfig.digits === 7 ? 8 : 6
+                              })
+                            }
+                          >
+                            {otpConfig.digits} {tr('位', 'digits', '位')}
+                          </button>
+                          <button
+                            type="button"
+                            className="account-otp__chip"
+                            title={tr('点击切换周期', 'Click to change period', '點擊切換週期')}
+                            onClick={() =>
+                              overrideOtpConfig({
+                                period: otpConfig.period === 30 ? 60 : otpConfig.period === 60 ? 15 : 30
+                              })
+                            }
+                          >
+                            {otpConfig.period}s
+                          </button>
+                          <span className={`account-otp__chip-note${otpConfigTouched ? ' is-manual' : ''}`}>
+                            {otpConfigTouched
+                              ? tr('已手动指定', 'Manual override', '已手動指定')
+                              : tr('自动识别', 'Detected', '自動辨識')}
+                          </span>
+                        </div>
                         <div className="account-otp__secret">
                           <span>{tr('密钥', 'Secret', '密鑰')}</span>
                           <code>••••••••••••</code>
@@ -2496,7 +2678,30 @@ export function AccountDrawer({
                     )}
 
                     {otpExpanded && otpEditing && (
-                      <div className="account-otp__editor">
+                      <div
+                        className="account-otp__editor"
+                        onPaste={(event) => {
+                          const file = Array.from(event.clipboardData.files).find((entry) =>
+                            entry.type.startsWith('image/')
+                          )
+                          if (!file) return
+                          event.preventDefault()
+                          void importOtpImage(file)
+                        }}
+                        onDragOver={(event) => {
+                          if (event.dataTransfer.types.includes('Files')) {
+                            event.preventDefault()
+                            event.currentTarget.classList.add('is-dragging')
+                          }
+                        }}
+                        onDragLeave={(event) => event.currentTarget.classList.remove('is-dragging')}
+                        onDrop={(event) => {
+                          event.preventDefault()
+                          event.currentTarget.classList.remove('is-dragging')
+                          const file = event.dataTransfer.files[0]
+                          if (file) void importOtpImage(file)
+                        }}
+                      >
                         <div className="account-otp__row">
                           <span className="input-shell">
                             <KeyRound size={17} />
@@ -2505,6 +2710,7 @@ export function AccountDrawer({
                               value={otpSecret}
                               onChange={(event) => {
                                 setOtpSecret(event.target.value)
+                                setOtpConfigTouched(false)
                                 setOtpCleared(false)
                               }}
                               placeholder={
@@ -2549,19 +2755,105 @@ export function AccountDrawer({
                             />
                           </span>
                         </label>
+                        <div className="account-otp__chips">
+                          <button
+                            type="button"
+                            className="account-otp__chip"
+                            title={tr('点击切换算法', 'Click to change algorithm', '點擊切換演算法')}
+                            onClick={() =>
+                              overrideOtpConfig({
+                                algorithm:
+                                  otpConfig.algorithm === 'SHA1'
+                                    ? 'SHA256'
+                                    : otpConfig.algorithm === 'SHA256'
+                                      ? 'SHA512'
+                                      : 'SHA1'
+                              })
+                            }
+                          >
+                            {otpConfig.algorithm.replace('SHA', 'SHA-')}
+                          </button>
+                          <button
+                            type="button"
+                            className="account-otp__chip"
+                            title={tr('点击切换位数', 'Click to change digits', '點擊切換位數')}
+                            onClick={() =>
+                              overrideOtpConfig({
+                                digits: otpConfig.digits === 6 ? 7 : otpConfig.digits === 7 ? 8 : 6
+                              })
+                            }
+                          >
+                            {otpConfig.digits} {tr('位', 'digits', '位')}
+                          </button>
+                          <button
+                            type="button"
+                            className="account-otp__chip"
+                            title={tr('点击切换周期', 'Click to change period', '點擊切換週期')}
+                            onClick={() =>
+                              overrideOtpConfig({
+                                period: otpConfig.period === 30 ? 60 : otpConfig.period === 60 ? 15 : 30
+                              })
+                            }
+                          >
+                            {otpConfig.period}s
+                          </button>
+                          <span className={`account-otp__chip-note${otpConfigTouched ? ' is-manual' : ''}`}>
+                            {otpConfigTouched
+                              ? tr('已手动指定', 'Manual override', '已手動指定')
+                              : tr('自动识别', 'Detected', '自動辨識')}
+                          </span>
+                        </div>
+                        <div className="account-otp__scan">
+                          <QrCode size={22} aria-hidden="true" />
+                          <p>
+                            {tr(
+                              '把验证器二维码截图粘贴到这里，或拖入图片；也可以',
+                              'Paste an authenticator QR screenshot here, drop an image, or',
+                              '把驗證器 QR code 截圖貼到這裡，或拖入圖片；也可以'
+                            )}
+                            <button
+                              type="button"
+                              className="account-otp__scan-pick"
+                              onClick={() => otpImageRef.current?.click()}
+                            >
+                              {tr('选择图片', 'choose a file', '選擇圖片')}
+                            </button>
+                          </p>
+                          <button
+                            type="button"
+                            className="account-otp__scan-info"
+                            title={tr(
+                              '支持 {digits} 位、{period} 秒的 {algorithm} TOTP。密钥只保存在本机加密数据库中，不会上传。',
+                              'Supports {digits}-digit, {period}-second {algorithm} TOTP. The secret stays in the local encrypted vault.',
+                              '支援 {digits} 位、{period} 秒的 {algorithm} TOTP。密鑰只儲存在本機加密資料庫中，不會上傳。',
+                              {
+                                digits: otpConfig.digits,
+                                period: otpConfig.period,
+                                algorithm: otpConfig.algorithm.replace('SHA', 'SHA-')
+                              }
+                            )}
+                            aria-label={tr('TOTP 支持说明', 'TOTP support notes', 'TOTP 支援說明')}
+                          >
+                            <Info size={14} />
+                          </button>
+                          <input
+                            ref={otpImageRef}
+                            type="file"
+                            accept="image/*"
+                            hidden
+                            onChange={(event) => {
+                              const file = event.target.files?.[0]
+                              event.target.value = ''
+                              if (file) void importOtpImage(file)
+                            }}
+                          />
+                        </div>
                         {otpError && <p className="form-error">{otpError}</p>}
                         <div className="account-otp__editor-foot">
-                          <p className="form-hint">
-                            {tr(
-                              '支持 6 位、30 秒的 TOTP。密钥只保存在本机加密数据库中，不会上传。',
-                              'Supports 6-digit, 30-second TOTP. The secret stays in the local encrypted vault.',
-                              '支援 6 位、30 秒的 TOTP。密鑰只儲存在本機加密資料庫中，不會上傳。'
-                            )}
-                          </p>
                           {account?.hasOtp && !otpCleared && (
                             <button
                               type="button"
-                              className="button button--ghost button--small"
+                              className="button button--ghost"
                               onClick={() => {
                                 setOtpEditing(false)
                                 setOtpSecret('')

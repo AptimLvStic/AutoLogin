@@ -25,7 +25,11 @@ import { useI18n } from '../i18n'
 import { embeddedBrowserBounds } from '../native-browser-bounds'
 import { ConfirmDialog } from './Modal'
 
-type Notify = (kind: 'success' | 'error' | 'info', message: string) => void
+type Notify = (
+  kind: 'success' | 'error' | 'info',
+  message: string,
+  actions?: Array<{ label: string; onClick: () => void }>
+) => void
 const BROWSER_TAB_COLORS = [
   '#4A55E0',
   '#0E9F6E',

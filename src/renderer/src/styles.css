@@ -25777,6 +25777,12 @@ body.is-dragging-group .account-subnav__group-grip:active {
   margin: 0;
 }
 
+.account-otp__editor-foot > button {
+  flex: 0 0 auto;
+  align-self: center;
+  white-space: nowrap;
+}
+
 @media (max-width: 760px) {
   .account-otp__meta {
     grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -25878,4 +25884,451 @@ body.is-dragging-group .account-subnav__group-grip:active {
   .account-drawer.account-editor-page .account-drawer__header {
     padding-top: 24px;
   }
+}
+
+/* OTP：参数标签、扫码入口与手动覆盖 */
+.account-otp__chips {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+
+.account-otp__chip {
+  height: 24px;
+  padding: 0 9px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--surface);
+  color: var(--ink-soft);
+  font-size: calc(10px * var(--font-scale, 1));
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  cursor: pointer;
+  transition: border-color 140ms ease, color 140ms ease, background 140ms ease;
+}
+
+.account-otp__chip:hover,
+.account-otp__chip:focus-visible {
+  border-color: color-mix(in srgb, var(--accent) 45%, var(--line));
+  background: color-mix(in srgb, var(--accent) 8%, var(--surface));
+  color: var(--accent-strong);
+  outline: none;
+}
+
+.account-otp__chip-note {
+  color: var(--muted);
+  font-size: calc(9.5px * var(--font-scale, 1));
+}
+
+.account-otp__chip-note.is-manual {
+  color: var(--accent-strong);
+}
+
+.account-otp__scan {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-height: 64px;
+  padding: 16px 18px;
+  border: 1px dashed color-mix(in srgb, var(--line) 85%, transparent);
+  border-radius: 9px;
+  background: color-mix(in srgb, var(--surface-raised) 45%, transparent);
+  color: var(--muted);
+}
+
+.account-otp__scan > svg {
+  flex: 0 0 auto;
+  color: var(--accent-strong);
+}
+
+.account-otp__scan p {
+  margin: 0;
+  font-size: calc(12px * var(--font-scale, 1));
+  line-height: 1.55;
+}
+
+.account-otp__scan-pick {
+  margin-left: 4px;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--accent-strong);
+  font: inherit;
+  font-weight: 600;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  cursor: pointer;
+}
+
+.account-otp__editor.is-dragging {
+  border-radius: 10px;
+  outline: 2px dashed color-mix(in srgb, var(--accent) 60%, transparent);
+  outline-offset: -4px;
+  background: color-mix(in srgb, var(--accent) 5%, transparent);
+}
+
+.account-otp__countdown.is-expiring {
+  color: var(--danger);
+}
+
+.account-otp__countdown.is-expiring .account-otp__ring-value {
+  stroke: var(--danger);
+}
+
+
+.account-otp-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  height: 18px;
+  padding: 0 6px;
+  border: 1px solid color-mix(in srgb, var(--accent) 24%, transparent);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--accent) 8%, transparent);
+  color: var(--accent-strong);
+  font-family: var(--font-mono);
+  font-size: calc(9px * var(--font-scale, 1));
+  font-weight: 650;
+  letter-spacing: 0.02em;
+  cursor: pointer;
+  transition: background 140ms ease, border-color 140ms ease;
+}
+
+.account-otp-badge:hover,
+.account-otp-badge:focus-visible {
+  border-color: color-mix(in srgb, var(--accent) 55%, transparent);
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+  outline: none;
+}
+
+
+/* Export records dialog */
+.export-dialog__formats {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+  margin: 10px 0 0;
+}
+.export-dialog__format {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 3px;
+  padding: 9px 12px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--surface);
+  color: var(--ink);
+  text-align: left;
+  cursor: pointer;
+  transition: border-color 140ms ease, background 140ms ease;
+}
+.export-dialog__format svg { color: var(--ink-soft); }
+.export-dialog__format strong { font-size: 12.5px; font-weight: 600; }
+.export-dialog__format small { font-size: 10.5px; color: var(--ink-faint); }
+.export-dialog__format:hover { border-color: var(--line-strong); }
+.export-dialog__format.is-active {
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 7%, transparent);
+}
+.export-dialog__format.is-active svg { color: var(--accent-strong); }
+.export-dialog__format:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+/* 账号数据四张卡用 2×2，避免第三张挤成孤行 */
+.export-dialog__formats--vault {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  margin-bottom: 4px;
+}
+.export-dialog .field { margin-top: 12px; }
+.export-dialog__section { margin-top: 13px; }
+.export-dialog__section-title {
+  display: block;
+  margin-bottom: 8px;
+  font-size: 11.5px;
+  font-weight: 600;
+  color: var(--ink-soft);
+}
+.export-dialog__fields {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 6px 10px;
+}
+.export-dialog__field {
+  display: flex;
+  align-items: flex-start;
+  gap: 7px;
+  font-size: 12px;
+  color: var(--ink);
+  cursor: pointer;
+}
+.export-dialog__field input { margin: 2px 0 0; accent-color: var(--accent); }
+.export-dialog__field small {
+  display: block;
+  margin-top: 2px;
+  font-size: 10.5px;
+  color: var(--ink-faint);
+  font-weight: 400;
+}
+.export-dialog__field--wide { margin-top: 12px; }
+.export-dialog__warning {
+  margin: 9px 0 0;
+  padding: 9px 11px;
+  border-radius: 8px;
+  border: 1px solid color-mix(in srgb, var(--warning) 30%, var(--line));
+  background: color-mix(in srgb, var(--warning) 8%, transparent);
+  font-size: 11.5px;
+  line-height: 1.5;
+  color: var(--ink);
+}
+/* 导出记录对话框：form 直接挂在面板上，需要自己撑开左右留白 */
+.export-dialog form { padding: 0 28px 0; }
+.export-dialog .modal-description { padding: 0; }
+/* 内容较高时把「取消 / 导出」钉在面板底部，避免主操作被滚动裁掉 */
+.export-dialog .modal-actions {
+  position: sticky;
+  z-index: 2;
+  bottom: 0;
+  margin-top: 18px;
+  padding: 14px 0 20px;
+  background: var(--surface);
+}
+@media (max-width: 560px) {
+  .export-dialog__formats { grid-template-columns: 1fr; }
+  .export-dialog__fields { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+
+
+
+/* Insights datasets, filters and rows */
+.insights-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.insights-kpi {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  padding: 12px 14px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--surface);
+  color: var(--ink);
+  text-align: left;
+  cursor: pointer;
+  transition: border-color 140ms ease, background 140ms ease;
+}
+.insights-kpi svg { color: var(--ink-soft); margin-bottom: 2px; }
+.insights-kpi strong { font-size: 21px; font-weight: 650; line-height: 1.1; }
+.insights-kpi span { font-size: 11.5px; color: var(--ink-soft); }
+.insights-kpi small { font-size: 10.5px; color: var(--ink-faint); }
+.insights-kpi:hover { border-color: var(--line-strong); }
+.insights-kpi.is-active {
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 6%, transparent);
+}
+.insights-kpi.is-active svg { color: var(--accent-strong); }
+.insights-kpi:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.insights-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin: 14px 0 10px;
+}
+.insights-search {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 260px;
+  flex: 1 1 320px;
+  padding: 8px 11px;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  background: var(--surface);
+  color: var(--ink-faint);
+}
+.insights-search input {
+  flex: 1 1 auto;
+  min-width: 0;
+  border: 0;
+  outline: none;
+  background: transparent;
+  color: var(--ink);
+  font-size: 12.5px;
+}
+.insights-search > span {
+  flex: 0 0 auto;
+  font-size: 10.5px;
+  color: var(--ink-faint);
+  white-space: nowrap;
+}
+.insights-filters { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.insights-filter {
+  padding: 5px 10px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--ink-soft);
+  font-size: 11.5px;
+  cursor: pointer;
+}
+.insights-filter:hover { border-color: var(--line-strong); color: var(--ink); }
+.insights-filter.is-active {
+  border-color: color-mix(in srgb, var(--accent) 45%, var(--line));
+  background: color-mix(in srgb, var(--accent) 8%, transparent);
+  color: var(--accent-strong);
+}
+.insights-view-toggle { margin-left: 4px; }
+.insights-view-toggle button { font-size: 11px; padding: 4px 9px; }
+.insights-row {
+  display: grid;
+  grid-template-columns: 30px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 8px 10px;
+  border: 0;
+  border-radius: 9px;
+  background: transparent;
+  color: var(--ink);
+  text-align: left;
+  cursor: pointer;
+}
+.insights-row:hover { background: color-mix(in srgb, var(--ink) 4%, transparent); }
+.insights-row:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.insights-row__main { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
+.insights-row__main strong { font-size: 12.5px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.insights-row__main small { font-size: 10.5px; color: var(--ink-faint); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.insights-row__tags { display: flex; align-items: center; gap: 5px; }
+.insights-row__time { font-size: 10px; color: var(--ink-faint); white-space: nowrap; }
+.insights-row mark, .insights-bucket__head mark, .insights-cross__host mark {
+  background: color-mix(in srgb, var(--accent) 22%, transparent);
+  color: inherit;
+  border-radius: 3px;
+  padding: 0 1px;
+}
+.insights-bucket, .insights-cross {
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--surface);
+  overflow: hidden;
+}
+.insights-bucket + .insights-bucket, .insights-cross + .insights-cross { margin-top: 10px; }
+.insights-bucket__head, .insights-cross__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--line);
+  background: color-mix(in srgb, var(--ink) 2.5%, transparent);
+}
+.insights-bucket__head strong, .insights-cross__host strong { font-size: 12.5px; font-weight: 600; }
+.insights-bucket__head small, .insights-cross__host small { display: block; margin-top: 1px; font-size: 10.5px; color: var(--ink-faint); }
+.insights-cross__host { min-width: 0; }
+.insights-bucket__rows { padding: 4px; }
+.insights-identity__sites .insights-row + .insights-row { border-top: 1px solid color-mix(in srgb, var(--line) 60%, transparent); border-radius: 0; }
+@media (max-width: 640px) {
+  .insights-toolbar { flex-direction: column; align-items: stretch; }
+  .insights-search { min-width: 0; }
+  .insights-row { grid-template-columns: 26px minmax(0, 1fr); }
+  .insights-row__tags { grid-column: 1 / -1; flex-wrap: wrap; }
+  .insights-actions { width: 100%; justify-content: space-between; }
+}
+
+/* Search highlight + search count */
+.row-highlight { background: color-mix(in srgb, var(--accent) 22%, transparent); color: inherit; border-radius: 3px; padding: 0 1px; }
+.search-field__count { font-size: 10.5px; color: var(--ink-soft); white-space: nowrap; font-variant-numeric: tabular-nums; }
+
+/* 统计页：SiteMark 40px 落在 30px 栅格内会吃掉 gap，图标与文字贴在一起 */
+.insights-row { gap: 12px; }
+.insights-row .monogram {
+  width: 30px;
+  height: 30px;
+  border-radius: 9px;
+  font-size: calc(12px * var(--font-scale, 1));
+}
+
+/* OTP 编辑器：支持说明收进 Tooltip，取消按钮不再被长文案挤成两行 */
+.account-otp__editor-foot {
+  justify-content: flex-end;
+}
+.account-otp__scan-info {
+  display: grid;
+  width: 24px;
+  height: 24px;
+  flex: 0 0 auto;
+  margin-left: auto;
+  place-items: center;
+  border: 0;
+  border-radius: 50%;
+  background: transparent;
+  color: var(--ink-faint);
+  cursor: help;
+}
+.account-otp__scan-info:hover {
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
+  color: var(--accent-strong);
+}
+.account-otp__scan-info:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+/* 侧栏：分组标题与「全部账号」读作同一棵树，不再被分隔线切开 */
+.account-subnav__groups-heading {
+  margin-top: 6px;
+  margin-bottom: 2px;
+}
+.account-subnav__all-row {
+  margin-bottom: 4px;
+}
+
+/* 导出成功提示里的「打开文件 / 打开文件夹」动作 */
+.toast__message {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.toast__actions {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 2px;
+  margin-left: auto;
+}
+
+.toast__action {
+  padding: 5px 8px;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--accent-strong);
+  font: inherit;
+  font-size: calc(11.5px * var(--font-scale, 1));
+  font-weight: 600;
+  white-space: nowrap;
+  cursor: pointer;
+  pointer-events: auto;
+}
+
+.toast__action:hover {
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
+}
+
+.toast__action:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -1px;
+}
+
+.toast__actions + .icon-button {
+  margin-left: 0;
+}
+
+.toast:has(.toast__actions) {
+  max-width: 560px;
 }

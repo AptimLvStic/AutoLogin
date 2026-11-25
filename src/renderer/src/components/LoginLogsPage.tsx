@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
+import type { Notify } from './Toast'
 import {
   Check,
   CircleCheck,
@@ -60,7 +61,7 @@ export function LoginLogsPage({
   onNavigate
 }: {
   sites: Site[]
-  notify: (kind: 'success' | 'error' | 'info', message: string) => void
+  notify: Notify
   onNavigate: (view: LogView) => void
 }): React.JSX.Element {
   const { tr, formatDate, language } = useI18n()

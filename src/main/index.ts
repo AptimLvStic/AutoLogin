@@ -29,6 +29,7 @@ import {
   accountBatchIconFetchInputSchema,
   accountBatchIconInputSchema,
   accountBatchStrategyInputSchema,
+  accountExportInputSchema,
   accountCreateInputSchema,
   accountDeleteManyInputSchema,
   accountDuplicateInputSchema,
@@ -87,6 +88,13 @@ import {
   shouldWriteEncryptedTabSnapshot
 } from '@shared/database-files'
 import { interfaceScaleToZoom } from '@shared/theme'
+import {
+  exportRowsToCsv,
+  exportRowsToJson,
+  exportRowsToMarkdown,
+  filterExportFields,
+  type AccountExportRow
+} from '@shared/export'
 import type {
   AccountBatchIconFetchProgress,
   AccountBatchIconFetchResult,
@@ -135,6 +143,7 @@ import type {
   LoginViewState,
   EmbeddedBrowserTab,
   OtpCode,
+  OtpConfig,
   PasswordReveal,
   ProxySettings,
   ProxyTestResult,
@@ -1386,20 +1395,30 @@ function registerIpc(): void {
   })
   ipcMain.handle('accounts:otp', (event, accountId: unknown): OtpCode => {
     assertTrustedSender(event)
-    const { account } = requireAccountAndSite(requireId(accountId))
+    // 只读路径：不能用 requireData()，否则每秒轮询会不断续期自动锁定。
+    const data = vault.peekData()
+    const account = data.accounts.find((entry) => entry.id === requireId(accountId))
+    if (!account) {
+      throw new Error('账号不存在')
+    }
     if (!account.otpSecret) {
       throw new Error('该账号尚未配置 OTP')
     }
-    const code = generateTotp(account.otpSecret)
+    const code = generateTotp(account.otpSecret, Date.now(), account.otpConfig)
     return { ...code, issuer: account.otpIssuer ?? code.issuer }
   })
-  ipcMain.handle('accounts:otp-preview', (event, secret: unknown): OtpCode => {
-    assertTrustedSender(event)
-    if (typeof secret !== 'string' || !secret.trim()) {
-      throw new Error('请输入 OTP 密钥')
+  ipcMain.handle(
+    'accounts:otp-preview',
+    (event, payload: unknown): OtpCode => {
+      assertTrustedSender(event)
+      const input =
+        typeof payload === 'string' ? { secret: payload } : (payload as { secret?: unknown; config?: OtpConfig })
+      if (!input || typeof input.secret !== 'string' || !input.secret.trim()) {
+        throw new Error('请输入 OTP 密钥')
+      }
+      return generateTotp(input.secret, Date.now(), input.config)
     }
-    return generateTotp(secret)
-  })
+  )
   ipcMain.handle(
     'accounts:list-credential-history',
     (event, accountId: unknown): CredentialHistoryEntry[] => {
@@ -2001,7 +2020,11 @@ function registerIpc(): void {
                 : '浏览器书签已导出',
       details: `${tab.name}；${basename(selection.filePath)}`
     })
-    return { canceled: false, fileName: basename(selection.filePath) }
+    return {
+      canceled: false,
+      fileName: basename(selection.filePath),
+      filePath: selection.filePath
+    }
   })
   ipcMain.handle('data:export-csv-template', async (event): Promise<FileOperationResult> => {
     assertTrustedSender(event)
@@ -2027,8 +2050,141 @@ function registerIpc(): void {
       message: 'CSV 导入模板已保存',
       details: basename(selection.filePath)
     })
-    return { canceled: false, fileName: basename(selection.filePath) }
+    return {
+      canceled: false,
+      fileName: basename(selection.filePath),
+      filePath: selection.filePath
+    }
   })
+
+  ipcMain.handle('data:export-records', async (event, payload: unknown): Promise<FileOperationResult> => {
+    assertTrustedSender(event)
+    const parsed = accountExportInputSchema.safeParse(payload)
+    if (!parsed.success) {
+      throw new Error(firstIssue(parsed.error))
+    }
+    if (!mainWindow) return { canceled: true }
+    const input = parsed.data
+    if (input.includePasswords) {
+      if (!input.masterPassword) {
+        throw new Error('导出密码前需要验证主密码')
+      }
+      if (!(await vault.verifyPassword(input.masterPassword))) {
+        throw new Error('主密码不正确，未导出任何文件')
+      }
+    }
+    const data = vault.requireData()
+    const allowed = input.accountIds ? new Set(input.accountIds) : null
+    const accounts = data.accounts.filter(
+      (account) =>
+        (!input.tabId || account.tabId === input.tabId) &&
+        (!allowed || allowed.has(account.id))
+    )
+    const sites = new Map(data.sites.map((site) => [site.id, site]))
+    const rows: AccountExportRow[] = accounts.map((account) => {
+      const site = sites.get(account.siteId)
+      return {
+        site: site?.name ?? account.label,
+        url: site?.startUrl ?? '',
+        group: site?.group ?? '',
+        username: account.username,
+        password: input.includePasswords ? account.password : '',
+        note: account.note ?? '',
+        otp: account.otpSecret ? '已启用' : '',
+        lastUsedAt: account.lastUsedAt ?? ''
+      }
+    })
+    const fields = filterExportFields(input.fields, input.includePasswords)
+    const content =
+      input.format === 'csv'
+        ? exportRowsToCsv(rows, fields)
+        : input.format === 'json'
+          ? exportRowsToJson(rows, fields)
+          : exportRowsToMarkdown(rows, fields)
+    const tab = input.tabId ? data.tabs.find((entry) => entry.id === input.tabId) : undefined
+    const baseName = safeFileBaseName(
+      input.fileName?.replace(/\.(csv|json|md)$/i, '') || `${tab?.name ?? 'AutoLogin 导出'}-${fileDateStamp()}`
+    )
+    const extension = input.format
+    const selection = await dialog.showSaveDialog(mainWindow, {
+      title: '导出账号数据',
+      buttonLabel: '导出',
+      defaultPath: join(app.getPath('documents'), `${baseName}.${extension}`),
+      filters: [
+        {
+          name: input.format === 'csv' ? 'CSV 文件' : input.format === 'json' ? 'JSON 文件' : 'Markdown 报表',
+          extensions: [extension]
+        }
+      ]
+    })
+    if (selection.canceled || !selection.filePath) {
+      return { canceled: true }
+    }
+    writeFileSync(selection.filePath, content, { encoding: 'utf8', mode: 0o600 })
+    appendAppLog(dataDirectory, {
+      level: 'success',
+      category: 'data',
+      message: input.format === 'csv' ? '账号数据已导出为 CSV' : input.format === 'json' ? '账号数据已导出为 JSON' : '账号数据已导出为 Markdown',
+      details: `${rows.length} 条；${basename(selection.filePath)}`
+    })
+    return {
+      canceled: false,
+      fileName: basename(selection.filePath),
+      filePath: selection.filePath
+    }
+  })
+
+  ipcMain.handle('export:save-text', async (event, payload: unknown): Promise<FileOperationResult> => {
+    assertTrustedSender(event)
+    const input = payload as { content?: unknown; fileName?: unknown; extension?: unknown }
+    if (typeof input?.content !== 'string' || !input.content) {
+      throw new Error('没有可导出的内容')
+    }
+    if (input.content.length > 5_000_000) {
+      throw new Error('导出内容过大，请缩小范围')
+    }
+    if (!mainWindow) return { canceled: true }
+    const extension = input.extension === 'json' ? 'json' : input.extension === 'md' ? 'md' : 'csv'
+    const baseName = safeFileBaseName(
+      typeof input.fileName === 'string' ? input.fileName.replace(/\.(csv|json|md)$/i, '') : `AutoLogin 报表-${fileDateStamp()}`
+    )
+    const selection = await dialog.showSaveDialog(mainWindow, {
+      title: '保存导出文件',
+      buttonLabel: '保存',
+      defaultPath: join(app.getPath('documents'), `${baseName}.${extension}`),
+      filters: [{ name: '导出文件', extensions: [extension] }]
+    })
+    if (selection.canceled || !selection.filePath) return { canceled: true }
+    writeFileSync(selection.filePath, input.content, { encoding: 'utf8', mode: 0o600 })
+    return {
+      canceled: false,
+      fileName: basename(selection.filePath),
+      filePath: selection.filePath
+    }
+  })
+
+  ipcMain.handle('data:open-path', async (event, payload: unknown): Promise<void> => {
+    assertTrustedSender(event)
+    const input = payload as { path?: unknown }
+    if (typeof input?.path !== 'string' || !input.path) {
+      throw new Error('缺少文件路径')
+    }
+    const error = await shell.openPath(input.path)
+    if (error) throw new Error(error)
+  })
+
+  ipcMain.handle(
+    'data:reveal-export-path',
+    async (event, payload: unknown): Promise<void> => {
+      assertTrustedSender(event)
+      const input = payload as { path?: unknown }
+      if (typeof input?.path !== 'string' || !input.path) {
+        throw new Error('缺少文件路径')
+      }
+      shell.showItemInFolder(input.path)
+    }
+  )
+
   ipcMain.handle('data:choose-csv', async (event, payload: unknown): Promise<CsvFileSelection | null> => {
     assertTrustedSender(event)
     const parsedInput = csvImportInputSchema.safeParse(payload)
@@ -3335,6 +3491,7 @@ function createAccount(input: {
   note?: string
   otpSecret?: string
   otpIssuer?: string
+  otpConfig?: OtpConfig
 }): AccountWithSite {
   const data = vault.requireData()
   const site = data.sites.find((entry) => entry.id === input.siteId)
@@ -3355,7 +3512,7 @@ function createAccount(input: {
   assertManualConfiguration(loginStrategy, manualSelectors, manualSteps)
   const now = new Date().toISOString()
   const otp = input.otpSecret?.trim()
-    ? normalizeOtpSecret(input.otpSecret)
+    ? normalizeOtpSecret(input.otpSecret, input.otpConfig)
     : undefined
   const account: StoredAccount = {
     id: randomUUID(),
@@ -3369,6 +3526,7 @@ function createAccount(input: {
     note: input.note?.trim() || undefined,
     otpSecret: otp?.secret,
     otpIssuer: otp?.issuer ?? (input.otpIssuer?.trim() || undefined),
+    otpConfig: otp?.config,
     credentialUpdatedAt: now,
     favorite: input.favorite ?? false,
     loginStrategy,
@@ -3521,6 +3679,7 @@ function updateAccount(
     note?: string
     otpSecret?: string
     otpIssuer?: string
+    otpConfig?: OtpConfig
   }
 ): AccountWithSite {
   const data = vault.requireData()
@@ -3554,12 +3713,20 @@ function updateAccount(
       account.otpSecret = undefined
       account.otpIssuer = undefined
     } else {
-      const otp = normalizeOtpSecret(patch.otpSecret)
+      const otp = normalizeOtpSecret(patch.otpSecret, patch.otpConfig)
       account.otpSecret = otp.secret
       account.otpIssuer = otp.issuer ?? (patch.otpIssuer?.trim() || account.otpIssuer)
+      account.otpConfig = otp.config
     }
   } else if (patch.otpIssuer !== undefined) {
     account.otpIssuer = patch.otpIssuer.trim() || undefined
+  }
+  if (
+    patch.otpSecret === undefined &&
+    patch.otpConfig !== undefined &&
+    account.otpSecret
+  ) {
+    account.otpConfig = normalizeOtpSecret(account.otpSecret, patch.otpConfig).config
   }
   if (patch.favorite !== undefined) account.favorite = patch.favorite
   if (patch.loginStrategy !== undefined) account.loginStrategy = patch.loginStrategy

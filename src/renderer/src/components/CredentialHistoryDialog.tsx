@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
+import type { Notify } from './Toast'
 import {
   Eye,
   EyeOff,
@@ -27,7 +28,7 @@ export function CredentialHistoryDialog({
   accountId: string
   onClose: () => void
   onRestored: (account: AccountWithSite) => void
-  notify: (kind: 'success' | 'error' | 'info', message: string) => void
+  notify: Notify
 }): React.JSX.Element {
   const { tr, formatDate } = useI18n()
   const [entries, setEntries] = useState<CredentialHistoryEntry[]>([])

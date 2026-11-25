@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
+import type { Notify } from './Toast'
 import { CircleAlert, LoaderCircle, Square, X } from 'lucide-react'
 import type { LoginBatchItem, LoginBatchState } from '@shared/types'
 import { useI18n } from '../i18n'
@@ -19,7 +20,7 @@ export function EmbeddedBatchBrowser({
   onClose
 }: {
   state: LoginBatchState
-  notify: (kind: 'success' | 'error' | 'info', message: string) => void
+  notify: Notify
   onClose: () => void
 }): React.JSX.Element {
   const { tr } = useI18n()

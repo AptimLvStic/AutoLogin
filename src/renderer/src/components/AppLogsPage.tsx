@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
+import type { Notify } from './Toast'
 import {
   Check,
   ChevronDown,
@@ -47,7 +48,7 @@ export function AppLogsPage({
   notify,
   onNavigate
 }: {
-  notify: (kind: 'success' | 'error' | 'info', message: string) => void
+  notify: Notify
   onNavigate: (view: LogView) => void
 }): React.JSX.Element {
   const { tr, formatDate, language } = useI18n()

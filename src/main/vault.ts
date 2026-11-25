@@ -214,6 +214,29 @@ export class VaultManager {
     return this.data
   }
 
+  /**
+   * 只读访问：不续期自动锁定计时器。OTP 轮询这类每秒发生的读取必须走这里，
+   * 否则自动锁定永远不会触发。
+   */
+  peekData(): VaultData {
+    if (!this.data) {
+      throw new VaultError('保险库已锁定', 'LOCKED')
+    }
+    return this.data
+  }
+
+  /** 校验主密码，不改变当前解锁状态，也不续期自动锁定。 */
+  async verifyPassword(password: string): Promise<boolean> {
+    try {
+      const envelope = this.readEnvelope(this.vaultPath)
+      const decrypted = await decryptEnvelope(envelope, password)
+      decrypted.key.fill(0)
+      return true
+    } catch {
+      return false
+    }
+  }
+
   save(options?: VaultSaveOptions): void {
     const data = this.requireData()
     this.beforeSaveListener?.(data)

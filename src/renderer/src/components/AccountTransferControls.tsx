@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
+import type { Notify } from './Toast'
 import {
   Download,
   FolderOpen,
@@ -16,7 +17,6 @@ import type {
   AutologinSelection,
   CsvFileSelection,
   CsvImportMode,
-  DataExportFormat,
   DataImportResult,
   FileOperationResult,
   ImportPreview,
@@ -25,6 +25,7 @@ import type {
 import { useI18n } from '../i18n'
 import { LoadingSpinner } from './LoadingSpinner'
 import { Modal } from './Modal'
+import { fileToastActions } from '../toast-actions'
 import { ImportPreviewDialog } from './ImportPreviewDialog'
 
 const MIN_DATABASE_IMPORT_FEEDBACK_MS = 450
@@ -34,6 +35,7 @@ export function AccountTransferControls({
   onCreateTab,
   onImported,
   notify,
+  onExportRecords,
   renderControls = true,
   openDatabaseRequest = 0,
   onDatabaseBusyChange,
@@ -42,7 +44,8 @@ export function AccountTransferControls({
   tabId: string
   onCreateTab: () => Promise<void>
   onImported: (result: DataImportResult) => void
-  notify: (kind: 'success' | 'error' | 'info', message: string) => void
+  notify: Notify
+  onExportRecords?: () => void
   renderControls?: boolean
   openDatabaseRequest?: number
   onDatabaseBusyChange?: (busy: boolean) => void
@@ -52,7 +55,6 @@ export function AccountTransferControls({
   const [menuOpen, setMenuOpen] = useState(false)
   const [importBusy, setImportBusy] = useState(false)
   const [templateBusy, setTemplateBusy] = useState(false)
-  const [exportBusy, setExportBusy] = useState(false)
   const [kdbxSelection, setKdbxSelection] = useState<KdbxSelection | null>(null)
   const [databasePassword, setDatabasePassword] = useState('')
   const [kdbxError, setKdbxError] = useState('')
@@ -68,13 +70,6 @@ export function AccountTransferControls({
   const [csvPassword, setCsvPassword] = useState('')
   const [csvError, setCsvError] = useState('')
   const [csvBusy, setCsvBusy] = useState(false)
-  const [exportPasswordOpen, setExportPasswordOpen] = useState(false)
-  const [exportPasswordFormat, setExportPasswordFormat] =
-    useState<DataExportFormat>('kdbx')
-  const [exportFileName, setExportFileName] = useState('')
-  const [exportPassword, setExportPassword] = useState('')
-  const [exportPasswordConfirm, setExportPasswordConfirm] = useState('')
-  const [exportPasswordError, setExportPasswordError] = useState('')
   const groupRef = useRef<HTMLDivElement>(null)
   const lastOpenDatabaseRequestRef = useRef(0)
 
@@ -349,7 +344,8 @@ export function AccountTransferControls({
             `CSV 模板已保存：${result.fileName ?? ''}`,
             `CSV template saved: ${result.fileName ?? ''}`,
             `CSV 範本已儲存：${result.fileName ?? ''}`
-          )
+          ),
+          fileToastActions(tr, result.filePath)
         )
       } else {
         notify('info', tr('已取消保存 CSV 模板', 'CSV template save cancelled.', '已取消儲存 CSV 範本'))
@@ -363,107 +359,6 @@ export function AccountTransferControls({
       )
     } finally {
       setTemplateBusy(false)
-    }
-  }
-
-  async function exportTab(
-    format: DataExportFormat,
-    password?: string,
-    fileName?: string
-  ): Promise<FileOperationResult> {
-    if (exportBusy) return { canceled: true }
-    setExportBusy(true)
-    try {
-      const result = await window.autologin.data.exportTab({
-        tabId,
-        format,
-        password,
-        fileName: fileName?.trim() || undefined
-      })
-      if (!result.canceled) {
-        notify(
-          'success',
-          tr(
-            `已导出：${result.fileName ?? ''}`,
-            `Exported: ${result.fileName ?? ''}`,
-            `已匯出：${result.fileName ?? ''}`
-          )
-        )
-      } else {
-        notify('info', tr('已取消导出', 'Export cancelled.', '已取消匯出'))
-      }
-      return result
-    } catch (error) {
-      notify(
-        'error',
-        error instanceof Error
-          ? error.message
-          : tr('导出配置失败', 'Could not export configuration.', '匯出設定失敗')
-      )
-      throw error
-    } finally {
-      setExportBusy(false)
-    }
-  }
-
-  function beginExport(format: DataExportFormat): void {
-    if (exportBusy) return
-    setMenuOpen(false)
-    setExportPasswordFormat(format)
-    setExportFileName('')
-    setExportPassword('')
-    setExportPasswordConfirm('')
-    setExportPasswordError('')
-    setExportPasswordOpen(true)
-  }
-
-  async function submitExportPassword(event: React.FormEvent): Promise<void> {
-    event.preventDefault()
-    const requestedName = exportFileName.trim()
-    if (requestedName.length > 80) {
-      setExportPasswordError(
-        tr('文件名不能超过 80 个字符', 'Use at most 80 characters.', '檔案名稱不能超過 80 個字元')
-      )
-      return
-    }
-    if (
-      requestedName &&
-      !/^[^<>:"/\\|?*\u0000-\u001f]+$/.test(requestedName)
-    ) {
-      setExportPasswordError(
-        tr(
-          '文件名不能包含 \\ / : * ? " < > |',
-          'The file name cannot contain \\ / : * ? " < > |',
-          '檔案名稱不能包含 \\ / : * ? " < > |'
-        )
-      )
-      return
-    }
-    const minLength = exportPasswordFormat === 'kdbx' ? 10 : 8
-    if (exportPassword.length < minLength) {
-      setExportPasswordError(
-        exportPasswordFormat === 'kdbx'
-          ? tr('数据库主密码至少需要 10 个字符', 'Use at least 10 characters.', '資料庫主密碼至少需要 10 個字元')
-          : tr('导出密码至少需要 8 个字符', 'Use at least 8 characters.', '匯出密碼至少需要 8 個字元')
-      )
-      return
-    }
-    if (exportPassword !== exportPasswordConfirm) {
-      setExportPasswordError(
-        tr('两次输入的密码不一致', 'The passwords do not match.', '兩次輸入的密碼不一致')
-      )
-      return
-    }
-    setExportPasswordError('')
-    try {
-      const result = await exportTab(
-        exportPasswordFormat,
-        exportPassword,
-        requestedName
-      )
-      if (!result.canceled) setExportPasswordOpen(false)
-    } catch {
-      // The shared export handler already reports the error.
     }
   }
 
@@ -513,7 +408,6 @@ export function AccountTransferControls({
                 creatingTab ||
                 importBusy ||
                 templateBusy ||
-                exportBusy ||
                 kdbxBusy ||
                 autologinBusy
               }
@@ -533,7 +427,6 @@ export function AccountTransferControls({
               {creatingTab ||
               importBusy ||
               templateBusy ||
-              exportBusy ||
               kdbxBusy ||
               autologinBusy ? (
                 <LoaderCircle size={16} className="spin" />
@@ -618,63 +511,18 @@ export function AccountTransferControls({
                 <button
                   type="button"
                   role="menuitem"
-                  onClick={() => beginExport('autologin')}
-                  disabled={!tabId}
-                >
-                  <LockKeyhole size={15} />
-                  <span>
-                    {tr(
-                      '导出 AutoLogin 格式',
-                      'Export AutoLogin format',
-                      '匯出 AutoLogin 格式'
-                    )}
-                  </span>
-                </button>
-                <button
-                  type="button"
-                  role="menuitem"
-                  onClick={() => beginExport('csv')}
-                  disabled={!tabId}
-                >
-                  <FileSpreadsheet size={15} />
-                  <span>
-                    {tr(
-                      '导出加密 CSV（AutoLogin 导入）',
-                      'Export encrypted CSV (AutoLogin import)',
-                      '匯出加密 CSV（AutoLogin 匯入）'
-                    )}
-                  </span>
-                </button>
-                <button
-                  type="button"
-                  role="menuitem"
                   onClick={() => {
                     setMenuOpen(false)
-                    void exportTab('csv-plain')
+                    onExportRecords?.()
                   }}
-                  disabled={!tabId}
+                  disabled={!tabId || !onExportRecords}
                 >
-                  <FileSpreadsheet size={15} />
+                  <Download size={15} />
                   <span>
                     {tr(
-                      '导出明文 CSV（Excel 可直接打开）',
-                      'Export plain CSV (opens in Excel)',
-                      '匯出明文 CSV（Excel 可直接開啟）'
-                    )}
-                  </span>
-                </button>
-                <button
-                  type="button"
-                  role="menuitem"
-                  onClick={() => beginExport('kdbx')}
-                  disabled={!tabId}
-                >
-                  <KeyRound size={15} />
-                  <span>
-                    {tr(
-                      '导出 KeePassXC 格式',
-                      'Export KeePassXC format',
-                      '匯出 KeePassXC 格式'
+                      '导出（账号数据 / 记录）',
+                      'Export (accounts / records)',
+                      '匯出（帳號資料 / 記錄）'
                     )}
                   </span>
                 </button>
@@ -1020,134 +868,6 @@ export function AccountTransferControls({
         </Modal>
       )}
 
-      {exportPasswordOpen && (
-        <Modal
-          title={
-            exportPasswordFormat === 'kdbx'
-              ? tr('设置 KDBX 主密码', 'Set a KDBX master password', '設定 KDBX 主密碼')
-              : tr('设置导出密码', 'Set an export password', '設定匯出密碼')
-          }
-          eyebrow={
-            exportPasswordFormat === 'kdbx'
-              ? tr('KDBX 数据库导出', 'KDBX DATABASE EXPORT', 'KDBX 資料庫匯出')
-              : exportPasswordFormat === 'autologin'
-                ? tr('AutoLogin 加密导出', 'AUTOLOGIN ENCRYPTED EXPORT', 'AUTOLOGIN 加密匯出')
-                : tr('CSV 加密导出', 'ENCRYPTED CSV EXPORT', 'CSV 加密匯出')
-          }
-          onClose={() => {
-            if (exportBusy) return
-            setExportPasswordOpen(false)
-            setExportFileName('')
-            setExportPassword('')
-            setExportPasswordConfirm('')
-            setExportPasswordError('')
-          }}
-          width="520px"
-        >
-          <form className="kdbx-password-form" onSubmit={submitExportPassword}>
-            <p className="modal-description">
-              {exportPasswordFormat === 'kdbx'
-                ? tr(
-                    '当前标签页会导出为 KDBX 数据库。请设置该数据库的主密码，密码不会保存到 AutoLogin。',
-                    'The current tab will be exported as a KDBX database. Set its master password; AutoLogin does not store it.',
-                    '目前標籤頁會匯出為 KDBX 資料庫。請設定該資料庫的主密碼，密碼不會儲存到 AutoLogin。'
-                  )
-                : tr(
-                    '请设置一个导出密码。导入此文件时需要输入同一密码；它不会保存到 AutoLogin，也不是当前保险库的主密码。',
-                    'Set an export password. You will need the same password to import this file; AutoLogin does not store it, and it is not your vault master password.',
-                    '請設定一個匯出密碼。匯入此檔案時需要輸入相同密碼；它不會儲存到 AutoLogin，也不是目前保險庫的主密碼。'
-                  )}
-            </p>
-            <label className="field">
-              <span className="field__label">
-                {tr('文件名（可选）', 'File name (optional)', '檔案名稱（選填）')}
-              </span>
-              <span className="input-shell">
-                <FileDown size={16} />
-                <input
-                  type="text"
-                  value={exportFileName}
-                  onChange={(event) => setExportFileName(event.target.value)}
-                  data-autofocus
-                  maxLength={80}
-                  spellCheck={false}
-                  placeholder={tr(
-                    '留空自动生成；扩展名自动添加',
-                    'Leave blank to auto-name; extension is added',
-                    '留空自動產生；副檔名自動加入'
-                  )}
-                />
-              </span>
-            </label>
-            <label className="field">
-              <span className="field__label">
-                {exportPasswordFormat === 'kdbx'
-                  ? tr('数据库主密码', 'Database master password', '資料庫主密碼')
-                  : tr('导出密码', 'Export password', '匯出密碼')}
-              </span>
-              <span className="input-shell">
-                <KeyRound size={16} />
-                <input
-                  type="password"
-                  value={exportPassword}
-                  onChange={(event) => setExportPassword(event.target.value)}
-                  autoComplete="new-password"
-                />
-              </span>
-            </label>
-            <label className="field">
-              <span className="field__label">
-                {exportPasswordFormat === 'kdbx'
-                  ? tr('确认主密码', 'Confirm master password', '確認主密碼')
-                  : tr('确认导出密码', 'Confirm export password', '確認匯出密碼')}
-              </span>
-              <span className="input-shell">
-                <LockKeyhole size={16} />
-                <input
-                  type="password"
-                  value={exportPasswordConfirm}
-                  onChange={(event) => setExportPasswordConfirm(event.target.value)}
-                  autoComplete="new-password"
-                />
-              </span>
-            </label>
-            {exportPasswordError && <p className="form-error">{exportPasswordError}</p>}
-            <div className="modal-actions">
-              <button
-                type="button"
-                className="button button--ghost"
-                onClick={() => {
-                  setExportPasswordOpen(false)
-                  setExportFileName('')
-                  setExportPassword('')
-                  setExportPasswordConfirm('')
-                  setExportPasswordError('')
-                }}
-                disabled={exportBusy}
-              >
-                {tr('取消', 'Cancel', '取消')}
-              </button>
-              <button
-                type="submit"
-                className={`button button--primary${exportBusy ? ' is-loading' : ''}`}
-                disabled={exportBusy}
-                aria-busy={exportBusy}
-              >
-                {exportBusy ? (
-                  <LoaderCircle size={15} className="spin" />
-                ) : (
-                  <Download size={15} />
-                )}
-                {exportBusy
-                  ? tr('正在导出…', 'Exporting…', '正在匯出…')
-                  : exportPasswordFormat === 'kdbx'
-                    ? tr('导出 KDBX', 'Export KDBX', '匯出 KDBX')
-                    : tr('导出', 'Export', '匯出')}
-              </button>
-            </div>
-          </form>
-        </Modal>
-      )}
 
     </>
   )

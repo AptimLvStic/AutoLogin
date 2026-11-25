@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
+import type { Notify } from './Toast'
 import {
   ArchiveRestore,
   Check,
@@ -96,7 +97,7 @@ export function SettingsPage({
   onDownloadUpdate: () => Promise<void>
   onCancelUpdate: () => Promise<void>
   onInstallUpdate: () => Promise<void>
-  notify: (kind: 'success' | 'error' | 'info', message: string) => void
+  notify: Notify
 }): React.JSX.Element {
   const { tr, formatDate } = useI18n()
   const [autoLock, setAutoLock] = useState<AutoLockMinutes>(settings.autoLockMinutes)

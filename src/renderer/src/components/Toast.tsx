@@ -3,11 +3,19 @@ import { useI18n } from '../i18n'
 
 export type ToastKind = 'success' | 'error' | 'info'
 
+export interface ToastAction {
+  label: string
+  onClick: () => void
+}
+
 export interface ToastState {
   id: number
   kind: ToastKind
   message: string
+  actions?: ToastAction[]
 }
+
+export type Notify = (kind: ToastKind, message: string, actions?: ToastAction[]) => void
 
 export function Toast({
   toast,
@@ -23,7 +31,24 @@ export function Toast({
       <span className="toast__icon">
         <Icon size={16} strokeWidth={2.2} />
       </span>
-      <span>{toast.message}</span>
+      <span className="toast__message">{toast.message}</span>
+      {toast.actions && toast.actions.length > 0 && (
+        <span className="toast__actions">
+          {toast.actions.map((action) => (
+            <button
+              key={action.label}
+              type="button"
+              className="toast__action"
+              onClick={() => {
+                action.onClick()
+                onClose()
+              }}
+            >
+              {action.label}
+            </button>
+          ))}
+        </span>
+      )}
       <button
         className="icon-button icon-button--small"
         onClick={onClose}

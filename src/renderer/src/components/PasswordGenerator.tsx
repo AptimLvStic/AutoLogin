@@ -1,4 +1,5 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import type { Notify } from './Toast'
 import { createPortal } from 'react-dom'
 import {
   Check,
@@ -78,7 +79,7 @@ export function PasswordGenerator({
   compact?: boolean
   onApply?: (password: string) => void
   onClose?: () => void
-  notify?: (kind: 'success' | 'error' | 'info', message: string) => void
+  notify?: Notify
 }): React.JSX.Element {
   const { tr } = useI18n()
   const [options, setOptions] = useState<PasswordGeneratorOptions>(readOptions)
@@ -303,7 +304,7 @@ export function PasswordGeneratorPopover({
   notify
 }: {
   onApply: (password: string) => void
-  notify: (kind: 'success' | 'error' | 'info', message: string) => void
+  notify: Notify
 }): React.JSX.Element {
   const { tr } = useI18n()
   const [open, setOpen] = useState(false)

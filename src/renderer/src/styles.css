@@ -26644,3 +26644,32 @@ html[data-color-mode='dark'] .settings-db__badge {
   margin-left: 0;
   transform: translateY(-50%);
 }
+
+/* 导出数据库备份：表单直接挂在模态面板上，左右留白收成 28px，和标题、说明同一左缘 */
+.backup-export-dialog {
+  scrollbar-gutter: auto;
+}
+.backup-export-dialog .backup-export-form {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  padding: 0 28px 28px;
+}
+.backup-export-dialog .modal-description {
+  padding: 0;
+  margin: 0;
+}
+.backup-export-dialog .backup-export-form .field {
+  gap: 7px;
+  margin: 0;
+}
+.backup-export-dialog .modal-actions {
+  margin-top: 2px;
+  padding-top: 0;
+}
+.backup-export-dialog__hint {
+  margin: 0;
+  color: var(--muted-light);
+  font-size: calc(11px * var(--font-scale, 1));
+  line-height: 1.6;
+}

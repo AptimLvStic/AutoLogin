@@ -2766,6 +2766,7 @@ export function SettingsPage({
 
       {backupEditor && (
         <Modal
+          className="backup-export-dialog"
           title={tr('导出数据库备份', 'Export a database backup', '匯出資料庫備份')}
           width="480px"
           onClose={() => {
@@ -2773,7 +2774,7 @@ export function SettingsPage({
           }}
         >
           <form
-            className="settings-password-form"
+            className="backup-export-form"
             onSubmit={(event) => void submitBackupExport(event)}
           >
             <p className="modal-description">
@@ -2817,16 +2818,24 @@ export function SettingsPage({
               </span>
             </label>
             {backupEditor.error && <p className="form-error">{backupEditor.error}</p>}
-            <p className="form-hint">
+            <p className="backup-export-dialog__hint">
               {tr(
                 '备份文件不会自动更新，重新打开时会要求输入这里设置的密码。',
                 'The backup file is not updated automatically; it asks for this password when reopened.',
                 '備份檔案不會自動更新，重新開啟時會要求輸入這裡設定的密碼。'
               )}
             </p>
-            <div className="settings-inline-actions">
+            <div className="modal-actions">
               <button
-                className="button button--soft button--small"
+                className="button button--ghost"
+                type="button"
+                onClick={() => setBackupEditor(null)}
+                disabled={backupEditor.busy}
+              >
+                {tr('取消', 'Cancel', '取消')}
+              </button>
+              <button
+                className="button button--primary"
                 type="submit"
                 disabled={
                   backupEditor.busy ||
@@ -2837,14 +2846,6 @@ export function SettingsPage({
               >
                 {backupEditor.busy && <LoaderCircle size={14} className="spin" />}
                 {tr('选择保存位置…', 'Choose location…', '選擇儲存位置…')}
-              </button>
-              <button
-                className="button button--ghost button--small"
-                type="button"
-                onClick={() => setBackupEditor(null)}
-                disabled={backupEditor.busy}
-              >
-                {tr('取消', 'Cancel', '取消')}
               </button>
             </div>
           </form>

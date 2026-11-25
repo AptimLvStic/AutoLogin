@@ -230,13 +230,28 @@ function withSessionClearTimeout<T>(promise: Promise<T>): Promise<T> {
 
 /** 录制状态是"有/没有"的互斥状态，只用于筛选；行内标签只给已录制的账号挂。 */
 type RecordingFilterTag = 'recorded' | 'unrecorded'
-type AccountFilterTag = AccountTagKey | RecordingFilterTag
+/** 两步验证同样是"有/没有"，只用于筛选，行内靠 2FA 徽标表达。 */
+type OtpFilterTag = 'otp-on' | 'otp-off'
+type AccountFilterTag = AccountTagKey | RecordingFilterTag | OtpFilterTag
 
 const RECORDING_FILTER_TAGS: RecordingFilterTag[] = ['recorded', 'unrecorded']
-const ALL_FILTER_TAGS: AccountFilterTag[] = [...ACCOUNT_TAG_KEYS, ...RECORDING_FILTER_TAGS]
+const OTP_FILTER_TAGS: OtpFilterTag[] = ['otp-on', 'otp-off']
+const ALL_FILTER_TAGS: AccountFilterTag[] = [
+  ...ACCOUNT_TAG_KEYS,
+  ...RECORDING_FILTER_TAGS,
+  ...OTP_FILTER_TAGS
+]
 
 function isRecordingFilterTag(tag: AccountFilterTag): tag is RecordingFilterTag {
   return tag === 'recorded' || tag === 'unrecorded'
+}
+
+function isOtpFilterTag(tag: AccountFilterTag): tag is OtpFilterTag {
+  return tag === 'otp-on' || tag === 'otp-off'
+}
+
+function isCompletionFilterTag(tag: AccountFilterTag): tag is AccountTagKey {
+  return !isRecordingFilterTag(tag) && !isOtpFilterTag(tag)
 }
 
 function workflowStepCount(account: AccountWithSite): number {
@@ -1011,7 +1026,8 @@ export function LibraryScreen({
     for (const account of baseFilteredAccounts) {
       tagsByAccount.set(account.id, [
         ...accountTags(account.site, account),
-        workflowStepCount(account) > 0 ? 'recorded' : 'unrecorded'
+        workflowStepCount(account) > 0 ? 'recorded' : 'unrecorded',
+        account.hasOtp ? 'otp-on' : 'otp-off'
       ])
     }
     return tagsByAccount
@@ -1022,7 +1038,9 @@ export function LibraryScreen({
       'needs-username': 0,
       'needs-password': 0,
       recorded: 0,
-      unrecorded: 0
+      unrecorded: 0,
+      'otp-on': 0,
+      'otp-off': 0
     }
     for (const tags of accountStatusTags.values()) {
       for (const tag of tags) counts[tag] += 1
@@ -1032,7 +1050,7 @@ export function LibraryScreen({
   const incompleteAccountCount = useMemo(
     () =>
       [...accountStatusTags.values()].filter((tags) =>
-        tags.some((tag) => !isRecordingFilterTag(tag))
+        tags.some((tag) => isCompletionFilterTag(tag))
       ).length,
     [accountStatusTags]
   )
@@ -6071,9 +6089,9 @@ export function LibraryScreen({
                           setStatusFilterOpen((current) => !current)
                         }}
                         aria-label={tr(
-                          '按补全状态和录制状态筛选',
-                          'Filter by completion and recording status',
-                          '依補全狀態與錄製狀態篩選'
+                          '按补全状态、录制状态和两步验证筛选',
+                          'Filter by completion, recording and two-factor status',
+                          '依補全狀態、錄製狀態與兩步驗證篩選'
                         )}
                       >
                         <SlidersHorizontal size={14} />
@@ -6127,6 +6145,14 @@ export function LibraryScreen({
                             </span>
                             <div className="account-status-filter__options">
                               {RECORDING_FILTER_TAGS.map((tag) =>
+                                renderStatusFilterOption(tag)
+                              )}
+                            </div>
+                            <span className="account-status-filter__group">
+                              {tr('两步验证', 'Two-factor', '兩步驗證')}
+                            </span>
+                            <div className="account-status-filter__options">
+                              {OTP_FILTER_TAGS.map((tag) =>
                                 renderStatusFilterOption(tag)
                               )}
                             </div>
@@ -6488,8 +6514,8 @@ export function LibraryScreen({
                       recorded={workflowStepCount(account) > 0}
                       showCompleteAction={
                         view === 'accounts' &&
-                        [...statusFilter].some(
-                          (tag) => !isRecordingFilterTag(tag)
+                        [...statusFilter].some((tag) =>
+                          isCompletionFilterTag(tag)
                         )
                       }
                     />
@@ -8313,6 +8339,10 @@ function statusTagLabel(tag: AccountFilterTag, tr: Translate): string {
       return tr('已录制', 'Recorded', '已錄製')
     case 'unrecorded':
       return tr('未录制', 'Not recorded', '未錄製')
+    case 'otp-on':
+      return tr('已启用 2FA', '2FA on', '已啟用 2FA')
+    case 'otp-off':
+      return tr('未启用 2FA', 'No 2FA', '未啟用 2FA')
   }
 }
 

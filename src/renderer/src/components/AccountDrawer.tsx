@@ -895,23 +895,6 @@ export function AccountDrawer({
     }
   }
 
-  async function copyOtp(): Promise<void> {
-    if (!otpCode) return
-    try {
-      await window.autologin.clipboard.writeSecret(otpCode.code)
-      notify(
-        'success',
-        tr(
-          `OTP 验证码已复制，${otpCode.remaining} 秒后失效`,
-          `OTP code copied, valid for ${otpCode.remaining}s.`,
-          `OTP 驗證碼已複製，${otpCode.remaining} 秒後失效`
-        )
-      )
-    } catch (reason) {
-      notify('error', reason instanceof Error ? reason.message : tr('复制失败', 'Copy failed.', '複製失敗'))
-    }
-  }
-
   function overrideOtpConfig(patch: Partial<OtpConfig>): void {
     setOtpConfigTouched(true)
     setOtpConfig((current) => ({ ...current, ...patch }))
@@ -2583,15 +2566,6 @@ export function AccountDrawer({
                             </svg>
                             <span>{otpCode?.remaining ?? '--'}</span>
                           </div>
-                          <button
-                            type="button"
-                            className="button button--ghost button--small account-otp__copy"
-                            onClick={() => void copyOtp()}
-                            disabled={!otpCode}
-                          >
-                            <Copy size={13} />
-                            {tr('复制', 'Copy', '複製')}
-                          </button>
                         </div>
                         <dl className="account-otp__meta">
                           <div>

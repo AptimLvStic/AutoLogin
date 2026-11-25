@@ -25686,10 +25686,6 @@ html[data-color-mode='dark'] .account-drawer-backdrop {
   transition: stroke-dashoffset 1s linear;
 }
 
-.account-otp__copy {
-  margin-left: auto;
-}
-
 .account-otp__meta {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));

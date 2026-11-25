@@ -216,16 +216,13 @@ export function SettingsPage({
     }
   }
 
-  // 即时保存的统一入口：成功时只在行尾点亮 2 秒，失败时状态点变红并保留错误信息。
-  async function persistSetting(key: string, patch: AppSettingsPatch): Promise<boolean> {
-    setSaveState(key, 'saving')
+  // 即时保存的统一入口：分段按钮、开关、滑块点下去就已生效，成功时不再点亮「已保存」，失败才提示。
+  async function saveInstant(patch: AppSettingsPatch): Promise<boolean> {
     try {
       await onSettingsChange(patch)
-      setSaveState(key, 'saved')
       return true
     } catch (error) {
-      setSaveState(
-        key,
+      notify(
         'error',
         error instanceof Error
           ? error.message
@@ -314,19 +311,17 @@ export function SettingsPage({
 
   async function changeAutoLock(value: AutoLockMinutes): Promise<void> {
     setAutoLock(value)
-    const saved = await persistSetting('auto-lock', { autoLockMinutes: value })
+    const saved = await saveInstant({ autoLockMinutes: value })
     if (!saved) setAutoLock(settings.autoLockMinutes)
   }
 
   async function saveAppearance(
     patch: AppSettingsPatch,
-    message: string,
-    key?: string
+    message?: string
   ): Promise<boolean> {
-    if (key) return persistSetting(key, patch)
     try {
       await onSettingsChange(patch)
-      notify('success', message)
+      if (message) notify('success', message)
       return true
     } catch (error) {
       notify(
@@ -341,25 +336,15 @@ export function SettingsPage({
 
   function scheduleScaleSave(value: number): void {
     setInterfaceScale(value)
-    setSaveState('interface-scale', 'saving')
     if (scaleSaveTimer.current) window.clearTimeout(scaleSaveTimer.current)
     scaleSaveTimer.current = window.setTimeout(() => {
-      void saveAppearance(
-        { interfaceScale: interfaceScaleDisplayToActual(value) },
-        tr(
-          '界面比例已设为 {value}%',
-          'Interface scale set to {value}%.',
-          '介面比例已設為 {value}%',
-          { value }
-        ),
-        'interface-scale'
-      )
+      void saveAppearance({ interfaceScale: interfaceScaleDisplayToActual(value) })
     }, 260)
   }
 
   async function changeFontSize(value: number): Promise<void> {
     setFontSizeScale(value)
-    const saved = await persistSetting('font-size', { fontSizeScale: value })
+    const saved = await saveInstant({ fontSizeScale: value })
     if (!saved) setFontSizeScale(settings.fontSizeScale)
   }
 
@@ -369,11 +354,7 @@ export function SettingsPage({
       scaleSaveTimer.current = null
     }
     setInterfaceScale(100)
-    await saveAppearance(
-      { interfaceScale: DEFAULT_APP_SETTINGS.interfaceScale },
-      tr('界面比例已恢复默认', 'Interface scale reset to default.', '介面比例已恢復預設'),
-      'interface-scale'
-    )
+    await saveAppearance({ interfaceScale: DEFAULT_APP_SETTINGS.interfaceScale })
   }
 
   async function resetFontSize(): Promise<void> {
@@ -381,17 +362,17 @@ export function SettingsPage({
   }
 
   async function updateCopyShortcut(enabled: boolean): Promise<void> {
-    await persistSetting('copy-shortcut', { accountCopyShortcutEnabled: enabled })
+    await saveInstant({ accountCopyShortcutEnabled: enabled })
   }
 
   async function changeDefaultLoginBrowser(
     loginBrowser: AppSettings['defaultLoginBrowser']
   ): Promise<void> {
-    await persistSetting('browser-launch', { defaultLoginBrowser: loginBrowser })
+    await saveInstant({ defaultLoginBrowser: loginBrowser })
   }
 
   async function changePureBrowserMode(enabled: boolean): Promise<void> {
-    await persistSetting('browser-launch', { pureBrowserMode: enabled })
+    await saveInstant({ pureBrowserMode: enabled })
   }
 
   async function captureCopyShortcut(
@@ -411,7 +392,7 @@ export function SettingsPage({
       )
       return
     }
-    await persistSetting('copy-shortcut', { accountCopyShortcut: shortcut })
+    await saveInstant({ accountCopyShortcut: shortcut })
   }
 
   async function resetAllSettings(): Promise<void> {
@@ -840,15 +821,11 @@ export function SettingsPage({
   }
 
   async function changeColorMode(colorMode: ColorMode): Promise<void> {
-    await saveAppearance(
-      { colorMode },
-      tr('外观已更新', 'Appearance updated.', '外觀已更新'),
-      'appearance'
-    )
+    await saveInstant({ colorMode })
   }
 
   async function changeLanguage(language: AppLanguage): Promise<void> {
-    await persistSetting('language', { language })
+    await saveInstant({ language })
   }
 
   function updateProxy<K extends keyof ProxySettings>(key: K, value: ProxySettings[K]): void {
@@ -865,8 +842,18 @@ export function SettingsPage({
 
   async function saveProxy(): Promise<void> {
     setProxySaving(true)
+    setSaveState('proxy', 'saving')
     try {
-      await persistSetting('proxy', { proxy })
+      await onSettingsChange({ proxy })
+      setSaveState('proxy', 'saved')
+    } catch (error) {
+      setSaveState(
+        'proxy',
+        'error',
+        error instanceof Error
+          ? error.message
+          : tr('设置保存失败', 'Could not save setting.', '設定儲存失敗')
+      )
     } finally {
       setProxySaving(false)
     }
@@ -1248,7 +1235,6 @@ export function SettingsPage({
                   'Hide vault contents after inactivity while keeping website sessions.',
                   '應用程式閒置後隱藏保險庫內容，網站工作階段會保留。'
                 )}
-                action={<SettingSaveHint state={saveStates['auto-lock']} />}
               />
               <div className="segmented-control segmented-control--wide">
                 {AUTO_LOCK_OPTIONS.map((minutes) => (
@@ -1273,7 +1259,6 @@ export function SettingsPage({
                   'New and imported accounts inherit this browser choice. Pure mode hides extensions and crash-restore prompts.',
                   '新建和匯入帳號預設繼承這裡的登入方式；純淨模式會封鎖擴充功能與當機還原提示。'
                 )}
-                action={<SettingSaveHint state={saveStates['browser-launch']} />}
               />
               <div className="settings-control-row">
                 <span className="settings-control-row__label">
@@ -1373,7 +1358,6 @@ export function SettingsPage({
                     {tr('跟随系统', 'Follow system', '跟隨系統')}
                   </button>
                 </div>
-                <SettingSaveHint state={saveStates['appearance']} />
               </div>
               <div className="settings-control-row">
                 <span className="settings-control-row__label">
@@ -1401,7 +1385,6 @@ export function SettingsPage({
                     </button>
                   ))}
                 </div>
-                <SettingSaveHint state={saveStates['language']} />
               </div>
             </div>
 
@@ -1414,7 +1397,6 @@ export function SettingsPage({
                   'Adjust interface scale for this window. Default is 100%.',
                   '依目前視窗調整介面縮放，預設為 100%。'
                 )}
-                action={<SettingSaveHint state={saveStates['interface-scale']} />}
               />
               <div className="scale-control">
                 <input
@@ -1456,7 +1438,6 @@ export function SettingsPage({
                   'Choose the interface text size without resizing the layout.',
                   '選擇介面文字的顯示比例，不改變視窗和控件的整體尺寸。'
                 )}
-                action={<SettingSaveHint state={saveStates['font-size']} />}
               />
               <div
                 className="font-size-selector"
@@ -1503,7 +1484,6 @@ export function SettingsPage({
                   'Manage AutoLogin shortcuts in one place. System keys remain available by default, and future actions will use the same settings area.',
                   '集中管理 AutoLogin 內部快捷鍵。預設不佔用系統按鍵，後續快捷操作也會在這裡統一設定。'
                 )}
-                action={<SettingSaveHint state={saveStates['copy-shortcut']} />}
               />
               <label className="switch-row shortcut-enable-row">
                 <span>
